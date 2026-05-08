@@ -9,8 +9,50 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VoicesRouteImport } from './routes/voices'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as RecipesRouteImport } from './routes/recipes'
+import { Route as RecipeDetailRouteImport } from './routes/recipe-detail'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as ImportRouteImport } from './routes/import'
+import { Route as CookRouteImport } from './routes/cook'
 import { Route as IndexRouteImport } from './routes/index'
 
+const VoicesRoute = VoicesRouteImport.update({
+  id: '/voices',
+  path: '/voices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecipesRoute = RecipesRouteImport.update({
+  id: '/recipes',
+  path: '/recipes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecipeDetailRoute = RecipeDetailRouteImport.update({
+  id: '/recipe-detail',
+  path: '/recipe-detail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ImportRoute = ImportRouteImport.update({
+  id: '/import',
+  path: '/import',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CookRoute = CookRouteImport.update({
+  id: '/cook',
+  path: '/cook',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -19,28 +61,130 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/cook': typeof CookRoute
+  '/import': typeof ImportRoute
+  '/onboarding': typeof OnboardingRoute
+  '/recipe-detail': typeof RecipeDetailRoute
+  '/recipes': typeof RecipesRoute
+  '/settings': typeof SettingsRoute
+  '/voices': typeof VoicesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/cook': typeof CookRoute
+  '/import': typeof ImportRoute
+  '/onboarding': typeof OnboardingRoute
+  '/recipe-detail': typeof RecipeDetailRoute
+  '/recipes': typeof RecipesRoute
+  '/settings': typeof SettingsRoute
+  '/voices': typeof VoicesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/cook': typeof CookRoute
+  '/import': typeof ImportRoute
+  '/onboarding': typeof OnboardingRoute
+  '/recipe-detail': typeof RecipeDetailRoute
+  '/recipes': typeof RecipesRoute
+  '/settings': typeof SettingsRoute
+  '/voices': typeof VoicesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/cook'
+    | '/import'
+    | '/onboarding'
+    | '/recipe-detail'
+    | '/recipes'
+    | '/settings'
+    | '/voices'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/cook'
+    | '/import'
+    | '/onboarding'
+    | '/recipe-detail'
+    | '/recipes'
+    | '/settings'
+    | '/voices'
+  id:
+    | '__root__'
+    | '/'
+    | '/cook'
+    | '/import'
+    | '/onboarding'
+    | '/recipe-detail'
+    | '/recipes'
+    | '/settings'
+    | '/voices'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CookRoute: typeof CookRoute
+  ImportRoute: typeof ImportRoute
+  OnboardingRoute: typeof OnboardingRoute
+  RecipeDetailRoute: typeof RecipeDetailRoute
+  RecipesRoute: typeof RecipesRoute
+  SettingsRoute: typeof SettingsRoute
+  VoicesRoute: typeof VoicesRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/voices': {
+      id: '/voices'
+      path: '/voices'
+      fullPath: '/voices'
+      preLoaderRoute: typeof VoicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recipes': {
+      id: '/recipes'
+      path: '/recipes'
+      fullPath: '/recipes'
+      preLoaderRoute: typeof RecipesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recipe-detail': {
+      id: '/recipe-detail'
+      path: '/recipe-detail'
+      fullPath: '/recipe-detail'
+      preLoaderRoute: typeof RecipeDetailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/import': {
+      id: '/import'
+      path: '/import'
+      fullPath: '/import'
+      preLoaderRoute: typeof ImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cook': {
+      id: '/cook'
+      path: '/cook'
+      fullPath: '/cook'
+      preLoaderRoute: typeof CookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -53,7 +197,24 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CookRoute: CookRoute,
+  ImportRoute: ImportRoute,
+  OnboardingRoute: OnboardingRoute,
+  RecipeDetailRoute: RecipeDetailRoute,
+  RecipesRoute: RecipesRoute,
+  SettingsRoute: SettingsRoute,
+  VoicesRoute: VoicesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

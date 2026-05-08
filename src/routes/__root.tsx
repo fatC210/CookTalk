@@ -117,5 +117,3 @@ function RootComponent() {
     </QueryClientProvider>
   );
 }
-
-export { Link };
