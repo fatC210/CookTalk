@@ -83,7 +83,20 @@ export function GlobalVoiceController() {
     language,
     listenMode: activeListenMode,
     manualWakeActive,
-    onWake: () => clearManualWake(),
+    awakeResetKey: pathname,
+    onWake: (event) => {
+      clearManualWake();
+      if (pathname !== "/" || event.source === "always-listen") return;
+      window.dispatchEvent(
+        new CustomEvent("cooktalk:home-awake", {
+          detail: {
+            phrase: event.phrase,
+            source: event.source,
+            transcript: event.transcript ?? "",
+          },
+        }),
+      );
+    },
     onTranscript: handleTranscript,
     onError: (message) => toast.error(message),
   });

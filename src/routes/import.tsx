@@ -10,7 +10,11 @@ import type { DragEvent, ChangeEvent } from "react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { toBlobURL, fetchFile } from "@ffmpeg/util";
 import { ElevenLabsService } from "@/lib/elevenlabs";
-import { ImageGenService, getConfiguredLLMService } from "@/lib/llm";
+import {
+  DEFAULT_IMAGE_MODEL,
+  ImageGenService,
+  getConfiguredLLMService,
+} from "@/lib/llm";
 import { getApiKey } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import type { Recipe } from "@/lib/db";
@@ -241,7 +245,7 @@ function ImportPage() {
             const imgService = new ImageGenService(
               imageEndpoint,
               imageKey,
-              imageModel ?? "dall-e-3",
+              imageModel?.trim() || DEFAULT_IMAGE_MODEL,
             );
             const prompt = await llmService.generateCoverPrompt(recipe.title);
             const cover = await imgService.generateImage(prompt);

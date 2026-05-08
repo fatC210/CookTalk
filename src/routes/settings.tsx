@@ -6,9 +6,7 @@ import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
   Key,
   Mic2,
-  Image as ImageIcon,
   Globe,
-  Moon,
   Lock,
   Download,
   Upload,
@@ -37,6 +35,7 @@ import { db } from "@/lib/db";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "react-i18next";
 import {
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_LLM_BASE_URL,
   DEFAULT_LLM_MODEL,
   isValidOpenAIBaseUrl,
@@ -45,6 +44,7 @@ import {
   validateOpenAIModelConfig,
 } from "@/lib/llm";
 import { ElevenLabsService } from "@/lib/elevenlabs";
+import { useElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -77,12 +77,8 @@ type ApiSettingsValues = {
   imageModel: string;
 };
 
-const PRESET_VOICE_OPTIONS: VoiceOption[] = [
-  { label: "默认男声", value: "pNInz6obpgDQGcFmaJgB", description: "ElevenLabs Adam" },
-  { label: "晓晓", value: "pFZP5JQG7iQjIQuC4Bku", description: "中文 · 温暖" },
-  { label: "云希", value: "t0jbNlBVZ17f02VDIeMI", description: "中文 · 明亮" },
-  { label: "Aria", value: "9BWtsMINqrJLrRacOk9x", description: "English · neutral" },
-];
+type SettingsTab = "apiKeys" | "voice" | "preferences" | "data";
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function KeyField({
@@ -105,6 +101,11 @@ function KeyField({
   hideLabel: string;
 }) {
   const [show, setShow] = useState(false);
+  const canToggleSecret = type === "password" && value.length > 0;
+
+  useEffect(() => {
+    if (!canToggleSecret) setShow(false);
+  }, [canToggleSecret]);
 
   return (
     <div>
@@ -112,11 +113,22 @@ function KeyField({
         <div className="flex-1">
           <label className="inline-flex items-center gap-2 text-sm font-medium">{label}</label>
         </div>
-        {type === "password" && (
+      </div>
+      <div className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5">
+        <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+        <input
+          type={canToggleSecret && show ? "text" : type === "text" ? "text" : "password"}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          className="secret-input min-w-0 flex-1 bg-transparent text-sm tracking-wider outline-none placeholder:text-muted-foreground"
+        />
+        {canToggleSecret && (
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+            className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
             aria-label={show ? hideLabel : showLabel}
           >
             {show ? (
@@ -126,17 +138,6 @@ function KeyField({
             )}
           </button>
         )}
-      </div>
-      <div className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5">
-        <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
-        <input
-          type={show ? "text" : type === "text" ? "text" : "password"}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          className="flex-1 bg-transparent text-sm tracking-wider outline-none placeholder:text-muted-foreground"
-        />
       </div>
     </div>
   );
@@ -191,6 +192,9 @@ function VoiceRoleSelect({
   value,
   options,
   onChange,
+  disabled = false,
+  emptyLabel,
+  defaultLabel,
 }: {
   n: number;
   label: string;
@@ -198,6 +202,9 @@ function VoiceRoleSelect({
   value: string | null;
   options: VoiceOption[];
   onChange: (value: string | null) => void;
+  disabled?: boolean;
+  emptyLabel: string;
+  defaultLabel: string;
 }) {
   const selected = options.find((option) => option.value === value);
 
@@ -213,9 +220,10 @@ function VoiceRoleSelect({
       <select
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value || null)}
-        className="mt-3 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-foreground"
+        disabled={disabled}
+        className="mt-3 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-foreground disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <option value="">跟随默认音色</option>
+        <option value="">{disabled ? emptyLabel : defaultLabel}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label} · {option.description}
@@ -223,7 +231,7 @@ function VoiceRoleSelect({
         ))}
       </select>
       <div className="mt-2 text-xs text-muted-foreground">
-        当前：{selected ? `${selected.label} · ${selected.description}` : "默认音色"}
+        {selected ? `${selected.label} · ${selected.description}` : defaultLabel}
       </div>
     </div>
   );
@@ -259,6 +267,7 @@ function SwitchRow({
 
 function SettingsPage() {
   const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState<SettingsTab>("apiKeys");
 
   // ── App store ────────────────────────────────────────────────────────────
   const {
@@ -288,23 +297,43 @@ function SettingsPage() {
     setCookingVoiceId,
   } = useAppStore();
 
+  const [elevenLabsVoiceRefreshKey, setElevenLabsVoiceRefreshKey] = useState(0);
+  const {
+    options: elevenLabsVoiceOptions,
+    isLoading: isLoadingElevenLabsVoices,
+    error: elevenLabsVoicesError,
+    hasElevenLabsKey,
+  } = useElevenLabsVoices(elevenLabsVoiceRefreshKey);
   const clonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []) ?? [];
+  const elevenLabsVoiceOptionIds = new Set(elevenLabsVoiceOptions.map((option) => option.value));
+  const formatClonedVoiceDescription = (language: string, description: string) => {
+    const languageLabel = language
+      ? t(`voices.languages.${language}`, { defaultValue: language })
+      : t("common.unknown");
+    const voiceDescription = description === "Cloned voice" ? t("voices.clonedVoice") : description;
+
+    return `${languageLabel} · ${voiceDescription || t("voices.clonedVoice")}`;
+  };
   const voiceOptions = [
-    ...PRESET_VOICE_OPTIONS,
+    ...elevenLabsVoiceOptions,
     ...clonedVoices
-      .filter((voice) => voice.elevenLabsVoiceId)
+      .filter(
+        (voice) =>
+          voice.elevenLabsVoiceId && !elevenLabsVoiceOptionIds.has(voice.elevenLabsVoiceId),
+      )
       .map((voice) => ({
         label: voice.name,
         value: voice.elevenLabsVoiceId!,
-        description: `${voice.language} · ${voice.description}`,
+        description: formatClonedVoiceDescription(voice.language, voice.description),
       })),
   ];
+  const voiceSelectDisabled = !hasElevenLabsKey || voiceOptions.length === 0;
 
   // ── API key state ────────────────────────────────────────────────────────
   const [elevenLabsKey, setElevenLabsKey] = useState("");
   const [llmKey, setLlmKey] = useState("");
-  const [llmEndpoint, setLlmEndpoint] = useState(DEFAULT_LLM_BASE_URL);
-  const [llmModel, setLlmModel] = useState(DEFAULT_LLM_MODEL);
+  const [llmEndpoint, setLlmEndpoint] = useState("");
+  const [llmModel, setLlmModel] = useState("");
   const [imageEndpoint, setImageEndpoint] = useState("");
   const [imageKey, setImageKey] = useState("");
   const [imageModel, setImageModel] = useState("");
@@ -333,8 +362,8 @@ function SettingsPage() {
       lastSavedApiValuesRef.current = {
         elevenLabsKey: el ?? "",
         llmKey: lk ?? "",
-        llmEndpoint: le ?? DEFAULT_LLM_BASE_URL,
-        llmModel: lm ?? DEFAULT_LLM_MODEL,
+        llmEndpoint: le ?? "",
+        llmModel: lm ?? "",
         imageEndpoint: ie ?? "",
         imageKey: ik ?? "",
         imageModel: im ?? "",
@@ -432,11 +461,11 @@ function SettingsPage() {
         const nextSavedValues = savedValues ?? {
           elevenLabsKey: "",
           llmKey: "",
-          llmEndpoint: DEFAULT_LLM_BASE_URL,
-          llmModel: DEFAULT_LLM_MODEL,
+          llmEndpoint: "",
+          llmModel: "",
           imageEndpoint: "",
           imageKey: "",
-          imageModel: "",
+          imageModel: DEFAULT_IMAGE_MODEL,
         };
 
         if (group === "elevenlabs") {
@@ -454,6 +483,7 @@ function SettingsPage() {
           nextSavedValues.elevenLabsKey = trimmedElevenLabsKey;
           setElevenLabsKey(trimmedElevenLabsKey);
           setHasElevenLabsKey(!!trimmedElevenLabsKey);
+          setElevenLabsVoiceRefreshKey((key) => key + 1);
         }
 
         if (group === "llm") {
@@ -539,6 +569,7 @@ function SettingsPage() {
       setHasElevenLabsKey,
       setHasImageGenKey,
       setHasLlmKey,
+      setElevenLabsVoiceRefreshKey,
       t,
     ],
   );
@@ -600,17 +631,19 @@ function SettingsPage() {
   };
 
   // ── Sidebar sections ─────────────────────────────────────────────────────
-  const sections = [
-    { icon: Key, label: t("settings.sections.apiKeys"), href: "#s0" },
-    { icon: Mic2, label: t("settings.sections.voice"), href: "#s1" },
-    { icon: ImageIcon, label: t("settings.sections.coverImages"), href: "#s2" },
-    { icon: Globe, label: t("settings.sections.language"), href: "#s3" },
-    { icon: Moon, label: t("settings.sections.appearance"), href: "#s3" },
-    { icon: Download, label: t("settings.sections.data"), href: "#s5" },
+  const sections: Array<{
+    icon: typeof Key;
+    label: string;
+    value: SettingsTab;
+  }> = [
+    { icon: Key, label: t("settings.sections.apiKeys"), value: "apiKeys" },
+    { icon: Mic2, label: t("settings.sections.voice"), value: "voice" },
+    { icon: Globe, label: t("settings.sections.preferences"), value: "preferences" },
+    { icon: Download, label: t("settings.sections.data"), value: "data" },
   ];
 
   return (
-    <div className="app-page-bg min-h-screen flex flex-col">
+    <div className="app-page-bg settings-page">
       <SiteHeader />
 
       <section className="page-hero">
@@ -621,371 +654,418 @@ function SettingsPage() {
         </div>
       </section>
 
-      <section className="flex-1">
-        <div className="page-content-container">
-          <div className="grid gap-10 lg:grid-cols-12">
+      <section className="settings-main">
+        <div className="page-content-container settings-content-container">
+          <div className="settings-layout grid gap-8 lg:grid-cols-12">
             {/* Sidebar */}
-            <aside className="lg:col-span-3">
-              <nav className="sticky top-24 space-y-1">
-                {sections.map((s, i) => (
-                  <a
+            <aside className="settings-sidebar lg:col-span-3">
+              <nav className="space-y-1">
+                {sections.map((s) => (
+                  <button
                     key={s.label}
-                    href={s.href}
-                    className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${
-                      i === 0
+                    type="button"
+                    onClick={() => setActiveTab(s.value)}
+                    aria-current={activeTab === s.value ? "page" : undefined}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                      activeTab === s.value
                         ? "bg-secondary text-foreground"
                         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
                     }`}
                   >
                     <s.icon className="h-4 w-4" strokeWidth={1.75} /> {s.label}
-                  </a>
+                  </button>
                 ))}
               </nav>
             </aside>
 
-            <div className="lg:col-span-9 space-y-12">
-              {/* ── API keys ─────────────────────────────────────────────── */}
-              <section id="s0">
-                <h2 className="font-display text-2xl">{t("settings.apiKeys.title")}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{t("settings.apiKeys.desc")}</p>
-                <div className="mt-5 grid gap-4 lg:grid-cols-3">
-                  <ApiSettingsCard
-                    n={1}
-                    title={t("settings.apiKeys.elevenlabsGroup")}
-                    required
-                    onBlur={() => void handleSaveApiGroup("elevenlabs")}
-                  >
-                    <KeyField
-                      label={t("settings.apiKeys.elevenlabs")}
-                      value={elevenLabsKey}
-                      onChange={setElevenLabsKey}
-                      placeholder="sk_..."
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                  </ApiSettingsCard>
+            <div className="settings-tab-panel lg:col-span-9">
+              <div className="settings-tab-scroll">
+                {/* ── API keys ─────────────────────────────────────────────── */}
+                {activeTab === "apiKeys" && (
+                  <section>
+                    <h2 className="font-display text-2xl">{t("settings.apiKeys.title")}</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t("settings.apiKeys.desc")}
+                    </p>
+                    <div className="mt-5 grid gap-4 lg:grid-cols-3">
+                      <ApiSettingsCard
+                        n={1}
+                        title={t("settings.apiKeys.elevenlabsGroup")}
+                        required
+                        onBlur={() => void handleSaveApiGroup("elevenlabs")}
+                      >
+                        <KeyField
+                          label={t("settings.apiKeys.elevenlabs")}
+                          value={elevenLabsKey}
+                          onChange={setElevenLabsKey}
+                          placeholder="sk_..."
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                      </ApiSettingsCard>
 
-                  <ApiSettingsCard
-                    n={2}
-                    title={t("settings.apiKeys.llmGroup")}
-                    required
-                    onBlur={() => void handleSaveApiGroup("llm")}
-                  >
-                    <KeyField
-                      label={t("settings.apiKeys.llmEndpoint")}
-                      value={llmEndpoint}
-                      onChange={setLlmEndpoint}
-                      placeholder="https://api.openai.com/v1"
-                      type="text"
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                    <KeyField
-                      label={t("settings.apiKeys.llm")}
-                      value={llmKey}
-                      onChange={setLlmKey}
-                      placeholder="sk-..."
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                    <KeyField
-                      label={t("settings.apiKeys.llmModel")}
-                      value={llmModel}
-                      onChange={setLlmModel}
-                      placeholder="gpt-4o-mini"
-                      type="text"
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                  </ApiSettingsCard>
+                      <ApiSettingsCard
+                        n={2}
+                        title={t("settings.apiKeys.llmGroup")}
+                        required
+                        onBlur={() => void handleSaveApiGroup("llm")}
+                      >
+                        <KeyField
+                          label={t("settings.apiKeys.llmEndpoint")}
+                          value={llmEndpoint}
+                          onChange={setLlmEndpoint}
+                          placeholder={DEFAULT_LLM_BASE_URL}
+                          type="text"
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                        <KeyField
+                          label={t("settings.apiKeys.llm")}
+                          value={llmKey}
+                          onChange={setLlmKey}
+                          placeholder="sk-..."
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                        <KeyField
+                          label={t("settings.apiKeys.llmModel")}
+                          value={llmModel}
+                          onChange={setLlmModel}
+                          placeholder={DEFAULT_LLM_MODEL}
+                          type="text"
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                      </ApiSettingsCard>
 
-                  <ApiSettingsCard
-                    n={3}
-                    title={t("settings.apiKeys.imageGroup")}
-                    onBlur={() => void handleSaveApiGroup("image")}
-                  >
-                    <KeyField
-                      label={t("settings.apiKeys.imageEndpoint")}
-                      value={imageEndpoint}
-                      onChange={setImageEndpoint}
-                      placeholder="https://api.openai.com/v1"
-                      type="text"
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                    <KeyField
-                      label={t("settings.apiKeys.imageKey")}
-                      value={imageKey}
-                      onChange={setImageKey}
-                      placeholder="sk-..."
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                    <KeyField
-                      label={t("settings.apiKeys.imageModel")}
-                      value={imageModel}
-                      onChange={setImageModel}
-                      placeholder="dall-e-3"
-                      type="text"
-                      showLabel={t("settings.aria.showSecret")}
-                      hideLabel={t("settings.aria.hideSecret")}
-                    />
-                  </ApiSettingsCard>
-                </div>
-                {savingKeys && (
-                  <p className="mt-3 text-right text-sm text-muted-foreground">
-                    {t("settings.apiKeys.validating")}
-                  </p>
-                )}
-              </section>
-
-              {/* ── Voice & wake-word ──────────────────────────────────── */}
-              <section id="s1">
-                <h2 className="font-display text-2xl">{t("settings.voice.title")}</h2>
-                <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  {/* Wake words */}
-                  <div className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-center gap-3">
-                      <VoiceBadge n={6} />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium">{t("settings.voice.wakeWords")}</div>
-                        <div className="voice-hint mt-0.5">{t("settings.voice.wakeWordsHint")}</div>
-                      </div>
+                      <ApiSettingsCard
+                        n={3}
+                        title={t("settings.apiKeys.imageGroup")}
+                        onBlur={() => void handleSaveApiGroup("image")}
+                      >
+                        <KeyField
+                          label={t("settings.apiKeys.imageEndpoint")}
+                          value={imageEndpoint}
+                          onChange={setImageEndpoint}
+                          placeholder="https://api.openai.com/v1"
+                          type="text"
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                        <KeyField
+                          label={t("settings.apiKeys.imageKey")}
+                          value={imageKey}
+                          onChange={setImageKey}
+                          placeholder="sk-..."
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                        <KeyField
+                          label={t("settings.apiKeys.imageModel")}
+                          value={imageModel}
+                          onChange={setImageModel}
+                          placeholder={DEFAULT_IMAGE_MODEL}
+                          type="text"
+                          showLabel={t("settings.aria.showSecret")}
+                          hideLabel={t("settings.aria.hideSecret")}
+                        />
+                      </ApiSettingsCard>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {wakeWords.map((w) => (
-                        <span
-                          key={w}
-                          className="inline-flex items-center gap-1 rounded-full bg-foreground px-3 py-1.5 text-xs text-background"
-                        >
-                          {w}
+                    {savingKeys && (
+                      <p className="mt-3 text-right text-sm text-muted-foreground">
+                        {t("settings.apiKeys.validating")}
+                      </p>
+                    )}
+                  </section>
+                )}
+
+                {/* ── Voice & wake-word ──────────────────────────────────── */}
+                {activeTab === "voice" && (
+                  <section>
+                    <h2 className="font-display text-2xl">{t("settings.voice.title")}</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {!hasElevenLabsKey
+                        ? t("settings.voice.configureElevenLabsFirst")
+                        : isLoadingElevenLabsVoices
+                          ? t("settings.voice.loadingElevenLabsVoices")
+                          : elevenLabsVoicesError
+                            ? t("settings.voice.elevenLabsVoicesFailed")
+                            : t("settings.voice.elevenLabsVoicesLoaded", {
+                                count: voiceOptions.length,
+                              })}
+                    </p>
+                    <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      {/* Wake words */}
+                      <div className="rounded-2xl border border-border bg-card p-5">
+                        <div className="flex items-center gap-3">
+                          <VoiceBadge n={6} />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">
+                              {t("settings.voice.wakeWords")}
+                            </div>
+                            <div className="voice-hint mt-0.5">
+                              {t("settings.voice.wakeWordsHint")}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {wakeWords.map((w) => (
+                            <span
+                              key={w}
+                              className="inline-flex items-center gap-1 rounded-full bg-foreground px-3 py-1.5 text-xs text-background"
+                            >
+                              {w}
+                              <button
+                                type="button"
+                                onClick={() => removeWakeWord(w)}
+                                className="ml-0.5 hover:opacity-70"
+                                aria-label={t("settings.aria.removeWakeWord", { word: w })}
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          <input
+                            type="text"
+                            value={newWakeWord}
+                            onChange={(e) => setNewWakeWord(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleAddWakeWord()}
+                            placeholder={t("settings.voice.addPlaceholder")}
+                            className="flex-1 rounded-xl border border-dashed border-border bg-background px-3 py-1.5 text-xs outline-none placeholder:text-muted-foreground"
+                          />
                           <button
                             type="button"
-                            onClick={() => removeWakeWord(w)}
-                            className="ml-0.5 hover:opacity-70"
-                            aria-label={t("settings.aria.removeWakeWord", { word: w })}
+                            onClick={handleAddWakeWord}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground"
                           >
-                            <X className="h-3 w-3" />
+                            <Plus className="h-3.5 w-3.5" />
                           </button>
-                        </span>
-                      ))}
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <input
-                        type="text"
-                        value={newWakeWord}
-                        onChange={(e) => setNewWakeWord(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleAddWakeWord()}
-                        placeholder={t("settings.voice.addPlaceholder")}
-                        className="flex-1 rounded-xl border border-dashed border-border bg-background px-3 py-1.5 text-xs outline-none placeholder:text-muted-foreground"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddWakeWord}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Sensitivity */}
-                  <div className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-center gap-3">
-                      <VoiceBadge n={7} />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium">{t("settings.voice.sensitivity")}</div>
-                        <div className="voice-hint mt-0.5">
-                          {t("settings.voice.sensitivityHint")}
                         </div>
                       </div>
-                      <span className="text-xs text-muted-foreground">
-                        {t(`settings.voice.${sensitivity}`)}
-                      </span>
+
+                      {/* Sensitivity */}
+                      <div className="rounded-2xl border border-border bg-card p-5">
+                        <div className="flex items-center gap-3">
+                          <VoiceBadge n={7} />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">
+                              {t("settings.voice.sensitivity")}
+                            </div>
+                            <div className="voice-hint mt-0.5">
+                              {t("settings.voice.sensitivityHint")}
+                            </div>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {t(`settings.voice.${sensitivity}`)}
+                          </span>
+                        </div>
+                        <div className="mt-4 flex gap-1">
+                          {(["low", "medium", "high"] as const).map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => setSensitivity(s)}
+                              className={`flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors ${
+                                sensitivity === s
+                                  ? "border-foreground bg-foreground text-background"
+                                  : "border-border hover:border-foreground/50"
+                              }`}
+                            >
+                              {t(`settings.voice.${s}`)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <VoiceRoleSelect
+                        n={8}
+                        label={t("settings.voice.conversationVoice")}
+                        hint={t("settings.voice.conversationVoiceHint")}
+                        value={conversationVoiceId}
+                        options={voiceOptions}
+                        onChange={setConversationVoiceId}
+                        disabled={voiceSelectDisabled}
+                        emptyLabel={t("settings.voice.voiceSelectDisabled")}
+                        defaultLabel={t("settings.voice.followDefaultVoice")}
+                      />
+                      <VoiceRoleSelect
+                        n={9}
+                        label={t("settings.voice.cookingVoice")}
+                        hint={t("settings.voice.cookingVoiceHint")}
+                        value={cookingVoiceId}
+                        options={voiceOptions}
+                        onChange={setCookingVoiceId}
+                        disabled={voiceSelectDisabled}
+                        emptyLabel={t("settings.voice.voiceSelectDisabled")}
+                        defaultLabel={t("settings.voice.followDefaultVoice")}
+                      />
+
+                      <SwitchRow
+                        n={10}
+                        label={t("settings.voice.badges")}
+                        hint={t("settings.voice.badgesHint")}
+                        checked={voiceBadgesVisible}
+                        onCheckedChange={toggleVoiceBadges}
+                      />
+                      <SwitchRow
+                        n={11}
+                        label={t("settings.voice.alwaysListen")}
+                        hint={t("settings.voice.alwaysListenHint")}
+                        checked={listenMode === "always"}
+                        onCheckedChange={(v) => setListenMode(v ? "always" : "wake-word")}
+                      />
+                      <SwitchRow
+                        n={12}
+                        label={t("settings.voice.wakeLock")}
+                        hint={t("settings.voice.wakeLockHint")}
+                        checked={screenWakeLock}
+                        onCheckedChange={setScreenWakeLock}
+                      />
+                      <SwitchRow
+                        n={13}
+                        label={t("settings.voice.soundEffects")}
+                        hint={t("settings.voice.soundEffectsHint")}
+                        checked={soundEffects}
+                        onCheckedChange={setSoundEffects}
+                      />
                     </div>
-                    <div className="mt-4 flex gap-1">
-                      {(["low", "medium", "high"] as const).map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => setSensitivity(s)}
-                          className={`flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors ${
-                            sensitivity === s
-                              ? "border-foreground bg-foreground text-background"
-                              : "border-border hover:border-foreground/50"
-                          }`}
-                        >
-                          {t(`settings.voice.${s}`)}
-                        </button>
-                      ))}
+                  </section>
+                )}
+
+                {/* ── Preferences ─────────────────────────────────────────── */}
+                {activeTab === "preferences" && (
+                  <section>
+                    <h2 className="font-display text-2xl">{t("settings.preferences.title")}</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t("settings.preferences.desc")}
+                    </p>
+                    <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      {/* Language */}
+                      <div className="rounded-2xl border border-border bg-card p-5">
+                        <div className="flex items-center gap-3">
+                          <VoiceBadge n={12} />
+                          <span className="text-sm font-medium">
+                            {t("settings.language.title")}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          {(["en", "zh"] as const).map((lang) => (
+                            <button
+                              key={lang}
+                              type="button"
+                              onClick={() => handleLanguage(lang)}
+                              className={`flex-1 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
+                                language === lang
+                                  ? "border-foreground bg-foreground text-background"
+                                  : "border-border hover:border-foreground/50"
+                              }`}
+                            >
+                              {lang === "en" ? "English" : "中文"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Appearance */}
+                      <div className="rounded-2xl border border-border bg-card p-5">
+                        <div className="flex items-center gap-3">
+                          <VoiceBadge n={13} />
+                          <span className="text-sm font-medium">
+                            {t("settings.appearance.title")}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          {(["light", "dark", "auto"] as const).map((th) => (
+                            <button
+                              key={th}
+                              type="button"
+                              onClick={() => setTheme(th)}
+                              className={`flex-1 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
+                                theme === th
+                                  ? "border-foreground bg-foreground text-background"
+                                  : "border-border hover:border-foreground/50"
+                              }`}
+                            >
+                              {t(`settings.appearance.${th}`)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  </section>
+                )}
 
-                  <VoiceRoleSelect
-                    n={8}
-                    label="对话音色"
-                    hint="首页对话里 CookTalk 回复时使用的声音。"
-                    value={conversationVoiceId}
-                    options={voiceOptions}
-                    onChange={setConversationVoiceId}
-                  />
-                  <VoiceRoleSelect
-                    n={9}
-                    label="烹饪音色"
-                    hint="烹饪模式朗读步骤和回答问题时使用的声音。"
-                    value={cookingVoiceId}
-                    options={voiceOptions}
-                    onChange={setCookingVoiceId}
-                  />
-
-                  <SwitchRow
-                    n={10}
-                    label={t("settings.voice.badges")}
-                    hint={t("settings.voice.badgesHint")}
-                    checked={voiceBadgesVisible}
-                    onCheckedChange={toggleVoiceBadges}
-                  />
-                  <SwitchRow
-                    n={11}
-                    label={t("settings.voice.alwaysListen")}
-                    hint={t("settings.voice.alwaysListenHint")}
-                    checked={listenMode === "always"}
-                    onCheckedChange={(v) => setListenMode(v ? "always" : "wake-word")}
-                  />
-                  <SwitchRow
-                    n={12}
-                    label={t("settings.voice.wakeLock")}
-                    hint={t("settings.voice.wakeLockHint")}
-                    checked={screenWakeLock}
-                    onCheckedChange={setScreenWakeLock}
-                  />
-                  <SwitchRow
-                    n={13}
-                    label={t("settings.voice.soundEffects")}
-                    hint={t("settings.voice.soundEffectsHint")}
-                    checked={soundEffects}
-                    onCheckedChange={setSoundEffects}
-                  />
-                </div>
-              </section>
-
-              {/* ── Language & Appearance ─────────────────────────────── */}
-              <section id="s3" className="grid gap-3 md:grid-cols-2">
-                {/* Language */}
-                <div className="rounded-2xl border border-border bg-card p-5">
-                  <div className="flex items-center gap-3">
-                    <VoiceBadge n={12} />
-                    <span className="text-sm font-medium">{t("settings.language.title")}</span>
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    {(["en", "zh"] as const).map((lang) => (
-                      <button
-                        key={lang}
-                        type="button"
-                        onClick={() => handleLanguage(lang)}
-                        className={`flex-1 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
-                          language === lang
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-border hover:border-foreground/50"
-                        }`}
-                      >
-                        {lang === "en" ? "English" : "中文"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Appearance */}
-                <div className="rounded-2xl border border-border bg-card p-5">
-                  <div className="flex items-center gap-3">
-                    <VoiceBadge n={13} />
-                    <span className="text-sm font-medium">{t("settings.appearance.title")}</span>
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    {(["light", "dark", "auto"] as const).map((th) => (
-                      <button
-                        key={th}
-                        type="button"
-                        onClick={() => setTheme(th)}
-                        className={`flex-1 rounded-xl border px-3 py-2.5 text-sm transition-colors ${
-                          theme === th
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-border hover:border-foreground/50"
-                        }`}
-                      >
-                        {t(`settings.appearance.${th}`)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              {/* ── Data management ───────────────────────────────────── */}
-              <section id="s5">
-                <h2 className="font-display text-2xl">{t("settings.data.title")}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">{t("settings.data.desc")}</p>
-                <div className="mt-5 grid gap-3 md:grid-cols-3">
-                  {/* Export */}
-                  <button
-                    type="button"
-                    onClick={handleExport}
-                    className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-5 text-left hover:border-foreground"
-                  >
-                    <Download className="h-5 w-5" strokeWidth={1.5} />
-                    <div className="font-display text-base">{t("settings.data.export")}</div>
-                    <VoiceHint>{t("settings.data.exportHint")}</VoiceHint>
-                  </button>
-
-                  {/* Import */}
-                  <button
-                    type="button"
-                    onClick={() => importRef.current?.click()}
-                    className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-5 text-left hover:border-foreground"
-                  >
-                    <Upload className="h-5 w-5" strokeWidth={1.5} />
-                    <div className="font-display text-base">{t("settings.data.import")}</div>
-                    <VoiceHint>{t("settings.data.importHint")}</VoiceHint>
-                  </button>
-                  <input
-                    ref={importRef}
-                    type="file"
-                    accept=".json"
-                    className="hidden"
-                    onChange={handleImport}
-                  />
-
-                  {/* Clear */}
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
+                {/* ── Data management ───────────────────────────────────── */}
+                {activeTab === "data" && (
+                  <section>
+                    <h2 className="font-display text-2xl">{t("settings.data.title")}</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">{t("settings.data.desc")}</p>
+                    <div className="mt-5 grid gap-3 md:grid-cols-3">
+                      {/* Export */}
                       <button
                         type="button"
-                        className="group flex flex-col items-start gap-2 rounded-2xl border border-destructive/30 bg-card p-5 text-left text-destructive hover:border-destructive"
+                        onClick={handleExport}
+                        className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-5 text-left hover:border-foreground"
                       >
-                        <Trash2 className="h-5 w-5" strokeWidth={1.5} />
-                        <div className="font-display text-base">{t("settings.data.clear")}</div>
-                        <VoiceHint>{t("settings.data.clearHint")}</VoiceHint>
+                        <Download className="h-5 w-5" strokeWidth={1.5} />
+                        <div className="font-display text-base">{t("settings.data.export")}</div>
+                        <VoiceHint>{t("settings.data.exportHint")}</VoiceHint>
                       </button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{t("settings.data.clearTitle")}</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {t("settings.data.clearDesc")}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{t("settings.data.cancel")}</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={handleClear}
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                        >
-                          {t("settings.data.confirm")}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-              </section>
+
+                      {/* Import */}
+                      <button
+                        type="button"
+                        onClick={() => importRef.current?.click()}
+                        className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-5 text-left hover:border-foreground"
+                      >
+                        <Upload className="h-5 w-5" strokeWidth={1.5} />
+                        <div className="font-display text-base">{t("settings.data.import")}</div>
+                        <VoiceHint>{t("settings.data.importHint")}</VoiceHint>
+                      </button>
+                      <input
+                        ref={importRef}
+                        type="file"
+                        accept=".json"
+                        className="hidden"
+                        onChange={handleImport}
+                      />
+
+                      {/* Clear */}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button
+                            type="button"
+                            className="group flex flex-col items-start gap-2 rounded-2xl border border-destructive/30 bg-card p-5 text-left text-destructive hover:border-destructive"
+                          >
+                            <Trash2 className="h-5 w-5" strokeWidth={1.5} />
+                            <div className="font-display text-base">{t("settings.data.clear")}</div>
+                            <VoiceHint>{t("settings.data.clearHint")}</VoiceHint>
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>{t("settings.data.clearTitle")}</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {t("settings.data.clearDesc")}
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>{t("settings.data.cancel")}</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={handleClear}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                              {t("settings.data.confirm")}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </section>
+                )}
+              </div>
             </div>
           </div>
         </div>

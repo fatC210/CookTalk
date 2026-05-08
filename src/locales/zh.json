@@ -39,7 +39,7 @@
       },
       "cloneVoice": {
         "title": "克隆任意声音",
-        "body": "30 秒音频就够了。让奶奶用她的声音讲述饺子菜谱 — 永久保存。",
+        "body": "至少 30 秒音频即可开始克隆，1-2 分钟更稳定。让奶奶用她的声音讲述饺子菜谱 — 永久保存。",
         "hint": "说\"添加新声音\""
       },
       "parallelTimers": {
@@ -121,7 +121,7 @@
     "recipesCount": "{{count}} 个菜谱",
     "searchPlaceholder": "搜索菜谱…",
     "orSaySearch": "或说\"搜索辣味\"",
-    "importVideo": "导入视频",
+    "importVideo": "导入",
     "voiceHint": "说\"打开第三个\"或\"只显示川菜\"",
     "all": "全部",
     "filter": "筛选",
@@ -251,18 +251,34 @@
   },
   "voices": {
     "title": "声音库",
+    "metaDescription": "管理默认声音，克隆家人声音来朗读你的菜谱。",
     "subtitle": "声音克隆 · ElevenLabs",
     "description": "内置日常烹饪朗读音色，以及你克隆的家人声音。可以为每个菜谱绑定声音，也可以全局设置。",
+    "languages": {
+      "en": "英文",
+      "zh": "中文"
+    },
+    "clonedVoice": "克隆声音",
+    "elevenLabsVoiceFallback": "ElevenLabs 音色",
     "cloneNew": "克隆新声音",
     "myCloned": "我克隆的声音",
     "voiceHint": "说\"播放妈妈的声音\"或\"设置奶奶为默认\"",
     "preview": "预听",
+    "generatingPreview": "生成中",
     "default": "默认",
     "samples": "{{count}} 个样本",
-    "record30s": "录制 30 秒",
+    "record30s": "录制 30 秒至 3 分钟",
     "addNewVoice": "说\"添加新声音\"",
     "presetNarrators": "预设朗读者",
     "presetFree": "使用你的 ElevenLabs 密钥免费使用。",
+    "elevenLabsVoices": "ElevenLabs 支持音色",
+    "elevenLabsVoicesDesc": "已加载 {{count}} 个当前账号可用音色。",
+    "elevenLabsVoicesLocked": "填写并验证 ElevenLabs API 密钥后显示。",
+    "configureKeyTitle": "先验证 ElevenLabs API 密钥",
+    "configureKeyBody": "应用只会在密钥验证通过后请求 ElevenLabs 音色列表，并展示当前账号支持的全部可用声音。",
+    "loadingElevenLabsVoices": "正在加载 ElevenLabs 音色…",
+    "loadElevenLabsVoicesFailed": "ElevenLabs 音色加载失败，请检查密钥后重试。",
+    "noElevenLabsVoices": "当前账号没有返回可用音色。",
     "configureKey": "配置密钥",
     "startRecording": "开始录音",
     "stopRecording": "停止录音",
@@ -276,13 +292,24 @@
     "setDefault": "设为默认",
     "stop": "停止",
     "cloneDialogTitle": "克隆声音",
-    "recordOrUpload": "录制 30 秒清晰语音，或上传音频文件。",
+    "recordOrUpload": "录制至少 30 秒、最多 3 分钟的清晰语音，或上传音频文件。建议录 1-2 分钟。",
+    "samplePromptTitle": "朗读示例（可循环朗读 1-2 分钟）",
+    "samplePrompt": "今天我们来做一道家常番茄炒蛋。先把两个番茄切成小块，鸡蛋打散后加一点盐。锅热后倒油，先炒鸡蛋，凝固后盛出。再放番茄，小火炒出汤汁，加入鸡蛋翻匀。最后撒一点葱花，味道酸甜，适合配米饭。这道菜颜色明亮，做法简单，早餐、午餐和晚餐都很合适。",
     "seconds30": "30 秒",
+    "recordingMinimumHint": "至少录满 30 秒才能继续，最多可录 3 分钟。",
+    "recordingMaxReached": "已录满 3 分钟，录音已自动停止。",
     "recordedAudio": "已录制 {{count}} 秒音频",
+    "recordingTooShort": "录音不足 30 秒，请重新录制。",
+    "recordingTooShortInline": "录音时长不足 30 秒，无法继续，请重新录制。",
     "rerecord": "重新录制",
     "audioSelected": "已选择音频文件",
+    "audioSelectedWithName": "已选择：{{name}}",
     "namePrompt": "给这个声音起一个容易识别的名字。",
     "namePlaceholder": "例如：妈妈、奶奶、爸爸…",
+    "elevenLabsKeyMissingFull": "未配置 ElevenLabs API 密钥。请在设置中添加。",
+    "elevenLabsKeyMissingShort": "未配置 ElevenLabs API 密钥。",
+    "previewText": "你好，我是 CookTalk 的厨房朗读声音。今天我们来做一道简单的家常菜：先把食材洗净切好，热锅后倒入少量油，等香味出来再加入主要食材，保持中火慢慢翻炒。接着加入调味料，尝一下咸淡，最后撒上葱花就可以装盘。做饭的时候别着急，一步一步来，味道会更稳定。",
+    "previewPresetText": "你好，我是 CookTalk 的厨房朗读声音。今天我们来做一道简单的家常菜：先把食材洗净切好，热锅后倒入少量油，等香味出来再加入主要食材，保持中火慢慢翻炒。接着加入调味料，尝一下咸淡，最后撒上葱花就可以装盘。做饭的时候别着急，一步一步来，味道会更稳定。",
     "authorizationRequired": "需要授权",
     "authorizationIntro": "克隆此声音即表示你确认：",
     "authorizationRight": "你有权使用这段声音录音。",
@@ -423,10 +450,12 @@
     "sections": {
       "apiKeys": "API 密钥",
       "voice": "语音与唤醒",
-      "coverImages": "封面图片",
-      "language": "语言",
-      "appearance": "外观",
+      "preferences": "偏好",
       "data": "数据"
+    },
+    "preferences": {
+      "title": "偏好",
+      "desc": "设置界面语言和外观显示方式。"
     },
     "voice": {
       "title": "语音与唤醒词",
@@ -445,7 +474,17 @@
       "wakeLock": "屏幕常亮",
       "wakeLockHint": "“保持屏幕常亮”",
       "soundEffects": "确认时播放音效",
-      "soundEffectsHint": "轻微点击声"
+      "soundEffectsHint": "轻微点击声",
+      "conversationVoice": "对话音色",
+      "conversationVoiceHint": "首页对话里 CookTalk 回复时使用的声音。",
+      "cookingVoice": "烹饪音色",
+      "cookingVoiceHint": "烹饪模式朗读步骤和回答问题时使用的声音。",
+      "followDefaultVoice": "跟随默认音色",
+      "voiceSelectDisabled": "请先验证 ElevenLabs API 密钥",
+      "configureElevenLabsFirst": "填写并验证 ElevenLabs API 密钥后，才会显示 ElevenLabs 支持的音色。",
+      "loadingElevenLabsVoices": "正在加载 ElevenLabs 支持音色…",
+      "elevenLabsVoicesFailed": "ElevenLabs 音色加载失败，请检查密钥后重试。",
+      "elevenLabsVoicesLoaded": "已加载 {{count}} 个当前账号可用音色。"
     },
     "aria": {
       "showSecret": "显示内容",
@@ -470,7 +509,7 @@
       },
       "voice": {
         "title": "选择默认声音",
-        "body": "从预设中选择，或用 30 秒样本克隆家人的声音。",
+        "body": "从预设中选择，或用至少 30 秒、建议 1-2 分钟的样本克隆家人的声音。",
         "action": "使用这个声音"
       },
       "try": {

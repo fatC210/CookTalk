@@ -14,8 +14,9 @@ interface UseVoiceSessionOptions {
   language: "en" | "zh";
   listenMode: "always" | "wake-word";
   manualWakeActive: boolean;
+  awakeResetKey?: string | number | boolean;
   commandDurationMs?: number;
-  onWake?: (phrase: string) => void;
+  onWake?: (event: VoiceWakeEvent) => void;
   onTranscript: (transcript: string) => Promise<void> | void;
   onError?: (message: string) => void;
 }
@@ -34,12 +35,35 @@ type BrowserSpeechRecognition = InstanceType<
   NonNullable<ReturnType<typeof getSpeechRecognitionConstructor>>
 >;
 
+type VoiceWakeEvent = {
+  phrase: string;
+  source: "manual" | "wake-word" | "always-listen";
+  transcript?: string;
+};
+
+type VoiceActivityStats = {
+  activeMs: number;
+  peak: number;
+};
+
+type VoiceActivityMonitor = {
+  stop: () => void;
+  getStats: () => VoiceActivityStats;
+};
+
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 export function useVoiceSession({
   enabled,
   wakeWords,
   language,
   listenMode,
   manualWakeActive,
+  awakeResetKey,
   commandDurationMs = 5000,
   onWake,
   onTranscript,
@@ -57,6 +81,8 @@ export function useVoiceSession({
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCapturingRef = useRef(false);
   const shouldListenRef = useRef(false);
+  const isAwakeRef = useRef(false);
+  const isAssistantSpeakingRef = useRef(false);
   const onTranscriptRef = useRef(onTranscript);
   const onWakeRef = useRef(onWake);
   const onErrorRef = useRef(onError);
@@ -78,6 +104,24 @@ export function useVoiceSession({
     onErrorRef.current = onError;
   }, [onTranscript, onWake, onError]);
 
+  useEffect(() => {
+    isAwakeRef.current = false;
+    if (enabled && !isMuted && listenMode === "wake-word") {
+      setStatus("listening");
+    }
+  }, [awakeResetKey, enabled, isMuted, listenMode]);
+
+  useEffect(() => {
+    const handleAssistantSpeaking = (event: Event) => {
+      isAssistantSpeakingRef.current = Boolean(
+        (event as CustomEvent<{ active: boolean }>).detail.active,
+      );
+    };
+
+    window.addEventListener("cooktalk:assistant-speaking", handleAssistantSpeaking);
+    return () => window.removeEventListener("cooktalk:assistant-speaking", handleAssistantSpeaking);
+  }, []);
+
   const stopRecognition = useCallback(() => {
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
@@ -94,7 +138,7 @@ export function useVoiceSession({
     if (!shouldListenRef.current || isCapturingRef.current || isMuted) return;
     try {
       recognitionRef.current?.start();
-      setStatus("listening");
+      setStatus(isAwakeRef.current ? "awake" : "listening");
     } catch {
       restartTimerRef.current = setTimeout(restartRecognition, 600);
     }
@@ -125,6 +169,7 @@ export function useVoiceSession({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
         streamRef.current = stream;
+        const voiceActivity = startVoiceActivityMonitor(stream);
 
         const mimeType = getSupportedAudioMimeType();
         const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -146,12 +191,18 @@ export function useVoiceSession({
           }, commandDurationMs);
         });
 
+        voiceActivity.stop();
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
+
+        if (!hasEnoughVoiceActivity(voiceActivity.getStats(), audioBlob)) {
+          throw new Error("没有检测到清晰语音，请靠近麦克风后再说一次。");
+        }
+
         setStatus("transcribing");
 
         const transcript = (await transcribeWithElevenLabs(audioBlob)).trim();
-        if (!transcript) throw new Error("没有听清指令，请再说一次。");
+        if (!isMeaningfulSpeechPhrase(transcript)) throw new Error("没有听清指令，请再说一次。");
         setLastTranscript(transcript);
         setStatus("thinking");
         await onTranscriptRef.current(transcript);
@@ -170,25 +221,36 @@ export function useVoiceSession({
         }
       }
     },
-    [commandDurationMs, hasElevenLabsKey, isMuted, notifyMissingElevenLabsKey, restartRecognition, stopRecognition],
+    [
+      commandDurationMs,
+      hasElevenLabsKey,
+      isMuted,
+      notifyMissingElevenLabsKey,
+      restartRecognition,
+      stopRecognition,
+    ],
   );
 
   useEffect(() => {
     const wakeManually = () => {
       if (!enabled || isMuted) return;
-      onWakeRef.current?.("manual");
-      void captureCommand({ force: true });
+      isAwakeRef.current = true;
+      setError(null);
+      setStatus("awake");
+      onWakeRef.current?.({ phrase: "manual", source: "manual" });
+      restartRecognition();
     };
 
     window.addEventListener("cooktalk:manual-wake", wakeManually);
     if (manualWakeActive) wakeManually();
 
     return () => window.removeEventListener("cooktalk:manual-wake", wakeManually);
-  }, [captureCommand, enabled, isMuted, manualWakeActive]);
+  }, [enabled, isMuted, manualWakeActive, restartRecognition]);
 
   useEffect(() => {
     shouldListenRef.current = enabled && !isMuted;
     if (!enabled || isMuted) {
+      isAwakeRef.current = false;
       stopRecognition();
       setStatus("idle");
       return;
@@ -214,6 +276,8 @@ export function useVoiceSession({
       }
       phrase = phrase.trim();
       if (!phrase) return;
+      if (!isMeaningfulSpeechPhrase(phrase)) return;
+      if (isAssistantSpeakingRef.current) return;
 
       setLastTranscript(phrase);
       if (listenMode === "always") {
@@ -221,7 +285,17 @@ export function useVoiceSession({
           notifyMissingElevenLabsKey();
           return;
         }
-        onWakeRef.current?.("always-listen");
+        onWakeRef.current?.({ phrase, source: "always-listen", transcript: phrase });
+        void onTranscriptRef.current(stripWakeWords(phrase, wakeWords) || phrase);
+        return;
+      }
+
+      if (isAwakeRef.current) {
+        if (!hasElevenLabsKey) {
+          notifyMissingElevenLabsKey();
+          return;
+        }
+        setStatus("awake");
         void onTranscriptRef.current(stripWakeWords(phrase, wakeWords) || phrase);
         return;
       }
@@ -231,9 +305,11 @@ export function useVoiceSession({
           notifyMissingElevenLabsKey();
           return;
         }
-        onWakeRef.current?.(phrase);
+        const transcript = stripWakeWords(phrase, wakeWords);
+        isAwakeRef.current = true;
+        onWakeRef.current?.({ phrase, source: "wake-word", transcript });
         setStatus("awake");
-        void captureCommand({ force: true });
+        if (transcript) void onTranscriptRef.current(transcript);
       }
     };
 
@@ -255,6 +331,7 @@ export function useVoiceSession({
 
     return () => {
       shouldListenRef.current = false;
+      isAwakeRef.current = false;
       recognition.onresult = null;
       recognition.onerror = null;
       recognition.onend = null;
@@ -262,7 +339,6 @@ export function useVoiceSession({
       if (recognitionRef.current === recognition) recognitionRef.current = null;
     };
   }, [
-    captureCommand,
     enabled,
     hasElevenLabsKey,
     isMuted,
@@ -289,4 +365,73 @@ function getSupportedAudioMimeType(): string | undefined {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/wav"];
   if (typeof MediaRecorder === "undefined") return undefined;
   return candidates.find((type) => MediaRecorder.isTypeSupported(type));
+}
+
+function startVoiceActivityMonitor(stream: MediaStream): VoiceActivityMonitor {
+  const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    return {
+      stop: () => undefined,
+      getStats: () => ({ activeMs: 1_000, peak: 1 }),
+    };
+  }
+
+  const context = new AudioContextConstructor();
+  const analyser = context.createAnalyser();
+  const source = context.createMediaStreamSource(stream);
+  analyser.fftSize = 1024;
+  const samples = new Uint8Array(analyser.frequencyBinCount);
+  let animationFrame = 0;
+  let activeMs = 0;
+  let peak = 0;
+  let lastTime = performance.now();
+  let stopped = false;
+
+  source.connect(analyser);
+
+  const tick = () => {
+    if (stopped) return;
+
+    analyser.getByteTimeDomainData(samples);
+    let total = 0;
+    for (const sample of samples) {
+      const normalized = (sample - 128) / 128;
+      total += normalized * normalized;
+    }
+
+    const rms = Math.sqrt(total / samples.length);
+    const now = performance.now();
+    const elapsed = now - lastTime;
+    lastTime = now;
+
+    if (rms >= 0.025) activeMs += elapsed;
+    peak = Math.max(peak, rms);
+    animationFrame = window.requestAnimationFrame(tick);
+  };
+
+  tick();
+
+  return {
+    stop: () => {
+      stopped = true;
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+      source.disconnect();
+      void context.close().catch(() => undefined);
+    },
+    getStats: () => ({ activeMs, peak }),
+  };
+}
+
+function hasEnoughVoiceActivity(stats: VoiceActivityStats, blob: Blob): boolean {
+  return blob.size > 1_000 && stats.activeMs >= 320 && stats.peak >= 0.035;
+}
+
+function isMeaningfulSpeechPhrase(phrase: string): boolean {
+  const normalized = phrase
+    .replace(/[，。！？、,.!?\s]/g, "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return false;
+  if (/^(嗯+|啊+|呃+|额+|唔+|哦+|噢+|um+|uh+|er+)$/i.test(normalized)) return false;
+  return true;
 }

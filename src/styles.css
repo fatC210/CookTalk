@@ -4,9 +4,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+.secret-input::-ms-reveal,
+.secret-input::-ms-clear {
+  display: none;
+}
+
 @theme inline {
-  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: ui-sans-serif, system-ui, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -45,23 +50,23 @@
   --radius: 0.875rem;
 
   /* Warm Sand palette */
-  --background: oklch(0.985 0.008 80);          /* #faf8f5 cream */
-  --foreground: oklch(0.28 0.02 60);            /* deep ink */
+  --background: oklch(0.985 0.008 80); /* #faf8f5 cream */
+  --foreground: oklch(0.28 0.02 60); /* deep ink */
   --card: oklch(0.97 0.012 80);
   --card-foreground: oklch(0.28 0.02 60);
   --popover: oklch(0.985 0.008 80);
   --popover-foreground: oklch(0.28 0.02 60);
 
-  --primary: oklch(0.48 0.04 55);               /* #8b7355 clay-brown */
+  --primary: oklch(0.48 0.04 55); /* #8b7355 clay-brown */
   --primary-foreground: oklch(0.985 0.008 80);
 
-  --secondary: oklch(0.93 0.018 80);            /* #f0ebe3 sand */
+  --secondary: oklch(0.93 0.018 80); /* #f0ebe3 sand */
   --secondary-foreground: oklch(0.32 0.025 55);
 
   --muted: oklch(0.93 0.018 80);
   --muted-foreground: oklch(0.5 0.018 60);
 
-  --accent: oklch(0.78 0.05 75);                /* #c9b99a sand-deep */
+  --accent: oklch(0.78 0.05 75); /* #c9b99a sand-deep */
   --accent-foreground: oklch(0.28 0.02 60);
 
   --destructive: oklch(0.55 0.18 28);
@@ -103,21 +108,6 @@
   --ring: oklch(0.78 0.05 75);
 }
 
-@font-face {
-  font-family: "Space Grotesk";
-  font-style: normal;
-  font-weight: 300 700;
-  font-display: swap;
-  src: url("https://fonts.gstatic.com/s/spacegrotesk/v16/V8mDoQDjQSkFtoMM3T6r8E7mF71Q-gOoraIAEj7aUUM.woff2") format("woff2");
-}
-@font-face {
-  font-family: "DM Sans";
-  font-style: normal;
-  font-weight: 300 700;
-  font-display: swap;
-  src: url("https://fonts.gstatic.com/s/dmsans/v15/rP2tp2ywxg089UriI5-g7vlIZbxDJUVR.woff2") format("woff2");
-}
-
 @layer base {
   * {
     border-color: var(--color-border);
@@ -129,13 +119,18 @@
     width: 0;
     height: 0;
   }
-  html, body {
+  html,
+  body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
   }
-  h1, h2, h3, h4, h5 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5 {
     font-family: var(--font-display);
     letter-spacing: -0.02em;
   }
@@ -162,6 +157,12 @@
     color: var(--color-muted-foreground);
     font-family: var(--font-sans);
     letter-spacing: 0.01em;
+  }
+  .voice-preview-wave-bar {
+    transform-origin: center;
+    animation-name: voice-preview-wave;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
   }
   .page-hero {
     border-bottom: 1px solid color-mix(in oklch, var(--color-border) 60%, transparent);
@@ -261,5 +262,88 @@
       radial-gradient(circle at 92% 4%, oklch(0.78 0.05 75 / 0.12), transparent 28rem),
       radial-gradient(circle at 0% 100%, oklch(0.67 0.08 42 / 0.1), transparent 30rem),
       var(--color-background);
+  }
+  .settings-page.app-page-bg {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+  .settings-page.app-page-bg::before,
+  .settings-page.app-page-bg::after {
+    position: fixed;
+  }
+  .settings-page .page-hero {
+    flex: 0 0 auto;
+  }
+  .settings-main {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .settings-content-container {
+    height: 100%;
+    min-height: 0;
+    padding-block: clamp(1rem, 2.4vh, 2rem);
+  }
+  .settings-layout {
+    height: 100%;
+    min-height: 0;
+  }
+  .settings-sidebar,
+  .settings-tab-panel {
+    min-height: 0;
+  }
+  .settings-tab-scroll {
+    max-height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+    padding-bottom: 0.25rem;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--color-clay) 45%, transparent) transparent;
+  }
+  .settings-tab-scroll::-webkit-scrollbar {
+    display: block;
+    width: 0.5rem;
+    height: 0.5rem;
+  }
+  .settings-tab-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .settings-tab-scroll::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: color-mix(in oklch, var(--color-clay) 45%, transparent);
+  }
+  @media (max-width: 1023px) {
+    .settings-page.app-page-bg {
+      height: auto;
+      min-height: 100dvh;
+      overflow: hidden;
+    }
+    .settings-main {
+      overflow-y: visible;
+    }
+    .settings-content-container,
+    .settings-layout {
+      height: auto;
+    }
+    .settings-tab-scroll {
+      max-height: none;
+      overflow: visible;
+      padding-right: 0;
+    }
+  }
+}
+
+@keyframes voice-preview-wave {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
   }
 }

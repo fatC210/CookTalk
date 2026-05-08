@@ -148,6 +148,7 @@ export const useAppStore = create<AppState>()(
     {
       name: "cooktalk-app",
       partialize: ({ manualWakeActive, manualWakeExpiresAt, ...state }) => state,
+      skipHydration: true,
     },
   ),
 );

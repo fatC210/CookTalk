@@ -30,6 +30,7 @@ import {
   speakWithElevenLabs,
   type VoiceStatus,
 } from "@/lib/voice-pipeline";
+import { stopActiveVoicePlayback } from "@/lib/voice-playback";
 
 export const Route = createFileRoute("/cook")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -286,6 +287,10 @@ function CookPage() {
       void speak(`${label} is done.`);
     });
   }, [setOnCompleted, speak]);
+
+  useEffect(() => {
+    return () => stopActiveVoicePlayback();
+  }, []);
 
   // WakeLock
   useEffect(() => {

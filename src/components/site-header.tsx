@@ -30,7 +30,10 @@ export function SiteHeader() {
   }, [mobileOpen]);
 
   return (
-    <header ref={headerRef} className="sticky top-0 z-40 border-b border-border/20 bg-background/65 backdrop-blur-xl">
+    <header
+      ref={headerRef}
+      className="sticky top-0 z-40 border-b border-border/20 bg-background/65 backdrop-blur-xl"
+    >
       <div className="mx-auto grid h-14 max-w-7xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 sm:h-16 sm:gap-4 sm:px-6">
         <Link to="/" className="group flex min-w-0 items-center gap-2.5">
           <img
@@ -59,9 +62,9 @@ export function SiteHeader() {
               key={l.to}
               to={l.to}
               activeOptions={{ exact: l.to === "/" }}
-              className="relative rounded-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground data-[status=active]:text-foreground data-[status=active]:bg-secondary"
+              className="relative inline-flex h-9 shrink-0 items-center justify-center rounded-full px-4 text-sm leading-none text-muted-foreground transition-colors before:absolute before:inset-0 before:rounded-full before:bg-secondary before:opacity-0 before:transition-opacity hover:text-foreground data-[status=active]:text-foreground data-[status=active]:before:opacity-100"
             >
-              {l.label}
+              <span className="relative z-10">{l.label}</span>
             </Link>
           ))}
         </nav>
@@ -91,10 +94,10 @@ export function SiteHeader() {
                 key={l.to}
                 to={l.to}
                 activeOptions={{ exact: l.to === "/" }}
-                className="rounded-xl px-4 py-3 text-sm text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary data-[status=active]:text-foreground data-[status=active]:bg-secondary"
+                className="relative inline-flex h-11 items-center rounded-xl px-4 text-sm leading-none text-muted-foreground transition-colors before:absolute before:inset-0 before:rounded-xl before:bg-secondary before:opacity-0 before:transition-opacity hover:text-foreground hover:before:opacity-100 data-[status=active]:text-foreground data-[status=active]:before:opacity-100"
                 onClick={() => setMobileOpen(false)}
               >
-                {l.label}
+                <span className="relative z-10">{l.label}</span>
               </Link>
             ))}
           </div>

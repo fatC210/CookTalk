@@ -28,16 +28,19 @@ interface ChatCompletionResponse {
 }
 
 interface ImageGenerationResponse {
-  data: Array<{ b64_json: string }>;
+  data: Array<{ b64_json?: string; url?: string }>;
+  output_format?: "png" | "webp" | "jpeg";
 }
 
 export const DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_LLM_MODEL = "gpt-4o-mini";
+export const DEFAULT_IMAGE_MODEL = "gpt-image-1.5";
 const API_VALIDATION_TIMEOUT_MS = 10_000;
+const OPENAI_COMPATIBLE_PROXY_PATH = "/api/openai-compatible";
 
 export function normalizeOpenAIBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  return trimmed.replace(/\/chat\/completions$/i, "");
+  return trimmed.replace(/\/chat\/completions$/i, "").replace(/\/images\/generations$/i, "");
 }
 
 export function isValidOpenAIBaseUrl(baseUrl: string): boolean {
@@ -57,10 +60,45 @@ async function fetchWithTimeout(
   const timeout = window.setTimeout(() => controller.abort(), API_VALIDATION_TIMEOUT_MS);
 
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetchOpenAICompatible(input, { ...init, signal: controller.signal });
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function getRequestUrl(input: RequestInfo | URL): string {
+  if (input instanceof URL) return input.toString();
+  if (typeof input === "string") return input;
+  return input.url;
+}
+
+function shouldProxyOpenAICompatibleRequest(url: string): boolean {
+  if (typeof window === "undefined") return false;
+
+  try {
+    return new URL(url).origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function getOpenAICompatibleProxyUrl(url: string): string {
+  const proxyUrl = new URL(OPENAI_COMPATIBLE_PROXY_PATH, window.location.origin);
+  proxyUrl.searchParams.set("url", url);
+  return proxyUrl.toString();
+}
+
+async function fetchOpenAICompatible(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const url = getRequestUrl(input);
+
+  if (shouldProxyOpenAICompatibleRequest(url)) {
+    return await fetch(getOpenAICompatibleProxyUrl(url), init);
+  }
+
+  return await fetch(input, init);
 }
 
 export async function validateOpenAIChatConfig(config: Required<LLMConfig>): Promise<boolean> {
@@ -80,7 +118,13 @@ export async function validateOpenAIChatConfig(config: Required<LLMConfig>): Pro
       }),
     });
 
-    return response.ok;
+    if (!response.ok) return false;
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) return false;
+
+    const data = (await response.json()) as { id?: unknown; object?: unknown };
+    return data.id === config.model || data.object === "model";
   } catch {
     return false;
   }
@@ -115,7 +159,7 @@ export class LLMService {
   }
 
   async chat(messages: ChatMessage[]): Promise<string> {
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+    const response = await fetchOpenAICompatible(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
@@ -196,36 +240,56 @@ export class ImageGenService {
   private apiKey: string;
   private model: string;
 
-  constructor(endpoint: string, apiKey: string, model: string = "dall-e-3") {
-    this.endpoint = endpoint;
+  constructor(endpoint: string, apiKey: string, model: string = DEFAULT_IMAGE_MODEL) {
+    this.endpoint = normalizeOpenAIBaseUrl(endpoint);
     this.apiKey = apiKey;
-    this.model = model;
+    this.model = model.trim() || DEFAULT_IMAGE_MODEL;
   }
 
   async generateImage(prompt: string): Promise<Blob> {
-    const response = await fetch(`${this.endpoint}/images/generations`, {
+    const isGptImageModel = this.model.toLowerCase().startsWith("gpt-image-");
+    const requestBody: Record<string, unknown> = {
+      model: this.model,
+      prompt,
+      n: 1,
+      size: "1024x1024",
+    };
+
+    if (isGptImageModel) {
+      requestBody.output_format = "png";
+      requestBody.quality = "medium";
+    } else {
+      requestBody.response_format = "b64_json";
+    }
+
+    const response = await fetchOpenAICompatible(`${this.endpoint}/images/generations`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: this.model,
-        prompt,
-        n: 1,
-        size: "1024x1024",
-        response_format: "b64_json",
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) throw new Error(`Image gen failed: ${response.status}`);
     const data = (await response.json()) as ImageGenerationResponse;
-    const b64 = data.data[0].b64_json;
+    const image = data.data?.[0];
+    if (!image) throw new Error("Image gen failed: empty response");
+
+    if (image.url) {
+      const imageResponse = await fetch(image.url);
+      if (!imageResponse.ok) throw new Error(`Image download failed: ${imageResponse.status}`);
+      return await imageResponse.blob();
+    }
+
+    const b64 = image.b64_json;
+    if (!b64) throw new Error("Image gen failed: missing image data");
+
     const binary = atob(b64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    return new Blob([bytes], { type: "image/png" });
+    return new Blob([bytes], { type: `image/${data.output_format ?? "png"}` });
   }
 }

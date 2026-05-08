@@ -2,6 +2,7 @@ import { getApiKey } from "@/lib/crypto";
 import { db, type Recipe } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { getConfiguredLLMService } from "@/lib/llm";
+import { claimVoicePlayback } from "@/lib/voice-playback";
 
 export type VoiceStatus =
   | "unsupported"
@@ -112,11 +113,10 @@ export function normalizeSpeechText(text: string): string {
 }
 
 export function hasWakeWord(text: string, wakeWords: string[]): boolean {
-  const normalized = normalizeSpeechText(text).replace(/\s+/g, "");
-  return wakeWords.some((word) => {
-    const candidate = normalizeSpeechText(word).replace(/\s+/g, "");
-    return candidate.length > 0 && normalized.includes(candidate);
-  });
+  const normalized = normalizeWakeText(text);
+  return wakeWords.some((word) =>
+    getWakeWordCandidates(word).some((candidate) => includesWakeCandidate(normalized, candidate)),
+  );
 }
 
 export function stripWakeWords(text: string, wakeWords: string[]): string {
@@ -125,6 +125,12 @@ export function stripWakeWords(text: string, wakeWords: string[]): string {
     if (!word.trim()) continue;
     cleaned = cleaned.replace(new RegExp(escapeRegExp(word), "ig"), "");
   }
+  cleaned = cleaned
+    .replace(
+      /^\s*(?:hey|hi|嘿|嗨)\s*(?:cook\s*talk|cooktalk|cook\s*top|cool\s*talk|could\s*talk|库克\s*(?:托克|talk)?|酷\s*talk|厨语)\s*/i,
+      "",
+    )
+    .replace(/^\s*(?:嘿|嗨)?\s*厨语\s*/i, "");
   return cleaned.replace(/^[，。！？、,.!?\s]+/, "").trim();
 }
 
@@ -309,19 +315,104 @@ function playAudioBlob(blob: Blob): Promise<void> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    let playback: ReturnType<typeof claimVoicePlayback> | null = null;
+    let settled = false;
+
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      callback();
+    };
+
+    playback = claimVoicePlayback(audio, {
+      cleanup: () => URL.revokeObjectURL(url),
+      onStop: () => settle(resolve),
+    });
+
     audio.onended = () => {
-      URL.revokeObjectURL(url);
-      resolve();
+      playback?.release();
+      settle(resolve);
     };
     audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("语音播放失败"));
+      playback?.release();
+      settle(() => reject(new Error("语音播放失败")));
     };
     audio.play().catch((error: unknown) => {
-      URL.revokeObjectURL(url);
-      reject(error instanceof Error ? error : new Error("语音播放失败"));
+      playback?.release();
+      settle(() => reject(error instanceof Error ? error : new Error("语音播放失败")));
     });
   });
+}
+
+function normalizeWakeText(text: string): string {
+  return normalizeSpeechText(text)
+    .replace(/[\s\-_'’]+/g, "")
+    .replace(/[嘿嗨]/g, "hey")
+    .replace(/库克/g, "cook")
+    .replace(/托克|脱口/g, "talk")
+    .replace(/酷/g, "cool");
+}
+
+function getWakeWordCandidates(word: string): string[] {
+  const candidate = normalizeWakeText(word);
+  if (!candidate) return [];
+
+  const candidates = new Set([candidate]);
+  if (candidate === "heycooktalk" || candidate.includes("cooktalk")) {
+    candidates.add("heycooktalk");
+    candidates.add("heycooktok");
+    candidates.add("heycooktock");
+    candidates.add("heycooktop");
+    candidates.add("heycooltalk");
+    candidates.add("heycouldtalk");
+  }
+
+  return [...candidates];
+}
+
+function includesWakeCandidate(text: string, candidate: string): boolean {
+  if (!candidate) return false;
+  if (text.includes(candidate)) return true;
+  if (candidate.length < 8) return false;
+
+  const maxDistance = candidate.length >= 10 ? 2 : 1;
+  const minLength = Math.max(1, candidate.length - maxDistance);
+  const maxLength = candidate.length + maxDistance;
+
+  for (let start = 0; start < text.length; start += 1) {
+    for (
+      let length = minLength;
+      length <= maxLength && start + length <= text.length;
+      length += 1
+    ) {
+      const segment = text.slice(start, start + length);
+      if (levenshteinDistance(segment, candidate, maxDistance) <= maxDistance) return true;
+    }
+  }
+
+  return false;
+}
+
+function levenshteinDistance(a: string, b: string, maxDistance: number): number {
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    let rowMin = current[0];
+
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const next = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+      current[j] = next;
+      rowMin = Math.min(rowMin, next);
+    }
+
+    if (rowMin > maxDistance) return maxDistance + 1;
+    previous = current;
+  }
+
+  return previous[b.length];
 }
 
 function escapeRegExp(text: string): string {

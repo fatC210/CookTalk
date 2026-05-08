@@ -129,10 +129,13 @@ function RootComponent() {
   const setHasElevenLabsKey = useAppStore((s) => s.setHasElevenLabsKey);
 
   useEffect(() => {
-    removeSampleRecipes().catch(console.error);
-    getApiKey("elevenlabs")
-      .then((key) => setHasElevenLabsKey(!!key))
-      .catch(console.error);
+    void (async () => {
+      if (!useAppStore.persist.hasHydrated()) await useAppStore.persist.rehydrate();
+      await removeSampleRecipes().catch(console.error);
+      await getApiKey("elevenlabs")
+        .then((key) => setHasElevenLabsKey(!!key))
+        .catch(console.error);
+    })();
   }, [setHasElevenLabsKey]);
 
   useEffect(() => {

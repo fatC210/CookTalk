@@ -39,7 +39,7 @@
       },
       "cloneVoice": {
         "title": "Clone any voice",
-        "body": "30 seconds of audio is enough. Have grandma narrate her dumpling recipe — forever.",
+        "body": "At least 30 seconds of audio is enough to start cloning, while 1-2 minutes is more stable. Have Grandma narrate her dumpling recipe — forever.",
         "hint": "Say \"add a new voice\""
       },
       "parallelTimers": {
@@ -251,18 +251,34 @@
   },
   "voices": {
     "title": "Voices",
+    "metaDescription": "Manage default voices and clone family voices to narrate your recipes.",
     "subtitle": "Voice cloning · ElevenLabs",
     "description": "Preset narrators for everyday cooking, plus your own cloned family voices. Bind a voice per recipe — or globally.",
+    "languages": {
+      "en": "English",
+      "zh": "Chinese"
+    },
+    "clonedVoice": "Cloned voice",
+    "elevenLabsVoiceFallback": "ElevenLabs voice",
     "cloneNew": "Clone a new voice",
     "myCloned": "My cloned voices",
     "voiceHint": "Say \"play Mom\" or \"set Grandma as default\"",
     "preview": "Preview",
+    "generatingPreview": "Generating",
     "default": "default",
     "samples": "{{count}} samples",
-    "record30s": "Record 30 seconds",
+    "record30s": "Record 30s to 3min",
     "addNewVoice": "Say \"add a new voice\"",
     "presetNarrators": "Preset narrators",
     "presetFree": "Free with your ElevenLabs key.",
+    "elevenLabsVoices": "ElevenLabs supported voices",
+    "elevenLabsVoicesDesc": "{{count}} voices available for the current account.",
+    "elevenLabsVoicesLocked": "Add and validate an ElevenLabs API key to show voices.",
+    "configureKeyTitle": "Validate an ElevenLabs API key first",
+    "configureKeyBody": "CookTalk only requests the ElevenLabs voice list after the key is validated, then shows every voice available to the current account.",
+    "loadingElevenLabsVoices": "Loading ElevenLabs voices…",
+    "loadElevenLabsVoicesFailed": "Could not load ElevenLabs voices. Check the key and try again.",
+    "noElevenLabsVoices": "No available voices were returned for this account.",
     "configureKey": "Configure key",
     "startRecording": "Start recording",
     "stopRecording": "Stop recording",
@@ -276,13 +292,24 @@
     "setDefault": "Set default",
     "stop": "Stop",
     "cloneDialogTitle": "Clone a voice",
-    "recordOrUpload": "Record 30 seconds of clear speech, or upload an audio file.",
+    "recordOrUpload": "Record at least 30 seconds and up to 3 minutes of clear speech, or upload an audio file. 1-2 minutes is recommended.",
+    "samplePromptTitle": "Sample script (repeat for 1-2 minutes)",
+    "samplePrompt": "Today we are making simple tomato eggs. First, cut two tomatoes into small pieces and beat the eggs with a little salt. Heat the pan, add oil, cook the eggs until they set, then take them out. Add the tomatoes, simmer until juicy, return the eggs, and stir everything together. Finish with scallions and serve with rice. This dish is bright, comforting, and easy to make for breakfast, lunch, or dinner.",
     "seconds30": "30s",
+    "recordingMinimumHint": "Record at least 30 seconds to continue. You can record up to 3 minutes.",
+    "recordingMaxReached": "3 minutes recorded. Recording stopped automatically.",
     "recordedAudio": "Recorded {{count}}s of audio",
+    "recordingTooShort": "Recording is under 30 seconds. Please record again.",
+    "recordingTooShortInline": "This recording is under 30 seconds, so you cannot continue. Please record again.",
     "rerecord": "Re-record",
     "audioSelected": "Audio file selected",
+    "audioSelectedWithName": "Selected: {{name}}",
     "namePrompt": "Give this voice a name you'll recognize.",
     "namePlaceholder": "e.g. Mom, Grandma, Dad…",
+    "elevenLabsKeyMissingFull": "ElevenLabs API key not configured. Please add it in Settings.",
+    "elevenLabsKeyMissingShort": "ElevenLabs API key not configured.",
+    "previewText": "Hello, this is a CookTalk kitchen narration preview. Today we are making a simple everyday meal. First, rinse and chop the ingredients, then warm the pan and add a small amount of oil. When the aroma starts to rise, add the main ingredients and keep them moving over medium heat. Add the seasoning, taste for balance, and finish with fresh herbs before serving. Take it step by step, and the result will be calmer, warmer, and more consistent.",
+    "previewPresetText": "Hello, this is a CookTalk kitchen narration preview. Today we are making a simple everyday meal. First, rinse and chop the ingredients, then warm the pan and add a small amount of oil. When the aroma starts to rise, add the main ingredients and keep them moving over medium heat. Add the seasoning, taste for balance, and finish with fresh herbs before serving. Take it step by step, and the result will be calmer, warmer, and more consistent.",
     "authorizationRequired": "Authorization required",
     "authorizationIntro": "By cloning this voice, you confirm that:",
     "authorizationRight": "You have the right to use this voice recording.",
@@ -423,10 +450,12 @@
     "sections": {
       "apiKeys": "API keys",
       "voice": "Voice & wake",
-      "coverImages": "Cover images",
-      "language": "Language",
-      "appearance": "Appearance",
+      "preferences": "Preferences",
       "data": "Data"
+    },
+    "preferences": {
+      "title": "Preferences",
+      "desc": "Set the interface language and appearance."
     },
     "voice": {
       "title": "Voice & wake-word",
@@ -445,7 +474,17 @@
       "wakeLock": "Screen wake-lock",
       "wakeLockHint": "\"Keep screen on\"",
       "soundEffects": "Sound effect on confirm",
-      "soundEffectsHint": "Subtle click"
+      "soundEffectsHint": "Subtle click",
+      "conversationVoice": "Conversation voice",
+      "conversationVoiceHint": "Used when CookTalk replies on the home conversation.",
+      "cookingVoice": "Cooking voice",
+      "cookingVoiceHint": "Used for step narration and answers in cooking mode.",
+      "followDefaultVoice": "Follow default voice",
+      "voiceSelectDisabled": "Validate an ElevenLabs API key first",
+      "configureElevenLabsFirst": "ElevenLabs voices appear only after the ElevenLabs API key is entered and validated.",
+      "loadingElevenLabsVoices": "Loading ElevenLabs supported voices…",
+      "elevenLabsVoicesFailed": "Could not load ElevenLabs voices. Check the key and try again.",
+      "elevenLabsVoicesLoaded": "{{count}} voices available for the current account."
     },
     "aria": {
       "showSecret": "Show value",
@@ -470,7 +509,7 @@
       },
       "voice": {
         "title": "Pick a default voice",
-        "body": "Choose a preset, or clone a family voice from a 30-second sample.",
+        "body": "Choose a preset, or clone a family voice from a sample of at least 30 seconds. 1-2 minutes is recommended.",
         "action": "Use this voice"
       },
       "try": {
