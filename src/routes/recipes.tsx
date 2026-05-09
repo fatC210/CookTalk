@@ -39,17 +39,6 @@ function gradientForId(id: string): string {
   return CARD_GRADIENTS[hash % CARD_GRADIENTS.length];
 }
 
-function formatLastCooked(ts: number | undefined, t: (key: string, opts?: Record<string, unknown>) => string): string {
-  if (!ts) return t("common.never");
-  const diffMs = Date.now() - ts;
-  const diffDays = Math.floor(diffMs / 86400000);
-  if (diffDays === 0) return t("common.today");
-  if (diffDays === 1) return t("common.yesterday");
-  const diffWeeks = Math.floor(diffDays / 7);
-  if (diffWeeks >= 1) return t("common.weeksAgo", { count: diffWeeks });
-  return t("common.daysAgo", { count: diffDays });
-}
-
 function filterAndSort(
   recipes: Recipe[],
   search: string,
@@ -134,10 +123,10 @@ function RecipesPage() {
   }, [coverUrls]);
 
   const sortLabels: Record<SortKey, string> = {
-    lastCookedAt: t("recipes.lastCooked"),
-    createdAt: t("common.save"),
-    totalTimeMin: t("recipes.minutes", { count: 0 }).replace("0 ", ""),
-    difficulty: t("recipes.difficulty.medium").replace("Medium", "Difficulty"),
+    lastCookedAt: t("recipes.sortLastCooked"),
+    createdAt: t("recipes.sortCreated"),
+    totalTimeMin: t("recipes.sortTotalTime"),
+    difficulty: t("recipes.sortDifficulty"),
   };
 
   function cycleSortKey() {
@@ -226,7 +215,7 @@ function RecipesPage() {
           {displayed.length === 0 ? (
             <EmptyState search={search} t={t} />
           ) : (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="recipe-card-grid">
               {displayed.map((r, i) => (
                 <RecipeCard
                   key={r.id}
@@ -259,16 +248,18 @@ function RecipeCard({
   const difficulty = recipe.tags.difficulty ?? "easy";
   const difficultyLabel = t(`recipes.difficulty.${difficulty}`);
   const flavorStr = recipe.tags.flavor?.join(" · ") ?? "";
-  const lastCookedStr = formatLastCooked(recipe.lastCookedAt, t);
+  const cuisineLabel = recipe.tags.cuisine?.trim() || t("recipes.uncategorizedCuisine");
+  const ingredientCountKey =
+    recipe.ingredients.length === 1 ? "recipes.ingredientCountOne" : "recipes.ingredientCountOther";
 
   return (
     <Link
       to="/recipe-detail"
       search={{ id: recipe.id }}
-      className="group relative flex flex-col overflow-hidden rounded-3xl border border-border bg-card hover:border-clay/60 transition-colors"
+      className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:border-clay/60"
     >
-      <VoiceBadge n={index + 1} className="absolute top-4 left-4 z-10 !bg-card !opacity-90" />
-      <div className={`relative aspect-[4/3] overflow-hidden ${coverUrl ? "" : `bg-gradient-to-br ${gradient}`}`}>
+      <VoiceBadge n={index + 1} className="absolute left-3 top-3 z-10 !bg-card !opacity-90" />
+      <div className={`relative aspect-[16/10] overflow-hidden ${coverUrl ? "" : `bg-gradient-to-br ${gradient}`}`}>
         {coverUrl ? (
           <img
             src={coverUrl}
@@ -279,7 +270,7 @@ function RecipeCard({
           <>
             <div className="absolute inset-0 grain opacity-50" aria-hidden />
             <div className="absolute inset-0 flex items-center justify-center">
-              <ChefHat className="h-20 w-20 text-foreground/20" strokeWidth={1} />
+              <ChefHat className="h-14 w-14 text-foreground/20" strokeWidth={1} />
             </div>
           </>
         )}
@@ -287,14 +278,13 @@ function RecipeCard({
           {difficultyLabel}
         </div>
       </div>
-      <div className="flex flex-col gap-2 p-4 sm:p-5">
-        <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <span>{recipe.tags.cuisine ?? "—"}</span>
-          <span>{t("recipes.lastCooked")} · {lastCookedStr}</span>
+      <div className="flex flex-col gap-2 p-4">
+        <div className="flex items-center text-xs text-muted-foreground">
+          <span>{cuisineLabel}</span>
         </div>
-        <h3 className="font-display text-lg font-semibold leading-tight group-hover:text-clay sm:text-xl">{recipe.title}</h3>
+        <h3 className="font-display text-lg font-semibold leading-tight group-hover:text-clay">{recipe.title}</h3>
         {flavorStr && <p className="text-xs text-muted-foreground">{flavorStr}</p>}
-        <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-2 flex items-center justify-between gap-3 border-t border-border pt-3 text-xs">
           <span className="inline-flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />
             {recipe.tags.totalTimeMin != null
@@ -303,7 +293,7 @@ function RecipeCard({
           </span>
           <span className="inline-flex items-center gap-1.5 text-clay">
             <UtensilsCrossed className="h-3.5 w-3.5" strokeWidth={1.75} />
-            {recipe.ingredients.length} {recipe.ingredients.length === 1 ? "ingredient" : "ingredients"}
+            {t(ingredientCountKey, { count: recipe.ingredients.length })}
           </span>
         </div>
       </div>
@@ -326,7 +316,7 @@ function EmptyState({
       <div>
         <h2 className="font-display text-2xl font-semibold">{t("recipes.noRecipes")}</h2>
         <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-          {search ? `No recipes match "${search}".` : t("recipes.noRecipesBody")}
+          {search ? t("recipes.noRecipesMatch", { search }) : t("recipes.noRecipesBody")}
         </p>
       </div>
       {!search && (

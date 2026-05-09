@@ -1139,13 +1139,21 @@ function HomePage() {
   );
 
   useEffect(() => {
+    const handleHomeAwake = () => {
+      pushAssistant({ kind: "confirm", text: assistantCopy.awakeReady });
+    };
+
     const handleHomeTranscript = (event: Event) => {
       handleCommand((event as CustomEvent<{ transcript: string }>).detail.transcript);
     };
 
+    window.addEventListener("cooktalk:home-awake", handleHomeAwake);
     window.addEventListener("cooktalk:home-transcript", handleHomeTranscript);
-    return () => window.removeEventListener("cooktalk:home-transcript", handleHomeTranscript);
-  }, [handleCommand]);
+    return () => {
+      window.removeEventListener("cooktalk:home-awake", handleHomeAwake);
+      window.removeEventListener("cooktalk:home-transcript", handleHomeTranscript);
+    };
+  }, [assistantCopy.awakeReady, handleCommand, pushAssistant]);
 
   useEffect(() => {
     if (!pendingHomeAwake) return;

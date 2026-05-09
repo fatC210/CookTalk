@@ -194,7 +194,9 @@ function KeyField({
         className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5"
         onBlur={handleBlur}
       >
-        <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+        {type === "password" && (
+          <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+        )}
         <input
           type={canToggleSecret && show ? "text" : type === "text" ? "text" : "password"}
           placeholder={placeholder}
@@ -378,10 +380,8 @@ function SettingsPage() {
     setHasImageGenKey,
     conversationVoiceId,
     cookingVoiceId,
-    cookingAgentId,
     setConversationVoiceId,
     setCookingVoiceId,
-    setCookingAgentId,
   } = useAppStore();
 
   const [elevenLabsVoiceRefreshKey, setElevenLabsVoiceRefreshKey] = useState(0);
@@ -988,31 +988,6 @@ function SettingsPage() {
                               })}
                     </p>
                     <div className="mt-5 grid gap-3 md:grid-cols-2">
-                      <div className="rounded-2xl border border-border bg-card p-5 md:col-span-2">
-                        <div className="flex items-center gap-3">
-                          <VoiceBadge n={8} />
-                          <div className="flex-1">
-                            <div className="text-sm font-medium">
-                              {t("settings.voice.cookingAgentId")}
-                            </div>
-                            <div className="voice-hint mt-0.5">
-                              {t("settings.voice.cookingAgentIdHint")}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-4">
-                          <KeyField
-                            label={t("settings.voice.cookingAgentId")}
-                            value={cookingAgentId}
-                            onChange={setCookingAgentId}
-                            placeholder={t("settings.voice.cookingAgentIdPlaceholder")}
-                            type="text"
-                            showLabel={t("settings.aria.showSecret")}
-                            hideLabel={t("settings.aria.hideSecret")}
-                          />
-                        </div>
-                      </div>
-
                       {/* Wake words */}
                       <div className="rounded-2xl border border-border bg-card p-5">
                         <div className="flex items-center gap-3">
@@ -1106,7 +1081,7 @@ function SettingsPage() {
                         onChange={setConversationVoiceId}
                         disabled={voiceSelectDisabled}
                         emptyLabel={t("settings.voice.voiceSelectDisabled")}
-                        defaultLabel={t("settings.voice.followDefaultVoice")}
+                        defaultLabel={t("settings.voice.noVoiceSelected")}
                       />
                       <VoiceRoleSelect
                         n={10}
@@ -1117,7 +1092,7 @@ function SettingsPage() {
                         onChange={setCookingVoiceId}
                         disabled={voiceSelectDisabled}
                         emptyLabel={t("settings.voice.voiceSelectDisabled")}
-                        defaultLabel={t("settings.voice.followDefaultVoice")}
+                        defaultLabel={t("settings.voice.noVoiceSelected")}
                       />
 
                       <SwitchRow

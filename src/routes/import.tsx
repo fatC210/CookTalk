@@ -47,6 +47,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { v4 as uuid } from "uuid";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { useAppStore } from "@/stores/app-store";
 
 export const Route = createFileRoute("/import")({
   head: () => ({
@@ -73,7 +74,7 @@ type PipelineStage =
   | "error";
 
 type ImportMode = "video" | "manual";
-type FollowUpField = "servings" | "spiceLevel" | "notes" | "adjustments";
+type FollowUpField = "servings" | "spiceLevel" | "notes";
 type FollowUpStatus = "idle" | "speaking" | "listening" | "transcribing" | "refining" | "done";
 type FollowUpProgressState = "pending" | "answered" | "skipped";
 
@@ -157,7 +158,6 @@ function createEmptyFollowUpAnswers(): FollowUpAnswers {
     servings: "",
     spiceLevel: "",
     notes: "",
-    adjustments: "",
   };
 }
 
@@ -166,7 +166,6 @@ function createEmptyFollowUpProgress(): FollowUpProgress {
     servings: "pending",
     spiceLevel: "pending",
     notes: "pending",
-    adjustments: "pending",
   };
 }
 
@@ -216,7 +215,6 @@ function buildFallbackRefinedRecipe(
   const servings = parseServingsAnswer(answers.servings);
   const spiceLevel = answers.spiceLevel.trim();
   const notes = answers.notes.trim();
-  const adjustments = answers.adjustments.trim();
 
   return {
     ...recipe,
@@ -224,12 +222,7 @@ function buildFallbackRefinedRecipe(
       ...recipe.tags,
       servings: servings ?? recipe.tags.servings,
       spiceLevel: spiceLevel || recipe.tags.spiceLevel,
-      notes:
-        notes || adjustments
-          ? [recipe.tags.notes, notes, adjustments ? `额外调整：${adjustments}` : ""]
-              .filter(Boolean)
-              .join("；")
-          : recipe.tags.notes,
+      notes: notes ? [recipe.tags.notes, notes].filter(Boolean).join("；") : recipe.tags.notes,
     },
   };
 }
@@ -245,6 +238,7 @@ async function persistRecipe(recipe: Omit<Recipe, "id" | "createdAt">): Promise<
 function ImportPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const conversationVoiceId = useAppStore((s) => s.conversationVoiceId);
 
   const [mode, setMode] = useState<ImportMode>("video");
   const [isDragging, setIsDragging] = useState(false);
@@ -323,12 +317,6 @@ function ImportPage() {
       label: t("import.followUp.notesLabel"),
       question: t("import.followUp.notesQuestion"),
       placeholder: t("import.followUp.notesPlaceholder"),
-    },
-    {
-      field: "adjustments" as const,
-      label: "最终调整",
-      question: "菜谱还有没有其他需要调整的？如果没有，你可以直接说没有，或直接进入下一步。",
-      placeholder: "例如：少一点盐，把猪肝切薄一些；没有的话也可以留空",
     },
   ];
 
@@ -544,7 +532,7 @@ function ImportPage() {
     setFollowUpStatus("speaking");
 
     try {
-      await speakWithElevenLabs(question.question);
+      await speakWithElevenLabs(question.question, conversationVoiceId);
     } catch (err) {
       console.warn("Follow-up voice prompt failed:", err);
       toast.warning(t("import.followUpVoiceWarning"));
@@ -1144,38 +1132,42 @@ function ImportPage() {
 
       <section className="page-hero">
         <div className="page-hero-container">
-          <span className="page-kicker">{t("import.subtitle")}</span>
-          <h1 className="page-title">{t("import.title")}</h1>
-          <p className="page-description">
-            {t("import.description")} {t("import.orSay")}{" "}
-            <span className="font-mono text-foreground">"{t("import.importNewRecipe")}"</span>
-          </p>
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <span className="page-kicker">{t("import.subtitle")}</span>
+              <h1 className="page-title">{t("import.title")}</h1>
+              <p className="page-description">
+                {t("import.description")} {t("import.orSay")}{" "}
+                <span className="font-mono text-foreground">"{t("import.importNewRecipe")}"</span>
+              </p>
+            </div>
 
-          <div className="mt-6 inline-flex rounded-full border border-border bg-card p-1">
-            <button
-              type="button"
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
-                mode === "video"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setMode("video")}
-            >
-              <FileVideo className="h-4 w-4" strokeWidth={1.75} />
-              {t("import.videoMode")}
-            </button>
-            <button
-              type="button"
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
-                mode === "manual"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setMode("manual")}
-            >
-              <FileText className="h-4 w-4" strokeWidth={1.75} />
-              {t("import.manualMode")}
-            </button>
+            <div className="inline-flex w-fit shrink-0 rounded-full border border-border bg-card p-1 lg:mt-6">
+              <button
+                type="button"
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
+                  mode === "video"
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setMode("video")}
+              >
+                <FileVideo className="h-4 w-4" strokeWidth={1.75} />
+                {t("import.videoMode")}
+              </button>
+              <button
+                type="button"
+                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
+                  mode === "manual"
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setMode("manual")}
+              >
+                <FileText className="h-4 w-4" strokeWidth={1.75} />
+                {t("import.manualMode")}
+              </button>
+            </div>
           </div>
 
           {mode === "video" && (
@@ -1190,7 +1182,7 @@ function ImportPage() {
                       <div
                         aria-hidden="true"
                         className={`import-stepper-line ${
-                          isDone ? "bg-clay/30" : "bg-border/80"
+                          isDone ? "border-t border-dashed border-clay" : "bg-border/80"
                         }`}
                       />
                     ) : null}
@@ -1198,9 +1190,9 @@ function ImportPage() {
                       <span
                         className={`inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors ${
                           isCurrent
-                            ? "border-clay bg-clay text-background shadow-[0_10px_24px_-16px_oklch(0.48_0.04_55_/_0.6)]"
+                            ? "border-clay bg-clay/10 text-clay shadow-[0_10px_24px_-16px_oklch(0.48_0.04_55_/_0.35)]"
                             : isDone
-                              ? "border-clay/30 bg-card text-clay"
+                              ? "border-clay bg-clay text-background"
                               : "border-border bg-card/70 text-muted-foreground"
                         }`}
                       >
@@ -1277,7 +1269,9 @@ function ImportPage() {
                       </>
                     ) : (
                       <>
-                        <h3 className="mt-6 font-display text-2xl sm:text-3xl">{t("import.dropMedia")}</h3>
+                        <p className="mt-6 text-sm font-medium leading-tight text-foreground sm:text-base">
+                          {t("import.dropMedia")}
+                        </p>
                         <p className="mt-2 text-sm text-muted-foreground">{t("import.orClickBrowse")}</p>
                         <button
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
@@ -1291,7 +1285,9 @@ function ImportPage() {
                         </button>
                       </>
                     )}
-                    <VoiceHint className="mt-6 justify-center">{t("import.orSaySelect")}</VoiceHint>
+                    <div className="mt-4 flex justify-center">
+                      <VoiceHint>{t("import.orSaySelect")}</VoiceHint>
+                    </div>
                   </div>
 
                 </>
@@ -2102,61 +2098,6 @@ function ImportPage() {
                     </div>
                   </div>
 
-                  <div className="mt-8 rounded-[2rem] border border-border bg-background p-5 sm:p-6">
-                    <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-                      <button
-                        className="group relative aspect-[4/3] overflow-hidden rounded-[1.5rem] border border-border bg-card text-left transition-colors hover:border-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => manualCoverInputRef.current?.click()}
-                        disabled={isManualSaving}
-                        type="button"
-                      >
-                        {manualCoverPreviewUrl ? (
-                          <>
-                            <img
-                              src={manualCoverPreviewUrl}
-                              alt={manualTitle.trim() || t("import.untitledRecipe")}
-                              className="h-full w-full object-cover"
-                            />
-                            <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/45 via-black/10 to-transparent p-4 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                              <span className="rounded-full bg-white/90 px-3 py-1 text-xs text-foreground">
-                                {t("import.uploadCover")}
-                              </span>
-                            </div>
-                          </>
-                        ) : (
-                          <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
-                            <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
-                            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground">
-                              <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
-                              {t("import.uploadCover")}
-                            </span>
-                          </div>
-                        )}
-                      </button>
-
-                      <div className="flex items-start">
-                        <button
-                          className="inline-flex min-h-14 items-center gap-2 rounded-full border border-border bg-card px-5 py-3 text-sm hover:border-foreground disabled:opacity-50"
-                          onClick={() => void handleRegenerateManualCover()}
-                          disabled={isManualGeneratingCover || isManualSaving}
-                          type="button"
-                        >
-                          {isManualGeneratingCover ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              {t("import.generatingCover")}
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                              {t("import.aiGenerateCover")}
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                     <button
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay disabled:opacity-50 sm:flex-1"
@@ -2440,6 +2381,77 @@ function ImportPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
+                  <div className="rounded-2xl border border-border bg-card p-5">
+                    <div className="flex items-center gap-2">
+                      <ImageIcon className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                      <span className="text-sm font-medium">{t("import.manualCoverTitle")}</span>
+                    </div>
+
+                    <div
+                      className={`group relative mt-4 flex aspect-[4/3] w-full overflow-hidden rounded-2xl border border-border bg-background transition-colors ${
+                        isManualSaving
+                          ? "cursor-not-allowed opacity-60"
+                          : "cursor-pointer hover:border-foreground"
+                      }`}
+                      role="button"
+                      tabIndex={isManualSaving ? -1 : 0}
+                      aria-disabled={isManualSaving}
+                      aria-label={t("import.uploadCover")}
+                      onClick={() => {
+                        if (!isManualSaving) manualCoverInputRef.current?.click();
+                      }}
+                      onKeyDown={(event) => {
+                        if (isManualSaving) return;
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          manualCoverInputRef.current?.click();
+                        }
+                      }}
+                    >
+                      {manualCoverPreviewUrl ? (
+                        <>
+                          <img
+                            src={manualCoverPreviewUrl}
+                            alt={manualTitle.trim() || t("import.untitledRecipe")}
+                            className="h-full w-full object-cover"
+                          />
+                          <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/45 via-black/10 to-transparent p-4 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                            <span className="rounded-full bg-white/90 px-3 py-1 text-xs text-foreground">
+                              {t("import.manualCoverChangePlaceholder")}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
+                          <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
+                          <span className="text-sm">{t("import.manualCoverUploadPlaceholder")}</span>
+                          <button
+                            className="inline-flex min-h-10 items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors hover:border-foreground disabled:opacity-50"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleRegenerateManualCover();
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            disabled={isManualGeneratingCover || isManualSaving}
+                            type="button"
+                          >
+                            {isManualGeneratingCover ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                {t("import.generatingCover")}
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                                {t("import.manualCoverAiPlaceholder")}
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                     {t("import.manualSidebarTitle")}
                   </h4>

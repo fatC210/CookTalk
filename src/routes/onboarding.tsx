@@ -20,17 +20,18 @@ export const Route = createFileRoute("/onboarding")({
 
 // Preset voices for step 2
 const DEFAULT_VOICES = [
-  { id: "rachel", name: "Rachel", desc: "Calm & clear · American English" },
-  { id: "adam", name: "Adam", desc: "Warm & professional · American English" },
-  { id: "bella", name: "Bella", desc: "Friendly & energetic · American English" },
-  { id: "elli", name: "Elli", desc: "Soft & expressive · American English" },
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", desc: "Calm & clear · American English" },
+  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam", desc: "Warm & professional · American English" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella", desc: "Friendly & energetic · American English" },
+  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli", desc: "Soft & expressive · American English" },
 ];
 
 function OnboardingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  const { setOnboardingCompleted, setHasElevenLabsKey, setDefaultVoiceId } = useAppStore();
+  const { setOnboardingCompleted, setHasElevenLabsKey, setConversationVoiceId, setCookingVoiceId } =
+    useAppStore();
 
   // Which steps are completed
   const [stepDone, setStepDoneState] = useState<boolean[]>([false, false, false, false]);
@@ -83,7 +84,8 @@ function OnboardingPage() {
   const [selectedVoice, setSelectedVoice] = useState<string | null>(null);
   const confirmVoice = () => {
     if (!selectedVoice) return;
-    setDefaultVoiceId(selectedVoice);
+    setConversationVoiceId(selectedVoice);
+    setCookingVoiceId(selectedVoice);
     setStepDone(2, true);
   };
 

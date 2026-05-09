@@ -1,4 +1,3 @@
-import { useConversation } from "@elevenlabs/react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,16 +16,16 @@ import {
 } from "lucide-react";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
-  buildCookingAgentFirstMessage,
-  buildCookingAgentPrompt,
-  buildCookingContextUpdate,
-  buildCookingManualReplyPrompt,
-  buildCookingTimerFinishedPrompt,
-} from "@/lib/cooking-agent";
-import { getApiKey } from "@/lib/crypto";
+  answerCookingQuestion,
+  buildStepSpeech,
+  formatDurationForSpeech,
+  parseVoiceIntent,
+  speakWithElevenLabs,
+  type VoiceStatus,
+} from "@/lib/voice-pipeline";
 import { db, type Recipe } from "@/lib/db";
-import { ElevenLabsService } from "@/lib/elevenlabs";
-import { parseVoiceIntent } from "@/lib/voice-pipeline";
+import { stopActiveVoicePlayback } from "@/lib/voice-playback";
+import { useVoiceSession } from "@/hooks/use-voice-session";
 import { useTimers, type TimerInfo } from "@/hooks/use-timers";
 import { useAppStore } from "@/stores/app-store";
 import { useCookingStore } from "@/stores/cooking-store";
@@ -34,6 +33,7 @@ import { useCookingStore } from "@/stores/cooking-store";
 export const Route = createFileRoute("/cook")({
   validateSearch: (search: Record<string, unknown>) => ({
     id: (search.id as string) || "",
+    step: Number.isFinite(Number(search.step)) ? Number(search.step) : 0,
   }),
   head: () => ({
     meta: [
@@ -45,7 +45,6 @@ export const Route = createFileRoute("/cook")({
 });
 
 type AppLanguage = "en" | "zh";
-type AgentStatus = "disconnected" | "connecting" | "connected" | "error";
 
 type LatestCookingState = {
   recipe: Recipe | null;
@@ -63,16 +62,21 @@ function formatTimer(seconds: number): string {
 function CookPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { id } = Route.useSearch();
+  const { id, step: initialStep } = Route.useSearch();
   const language = useAppStore((s) => s.language) as AppLanguage;
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const cookingVoiceId = useAppStore((s) => s.cookingVoiceId);
-  const cookingAgentId = useAppStore((s) => s.cookingAgentId).trim();
+  const wakeWords = useAppStore((s) => s.wakeWords);
+  const listenMode = useAppStore((s) => s.listenMode);
+  const manualWakeActive = useAppStore((s) => s.manualWakeActive);
+  const clearManualWake = useAppStore((s) => s.clearManualWake);
+  const hasElevenLabsKey = useAppStore((s) => s.hasElevenLabsKey);
 
   const [recipe, setRecipe] = useState<Recipe | null | undefined>(undefined);
   const [spokenReply, setSpokenReply] = useState("");
   const [lastTranscript, setLastTranscript] = useState("");
-  const [agentError, setAgentError] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const {
     currentStep,
@@ -89,14 +93,13 @@ function CookPage() {
   const { activeTimers, cancelTimer, extendTimer, startTimer, setOnCompleted } = useTimers();
 
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const startInFlightRef = useRef(false);
-  const sessionKeyRef = useRef<string | null>(null);
   const latestStateRef = useRef<LatestCookingState>({
     recipe: null,
     stepIndex: 0,
     timers: [],
     isPaused: false,
   });
+  const setMutedRef = useRef<((muted: boolean) => void) | null>(null);
 
   const recipeStepCount = recipe?.steps.length ?? 0;
   const safeStep =
@@ -104,81 +107,13 @@ function CookPage() {
   const step = recipe?.steps[safeStep];
   const stepNumber = safeStep + 1;
   const stepCount = recipeStepCount;
-  const resolvedVoiceId = cookingVoiceId ?? recipe?.voiceId ?? undefined;
-  const autoSessionKey = recipe && cookingAgentId ? `${recipe.id}:${cookingAgentId}` : null;
-
-  const conversation = useConversation({
-    onConnect: ({ conversationId }) => {
-      setAgentError(null);
-      if (conversationId) {
-        toast.success(`Cooking agent connected: ${conversationId}`);
-      }
-    },
-    onDisconnect: () => {
-      startInFlightRef.current = false;
-    },
-    onError: (message) => {
-      startInFlightRef.current = false;
-      setAgentError(message);
-      toast.error(message);
-    },
-    onMessage: (event) => {
-      if (event.type === "user_transcript") {
-        const transcript = event.user_transcription_event.user_transcript.trim();
-        setLastTranscript(transcript);
-        void handleTranscriptIntentRef.current(transcript);
-        return;
-      }
-
-      if (event.type === "agent_response") {
-        setSpokenReply(event.agent_response_event.agent_response);
-        return;
-      }
-
-      if (event.type === "agent_response_correction") {
-        setSpokenReply(event.agent_response_correction_event.corrected_agent_response);
-      }
-    },
-  });
-  const {
-    endSession,
-    isMuted,
-    mode,
-    sendContextualUpdate,
-    sendUserMessage,
-    setMuted,
-    startSession,
-    status,
-  } = conversation;
+  const resolvedVoiceId = recipe?.voiceId ?? cookingVoiceId ?? undefined;
 
   const handleClose = useCallback(() => {
-    endSession();
+    stopActiveVoicePlayback();
     endCooking();
     navigate({ to: id ? "/recipe-detail" : "/recipes", search: id ? { id } : {} });
-  }, [endSession, endCooking, id, navigate]);
-
-  const syncConversationState = useCallback(
-    (reason: string, options?: { announce?: boolean }) => {
-      const currentRecipe = latestStateRef.current.recipe;
-      if (!currentRecipe || status !== "connected") return;
-
-      sendContextualUpdate(
-        buildCookingContextUpdate({
-          recipe: currentRecipe,
-          stepIndex: latestStateRef.current.stepIndex,
-          isPaused: latestStateRef.current.isPaused,
-          timers: latestStateRef.current.timers,
-          language,
-          reason,
-        }),
-      );
-
-      if (options?.announce) {
-        sendUserMessage(buildCookingManualReplyPrompt(language));
-      }
-    },
-    [language, sendContextualUpdate, sendUserMessage, status],
-  );
+  }, [endCooking, id, navigate]);
 
   const updateLatestState = useCallback((nextState: Partial<LatestCookingState>) => {
     latestStateRef.current = {
@@ -187,55 +122,34 @@ function CookPage() {
     };
   }, []);
 
-  const startConversationSession = useCallback(async () => {
-    if (!recipe || !cookingAgentId) {
-      setAgentError(t("cook.agentRequired"));
-      return;
-    }
-    if (startInFlightRef.current) return;
+  const speak = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      setSpokenReply(text);
 
-    const apiKey = await getApiKey("elevenlabs");
-    if (!apiKey) {
-      setAgentError(t("cook.agentRequired"));
-      toast.error(t("cook.agentRequired"));
-      return;
-    }
+      if (!hasElevenLabsKey) return;
 
-    startInFlightRef.current = true;
-    setAgentError(null);
-    setSpokenReply("");
-    setLastTranscript("");
+      setIsSpeaking(true);
+      setVoiceError(null);
+      try {
+        await speakWithElevenLabs(text, resolvedVoiceId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : t("cook.speechFailed");
+        setVoiceError(message);
+        toast.error(message);
+      } finally {
+        setIsSpeaking(false);
+      }
+    },
+    [hasElevenLabsKey, resolvedVoiceId, t],
+  );
 
-    try {
-      const service = new ElevenLabsService(apiKey);
-      const signedUrl = await service.getConversationSignedUrl(cookingAgentId);
-      const prompt = buildCookingAgentPrompt({ recipe, language });
-      const firstMessage = buildCookingAgentFirstMessage({
-        recipe,
-        stepIndex: latestStateRef.current.stepIndex,
-        language,
-      });
-
-      startSession({
-        signedUrl,
-        connectionType: "websocket",
-        overrides: {
-          agent: {
-            prompt: { prompt },
-            firstMessage,
-            language,
-          },
-          ...(resolvedVoiceId ? { tts: { voiceId: resolvedVoiceId } } : {}),
-        },
-      });
-    } catch (error) {
-      startInFlightRef.current = false;
-      const message =
-        error instanceof Error ? error.message : "Failed to start the cooking agent session.";
-      setAgentError(message);
-      toast.error(message);
-    }
-  }, [cookingAgentId, language, recipe, resolvedVoiceId, startSession, t]);
+  const announceCurrentStep = useCallback(
+    async (targetRecipe: Recipe, targetStep: number) => {
+      await speak(buildStepSpeech(targetRecipe, targetStep, language));
+    },
+    [language, speak],
+  );
 
   const handleTranscriptIntent = useCallback(
     async (transcript: string) => {
@@ -248,18 +162,24 @@ function CookPage() {
       switch (intent.type) {
         case "next_step": {
           const target = Math.min(stepIndex + 1, currentRecipe.steps.length - 1);
-          if (target === stepIndex) return;
+          if (target === stepIndex) {
+            await speak(language === "zh" ? "已经是最后一步了。" : "This is the last step.");
+            return;
+          }
           nextStep();
           updateLatestState({ stepIndex: target });
-          syncConversationState("The user asked for the next step and the app advanced.");
+          await announceCurrentStep(currentRecipe, target);
           return;
         }
         case "previous_step": {
           const target = Math.max(stepIndex - 1, 0);
-          if (target === stepIndex) return;
+          if (target === stepIndex) {
+            await speak(language === "zh" ? "已经是第一步了。" : "This is the first step.");
+            return;
+          }
           prevStep();
           updateLatestState({ stepIndex: target });
-          syncConversationState("The user asked for the previous step and the app moved back.");
+          await announceCurrentStep(currentRecipe, target);
           return;
         }
         case "jump_step": {
@@ -270,40 +190,66 @@ function CookPage() {
           if (target === stepIndex) return;
           jumpToStep(target);
           updateLatestState({ stepIndex: target });
-          syncConversationState(`The user jumped to step ${target + 1}.`);
+          await announceCurrentStep(currentRecipe, target);
           return;
         }
         case "pause":
           pauseCooking();
           updateLatestState({ isPaused: true });
-          syncConversationState("The user paused cooking guidance.");
+          await speak(language === "zh" ? "已暂停。" : "Paused.");
           return;
         case "resume":
           resumeCooking();
           updateLatestState({ isPaused: false });
-          syncConversationState("The user resumed cooking guidance.");
+          await announceCurrentStep(currentRecipe, stepIndex);
           return;
+        case "repeat_step":
+          await announceCurrentStep(currentRecipe, stepIndex);
+          return;
+        case "read_tip": {
+          const tip = currentRecipe.steps[stepIndex]?.tips?.trim();
+          await speak(
+            tip ||
+              (language === "zh"
+                ? "这一步没有额外小贴士。"
+                : "There is no extra tip for this step."),
+          );
+          return;
+        }
         case "set_timer": {
           const seconds = Math.max(1, intent.seconds ?? 60);
           const label =
-            intent.label?.trim() ||
-            (language === "zh" ? "烹饪计时器" : "Cooking timer");
+            intent.label?.trim() || (language === "zh" ? "烹饪计时器" : "Cooking timer");
           startTimer(label, seconds);
-          syncConversationState(`The user started a timer named "${label}" for ${seconds} seconds.`);
+          await speak(
+            language === "zh"
+              ? `${label}已开始，${formatDurationForSpeech(seconds, language)}。`
+              : `${label} started for ${formatDurationForSpeech(seconds, language)}.`,
+          );
           return;
         }
         case "cancel_timer": {
           const timer = timers[0];
-          if (!timer) return;
+          if (!timer) {
+            await speak(
+              language === "zh" ? "当前没有运行中的计时器。" : "There are no active timers.",
+            );
+            return;
+          }
           cancelTimer(timer.id);
           updateLatestState({ timers: timers.filter((item) => item.id !== timer.id) });
-          syncConversationState(`The user cancelled the timer "${timer.label}".`);
+          await speak(language === "zh" ? `已取消${timer.label}。` : `${timer.label} cancelled.`);
           return;
         }
         case "extend_timer": {
           const timer = timers[0];
           const seconds = intent.seconds ?? 60;
-          if (!timer) return;
+          if (!timer) {
+            await speak(
+              language === "zh" ? "当前没有运行中的计时器。" : "There are no active timers.",
+            );
+            return;
+          }
           extendTimer(timer.id, seconds);
           updateLatestState({
             timers: timers.map((item) =>
@@ -316,8 +262,10 @@ function CookPage() {
                 : item,
             ),
           });
-          syncConversationState(
-            `The user extended the timer "${timer.label}" by ${seconds} seconds.`,
+          await speak(
+            language === "zh"
+              ? `${timer.label}已延长${formatDurationForSpeech(seconds, language)}。`
+              : `${timer.label} extended by ${formatDurationForSpeech(seconds, language)}.`,
           );
           return;
         }
@@ -328,20 +276,31 @@ function CookPage() {
           toggleVoiceBadges(true);
           return;
         case "stop_listening":
-          setMuted(true);
+          setMutedRef.current?.(true);
           return;
         case "start_listening":
-          setMuted(false);
+          setMutedRef.current?.(false);
           return;
         case "end_cooking":
           handleClose();
           return;
+        case "qa": {
+          const answer = await answerCookingQuestion({
+            recipe: currentRecipe,
+            currentStep: stepIndex,
+            question: transcript,
+            language,
+          });
+          await speak(answer);
+          return;
+        }
         default:
           return;
       }
     },
     [
       cancelTimer,
+      announceCurrentStep,
       extendTimer,
       handleClose,
       jumpToStep,
@@ -350,9 +309,8 @@ function CookPage() {
       pauseCooking,
       prevStep,
       resumeCooking,
-      setMuted,
+      speak,
       startTimer,
-      syncConversationState,
       toggleVoiceBadges,
       updateLatestState,
     ],
@@ -363,18 +321,43 @@ function CookPage() {
     handleTranscriptIntentRef.current = handleTranscriptIntent;
   }, [handleTranscriptIntent]);
 
+  const voiceSession = useVoiceSession({
+    enabled: recipe !== null && recipe !== undefined,
+    wakeWords,
+    language,
+    listenMode,
+    manualWakeActive,
+    awakeResetKey: recipe?.id,
+    onWake: () => clearManualWake(),
+    onTranscript: async (transcript) => {
+      const cleaned = transcript.trim();
+      if (!cleaned) return;
+      setLastTranscript(cleaned);
+      setVoiceError(null);
+      await handleTranscriptIntentRef.current(cleaned);
+    },
+    onError: (message) => {
+      setVoiceError(message);
+      toast.error(message);
+    },
+  });
+
+  const { captureCommand, error, isMuted, isSupported, setMuted, status } = voiceSession;
+  setMutedRef.current = setMuted;
+  const effectiveStatus: VoiceStatus = isSpeaking ? "speaking" : status;
+
   const handleManualStepChange = useCallback(
-    (targetStep: number, reason: string) => {
+    (targetStep: number) => {
       if (!recipe) return;
       updateLatestState({ stepIndex: targetStep });
-      syncConversationState(reason, { announce: true });
+      void announceCurrentStep(recipe, targetStep);
     },
-    [recipe, syncConversationState, updateLatestState],
+    [announceCurrentStep, recipe, updateLatestState],
   );
 
   const handleToggleMic = useCallback(() => {
-    if (!cookingAgentId) {
-      toast.error(t("cook.agentRequired"), {
+    if (!hasElevenLabsKey) {
+      toast.error(t("cook.voiceRequired"), {
         action: {
           label: t("cook.openSettings"),
           onClick: () => void navigate({ to: "/settings" }),
@@ -383,15 +366,19 @@ function CookPage() {
       return;
     }
 
-    if (status === "disconnected" || status === "error") {
-      void startConversationSession();
+    if (!isSupported) {
+      toast.error(t("cook.voiceUnsupported"));
       return;
     }
 
-    if (status === "connected") {
-      setMuted(!isMuted);
+    if (isMuted) {
+      setMuted(false);
+      void captureCommand({ force: true });
+      return;
     }
-  }, [cookingAgentId, isMuted, navigate, setMuted, startConversationSession, status, t]);
+
+    void captureCommand();
+  }, [captureCommand, hasElevenLabsKey, isMuted, isSupported, navigate, setMuted, t]);
 
   useEffect(() => {
     if (!id) {
@@ -404,8 +391,16 @@ function CookPage() {
   useEffect(() => {
     if (recipe && id) {
       startCooking(id, recipe.steps.length);
+      if (initialStep > 0) {
+        jumpToStep(initialStep);
+      }
     }
-  }, [id, recipe, startCooking]);
+  }, [id, initialStep, jumpToStep, recipe, startCooking]);
+
+  useEffect(() => {
+    if (!recipe) return;
+    setSpokenReply(buildStepSpeech(recipe, safeStep, language));
+  }, [language, recipe, safeStep]);
 
   useEffect(() => {
     updateLatestState({
@@ -417,31 +412,23 @@ function CookPage() {
   }, [activeTimers, isPaused, recipe, safeStep, updateLatestState]);
 
   useEffect(() => {
-    if (!autoSessionKey) {
-      sessionKeyRef.current = null;
-      return;
-    }
-
-    if (sessionKeyRef.current === autoSessionKey) return;
-    sessionKeyRef.current = autoSessionKey;
-    void startConversationSession();
-  }, [autoSessionKey, startConversationSession]);
-
-  useEffect(() => {
     return () => {
-      endSession();
-      sessionKeyRef.current = null;
+      stopActiveVoicePlayback();
     };
-  }, [endSession]);
+  }, []);
 
   useEffect(() => {
     setOnCompleted((_, label) => {
-      syncConversationState(`A timer named "${label}" has finished.`);
-      if (status === "connected") {
-        sendUserMessage(buildCookingTimerFinishedPrompt(label, language));
-      }
+      const currentRecipe = latestStateRef.current.recipe;
+      const currentStep = latestStateRef.current.stepIndex;
+      const stepText = currentRecipe?.steps[currentStep]?.description;
+      const message =
+        language === "zh"
+          ? `${label}时间到了。${stepText ? `当前步骤是：${stepText}` : ""}`
+          : `${label} is done. ${stepText ? `Current step: ${stepText}` : ""}`;
+      void speak(message);
     });
-  }, [language, sendUserMessage, setOnCompleted, status, syncConversationState]);
+  }, [language, setOnCompleted, speak]);
 
   useEffect(() => {
     let sentinel: WakeLockSentinel | null = null;
@@ -462,21 +449,20 @@ function CookPage() {
     };
   }, []);
 
-  const agentStatusLabel = useMemo(
-    () => getAgentStatusLabel(status as AgentStatus, mode, isMuted, t),
-    [isMuted, mode, status, t],
+  const voiceStatusLabel = useMemo(
+    () => getVoiceStatusLabel(effectiveStatus, isMuted, t),
+    [effectiveStatus, isMuted, t],
   );
 
-  const agentDotClass = useMemo(() => {
-    if (status === "error") return "bg-destructive";
-    if (status === "connecting") return "bg-amber-500 animate-pulse";
-    if (status === "connected" && mode === "speaking") {
+  const voiceDotClass = useMemo(() => {
+    if (effectiveStatus === "error" || effectiveStatus === "unsupported") return "bg-destructive";
+    if (["recording", "transcribing", "thinking", "speaking"].includes(effectiveStatus)) {
       return "bg-clay animate-pulse";
     }
-    if (status === "connected" && isMuted) return "bg-destructive";
-    if (status === "connected") return "bg-clay";
+    if (isMuted) return "bg-destructive";
+    if (effectiveStatus === "listening" || effectiveStatus === "awake") return "bg-clay";
     return "bg-muted-foreground";
-  }, [isMuted, mode, status]);
+  }, [effectiveStatus, isMuted]);
 
   if (recipe === undefined) {
     return (
@@ -504,12 +490,11 @@ function CookPage() {
   const splitIndex = Math.max(description.lastIndexOf("，"), description.lastIndexOf("。"));
   const descMain = splitIndex > 0 ? description.slice(0, splitIndex + 1) : description;
   const descHighlight = splitIndex > 0 ? description.slice(splitIndex + 1) : "";
-  const micButtonLabel =
-    status === "connected"
-      ? isMuted
-        ? t("cook.resumeMic")
-        : t("cook.pauseMic")
-      : t("cook.startAgent");
+  const micButtonLabel = isMuted
+    ? t("cook.resumeMic")
+    : effectiveStatus === "recording"
+      ? t("cook.recording")
+      : t("cook.askNow");
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -521,15 +506,15 @@ function CookPage() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground">
-                {t("cook.nowNarrating")} · ElevenLabs Agent
+                {t("cook.nowNarrating")} · {t("cook.localVoiceMode")}
               </div>
               <div className="font-display text-base">{recipe.title}</div>
             </div>
           </div>
           <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs">
-              <span className={`h-1.5 w-1.5 rounded-full ${agentDotClass}`} />
-              {agentStatusLabel}
+              <span className={`h-1.5 w-1.5 rounded-full ${voiceDotClass}`} />
+              {voiceStatusLabel}
             </span>
             <button
               onClick={handleClose}
@@ -623,9 +608,15 @@ function CookPage() {
                         onClick={() => {
                           cancelTimer(timer.id);
                           updateLatestState({
-                            timers: latestStateRef.current.timers.filter((item) => item.id !== timer.id),
+                            timers: latestStateRef.current.timers.filter(
+                              (item) => item.id !== timer.id,
+                            ),
                           });
-                          syncConversationState(`The cook cancelled the timer "${timer.label}".`);
+                          void speak(
+                            language === "zh"
+                              ? `已取消${timer.label}。`
+                              : `${timer.label} cancelled.`,
+                          );
                         }}
                         className="mt-1 rounded-full border border-border px-3 py-1 text-xs hover:bg-foreground hover:text-background"
                       >
@@ -646,7 +637,9 @@ function CookPage() {
                 <p className="mt-0.5 text-muted-foreground">
                   {spokenReply || lastTranscript || t("cook.voiceQaBody")}
                 </p>
-                {agentError && <p className="mt-1 text-xs text-destructive">{agentError}</p>}
+                {(voiceError || error) && (
+                  <p className="mt-1 text-xs text-destructive">{voiceError || error}</p>
+                )}
               </div>
             </div>
           </div>
@@ -659,7 +652,7 @@ function CookPage() {
                 const target = Math.max(safeStep - 1, 0);
                 if (target === safeStep) return;
                 prevStep();
-                handleManualStepChange(target, "The cook tapped the previous-step button.");
+                handleManualStepChange(target);
               }}
               disabled={safeStep === 0}
               className="relative inline-flex h-14 w-14 items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:text-clay focus-visible:border-border disabled:cursor-not-allowed disabled:opacity-40"
@@ -672,15 +665,11 @@ function CookPage() {
                 if (isPaused) {
                   resumeCooking();
                   updateLatestState({ isPaused: false });
-                  syncConversationState("The cook resumed with the on-screen control.", {
-                    announce: true,
-                  });
+                  if (recipe) void announceCurrentStep(recipe, safeStep);
                 } else {
                   pauseCooking();
                   updateLatestState({ isPaused: true });
-                  syncConversationState("The cook paused with the on-screen control.", {
-                    announce: true,
-                  });
+                  void speak(language === "zh" ? "已暂停。" : "Paused.");
                 }
               }}
               className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-foreground text-background hover:bg-clay"
@@ -696,7 +685,7 @@ function CookPage() {
                 const target = Math.min(safeStep + 1, Math.max(stepCount - 1, 0));
                 if (target === safeStep) return;
                 nextStep();
-                handleManualStepChange(target, "The cook tapped the next-step button.");
+                handleManualStepChange(target);
               }}
               disabled={safeStep === stepCount - 1}
               className="relative inline-flex h-14 w-14 items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:text-clay focus-visible:border-border disabled:cursor-not-allowed disabled:opacity-40"
@@ -707,7 +696,7 @@ function CookPage() {
             <button
               type="button"
               onClick={handleToggleMic}
-              disabled={status === "connecting"}
+              disabled={effectiveStatus === "transcribing" || effectiveStatus === "thinking"}
               className="order-4 flex w-full items-center gap-2 rounded-full border border-border bg-background px-4 py-3 text-left hover:border-clay disabled:cursor-wait disabled:opacity-70 md:ml-4 md:flex-1"
             >
               <Mic
@@ -715,7 +704,7 @@ function CookPage() {
                 strokeWidth={1.75}
               />
               <span className="text-sm text-muted-foreground">
-                {agentStatusLabel} · {micButtonLabel}
+                {voiceStatusLabel} · {micButtonLabel}
               </span>
             </button>
           </div>
@@ -725,16 +714,19 @@ function CookPage() {
   );
 }
 
-function getAgentStatusLabel(
-  status: AgentStatus,
-  mode: "speaking" | "listening",
+function getVoiceStatusLabel(
+  status: VoiceStatus,
   isMuted: boolean,
   t: (key: string) => string,
 ): string {
-  if (status === "connecting") return t("cook.agentConnecting");
-  if (status === "error") return t("cook.agentDisconnected");
-  if (status === "connected" && isMuted) return t("cook.listeningOff");
-  if (status === "connected" && mode === "speaking") return t("cook.agentSpeaking");
-  if (status === "connected") return t("cook.alwaysListening");
-  return t("cook.agentDisconnected");
+  if (isMuted) return t("cook.listeningOff");
+  if (status === "unsupported") return t("cook.voiceUnsupportedShort");
+  if (status === "error") return t("cook.voiceError");
+  if (status === "recording") return t("cook.recording");
+  if (status === "transcribing") return t("cook.transcribing");
+  if (status === "thinking") return t("cook.thinking");
+  if (status === "speaking") return t("cook.speaking");
+  if (status === "awake") return t("cook.awake");
+  if (status === "listening") return t("cook.alwaysListening");
+  return t("cook.voiceReady");
 }

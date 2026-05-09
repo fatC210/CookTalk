@@ -1,5 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ConversationProvider } from "@elevenlabs/react";
 import {
   Outlet,
   Link,
@@ -60,9 +59,7 @@ function NotFoundComponent() {
       <div className="max-w-md text-center">
         <h1 className="text-7xl font-bold text-foreground">404</h1>
         <h2 className="mt-4 text-xl font-semibold text-foreground">{t("root.notFound.title")}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("root.notFound.body")}
-        </p>
+        <p className="mt-2 text-sm text-muted-foreground">{t("root.notFound.body")}</p>
         <div className="mt-6">
           <Link
             to="/"
@@ -87,9 +84,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
         <h1 className="text-xl font-semibold tracking-tight text-foreground">
           {t("root.error.title")}
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("root.error.body")}
-        </p>
+        <p className="mt-2 text-sm text-muted-foreground">{t("root.error.body")}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {
@@ -126,7 +121,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "CookTalk — Voice-first AI kitchen assistant" },
-      { name: "description", content: "A 100% voice-controlled AI kitchen assistant. Hands-free cooking with voice commands." },
+      {
+        name: "description",
+        content:
+          "A 100% voice-controlled AI kitchen assistant. Hands-free cooking with voice commands.",
+      },
       { name: "author", content: "CookTalk" },
       { property: "og:title", content: "CookTalk — Voice-first AI kitchen" },
       { property: "og:description", content: "100% voice-controlled cooking companion." },
@@ -224,13 +223,11 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ConversationProvider>
-        <ThemeProvider>
-          <GlobalVoiceController />
-          <Outlet />
-          <Toaster position="top-center" richColors closeButton />
-        </ThemeProvider>
-      </ConversationProvider>
+      <ThemeProvider>
+        <GlobalVoiceController />
+        <Outlet />
+        <Toaster position="top-center" richColors closeButton />
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

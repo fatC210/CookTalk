@@ -142,14 +142,6 @@ export async function deleteVoice(id: string): Promise<void> {
   });
 }
 
-export async function setDefaultVoice(id: string): Promise<void> {
-  await db.transaction("rw", db.voices, async () => {
-    const all = await db.voices.toArray();
-    const updates = all.map((v) => db.voices.update(v.id, { isDefault: v.id === id }));
-    await Promise.all(updates);
-  });
-}
-
 // ── Seed data cleanup ────────────────────────────────────────────────────────
 
 const SAMPLE_RECIPE_IDS = ["seed-001", "seed-002", "seed-003", "seed-004", "seed-005", "seed-006"];

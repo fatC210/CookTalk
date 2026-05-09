@@ -60,17 +60,11 @@ interface AppState {
   speechRate: number;
   setSpeechRate: (rate: number) => void;
 
-  // Default voice
-  defaultVoiceId: string | null;
-  setDefaultVoiceId: (id: string | null) => void;
-
   // Voice roles
   conversationVoiceId: string | null;
   cookingVoiceId: string | null;
-  cookingAgentId: string;
   setConversationVoiceId: (id: string | null) => void;
   setCookingVoiceId: (id: string | null) => void;
-  setCookingAgentId: (id: string) => void;
 
   // Onboarding completed
   onboardingCompleted: boolean;
@@ -149,17 +143,11 @@ export const useAppStore = create<AppState>()(
       speechRate: 1.0,
       setSpeechRate: (speechRate) => set({ speechRate }),
 
-      // Default voice
-      defaultVoiceId: null,
-      setDefaultVoiceId: (defaultVoiceId) => set({ defaultVoiceId }),
-
       // Voice roles
       conversationVoiceId: null,
       cookingVoiceId: null,
-      cookingAgentId: "",
       setConversationVoiceId: (conversationVoiceId) => set({ conversationVoiceId }),
       setCookingVoiceId: (cookingVoiceId) => set({ cookingVoiceId }),
-      setCookingAgentId: (cookingAgentId) => set({ cookingAgentId }),
 
       // Onboarding
       onboardingCompleted: false,

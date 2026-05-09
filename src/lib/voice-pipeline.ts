@@ -1,5 +1,5 @@
 import { getApiKey } from "@/lib/crypto";
-import { db, type Recipe } from "@/lib/db";
+import { type Recipe } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { getConfiguredLLMService } from "@/lib/llm";
 import { claimVoicePlayback } from "@/lib/voice-playback";
@@ -45,6 +45,7 @@ interface AnswerCookingQuestionOptions {
   recipe: Recipe;
   currentStep: number;
   question: string;
+  language?: "en" | "zh";
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognition;
@@ -82,8 +83,6 @@ declare global {
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
 }
-
-const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB";
 
 const cnDigitMap: Record<string, number> = {
   一: 1,
@@ -190,19 +189,20 @@ export async function synthesizeWithElevenLabs(
 ): Promise<Blob> {
   const apiKey = await getApiKey("elevenlabs");
   if (!apiKey) throw new Error("请先在设置里配置 ElevenLabs API Key");
+  if (!voiceId) throw new Error("请先在设置里选择音色");
 
-  const resolvedVoiceId = await resolveVoiceId(voiceId);
-  return new ElevenLabsService(apiKey).textToSpeech(text, resolvedVoiceId);
+  return new ElevenLabsService(apiKey).textToSpeech(text, voiceId);
 }
 
 export async function answerCookingQuestion({
   recipe,
   currentStep,
   question,
+  language = "zh",
 }: AnswerCookingQuestionOptions): Promise<string> {
   const service = await getConfiguredLLMService();
   if (!service) {
-    return buildLocalCookingAnswer(recipe, currentStep, question);
+    return buildLocalCookingAnswer(recipe, currentStep, question, language);
   }
 
   const activeStep = recipe.steps[currentStep];
@@ -227,26 +227,41 @@ export async function answerCookingQuestion({
       },
     ]);
   } catch {
-    return buildLocalCookingAnswer(recipe, currentStep, question);
+    return buildLocalCookingAnswer(recipe, currentStep, question, language);
   }
 }
 
-export function buildStepSpeech(recipe: Recipe, stepIndex: number): string {
+export function buildStepSpeech(
+  recipe: Recipe,
+  stepIndex: number,
+  language: "en" | "zh" = "zh",
+): string {
   const step = recipe.steps[stepIndex];
-  if (!step) return "没有找到当前步骤。";
-  const parts = [`第 ${stepIndex + 1} 步，${step.description}`];
+  if (!step) return language === "zh" ? "没有找到当前步骤。" : "Current step not found.";
+  const parts = [
+    language === "zh"
+      ? `第 ${stepIndex + 1} 步，${step.description}`
+      : `Step ${stepIndex + 1}: ${step.description}`,
+  ];
   if (step.durationSec && step.durationSec >= 30) {
-    parts.push(`预计 ${formatDurationForSpeech(step.durationSec)}。`);
+    parts.push(
+      language === "zh"
+        ? `预计 ${formatDurationForSpeech(step.durationSec, language)}。`
+        : `About ${formatDurationForSpeech(step.durationSec, language)}.`,
+    );
   }
-  if (step.tips) parts.push(`小贴士：${step.tips}`);
+  if (step.tips) parts.push(language === "zh" ? `小贴士：${step.tips}` : `Tip: ${step.tips}`);
   return parts.join(" ");
 }
 
-export function formatDurationForSpeech(seconds: number): string {
-  if (seconds < 60) return `${seconds} 秒`;
+export function formatDurationForSpeech(seconds: number, language: "en" | "zh" = "zh"): string {
+  if (seconds < 60) return language === "zh" ? `${seconds} 秒` : `${seconds} seconds`;
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
-  return rest > 0 ? `${minutes} 分 ${rest} 秒` : `${minutes} 分钟`;
+  if (language === "zh") return rest > 0 ? `${minutes} 分 ${rest} 秒` : `${minutes} 分钟`;
+  return rest > 0
+    ? `${minutes} minute${minutes === 1 ? "" : "s"} ${rest} seconds`
+    : `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 function parseDurationSeconds(text: string): number | null {
@@ -283,32 +298,42 @@ function parseTimerLabel(text: string): string {
   return cleaned || "烹饪计时";
 }
 
-function buildLocalCookingAnswer(recipe: Recipe, currentStep: number, question: string): string {
+function buildLocalCookingAnswer(
+  recipe: Recipe,
+  currentStep: number,
+  question: string,
+  language: "en" | "zh",
+): string {
   const text = normalizeSpeechText(question);
   const step = recipe.steps[currentStep];
 
   if (/(多久|时间|几分钟|how long)/i.test(text)) {
-    if (step?.durationSec) return `这一步大约需要 ${formatDurationForSpeech(step.durationSec)}。`;
-    if (recipe.tags.totalTimeMin) return `整道菜预计大约 ${recipe.tags.totalTimeMin} 分钟。`;
+    if (step?.durationSec) {
+      return language === "zh"
+        ? `这一步大约需要 ${formatDurationForSpeech(step.durationSec, language)}。`
+        : `This step takes about ${formatDurationForSpeech(step.durationSec, language)}.`;
+    }
+    if (recipe.tags.totalTimeMin) {
+      return language === "zh"
+        ? `整道菜预计大约 ${recipe.tags.totalTimeMin} 分钟。`
+        : `The whole recipe takes about ${recipe.tags.totalTimeMin} minutes.`;
+    }
   }
 
   if (/(材料|食材|ingredient)/i.test(text)) {
-    return `这道菜需要：${recipe.ingredients
+    const ingredients = recipe.ingredients
       .map((item) => `${item.name}${item.amount ? item.amount : ""}`)
-      .join("，")}。`;
+      .join(language === "zh" ? "，" : ", ");
+    return language === "zh" ? `这道菜需要：${ingredients}。` : `This recipe uses: ${ingredients}.`;
   }
 
   if (/(提示|注意|tip)/i.test(text) && step?.tips) return step.tips;
 
   return step
-    ? `当前是第 ${currentStep + 1} 步：${step.description}${step.tips ? `。提示：${step.tips}` : ""}`
-    : "我会根据当前菜谱继续协助你。";
-}
-
-async function resolveVoiceId(voiceId?: string | null): Promise<string> {
-  if (voiceId) return voiceId;
-  const defaultVoice = await db.voices.where("isDefault").equals(1).first();
-  return defaultVoice?.elevenLabsVoiceId ?? DEFAULT_VOICE_ID;
+    ? buildStepSpeech(recipe, currentStep, language)
+    : language === "zh"
+      ? "我会根据当前菜谱继续协助你。"
+      : "I will keep helping with the current recipe.";
 }
 
 function playAudioBlob(blob: Blob): Promise<void> {

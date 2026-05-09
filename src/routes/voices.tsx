@@ -3,11 +3,10 @@ import { SiteHeader } from "@/components/site-header";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
   AlertCircle,
+  ChevronDown,
   Mic,
   Pause,
-  Play,
   Plus,
-  Star,
   Trash2,
   Sparkles,
   Volume2,
@@ -16,9 +15,11 @@ import {
   Upload,
   CheckCircle2,
   X,
+  MessageCircle,
+  ChefHat,
 } from "lucide-react";
 import { useCallback, useEffect, useState, useRef } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   db,
@@ -26,7 +27,6 @@ import {
   deleteVoice,
   getVoicePreviewAudio,
   saveVoicePreviewAudio,
-  setDefaultVoice,
 } from "@/lib/db";
 import type { Voice } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
@@ -42,6 +42,8 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTranslation } from "react-i18next";
 import { claimVoicePlayback, type VoicePlaybackHandle } from "@/lib/voice-playback";
+import { useAppStore } from "@/stores/app-store";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/voices")({
   head: () => ({
@@ -61,6 +63,42 @@ type CloneStep = "record" | "name" | "confirm" | "cloning" | "done";
 const VOICE_CLONE_RECORDING_MIN_SECONDS = 30;
 const VOICE_CLONE_RECORDING_MAX_SECONDS = 180;
 
+type VoiceRoleButtonProps = {
+  isSelected: boolean;
+  label: string;
+  Icon: typeof MessageCircle;
+  disabled?: boolean;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+};
+
+function VoiceRoleButton({
+  isSelected,
+  label,
+  Icon,
+  disabled = false,
+  onClick,
+}: VoiceRoleButtonProps) {
+  return (
+    <button
+      type="button"
+      aria-pressed={isSelected}
+      disabled={disabled}
+      className={cn(
+        "inline-flex h-9 w-9 items-center justify-center rounded-full border bg-secondary/80 text-foreground/80 shadow-sm transition-[border-color,background-color,color,opacity,box-shadow] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40",
+        "opacity-0 pointer-events-none group-hover/voice-card:pointer-events-auto group-hover/voice-card:opacity-100 group-focus-within/voice-card:pointer-events-auto group-focus-within/voice-card:opacity-100",
+        isSelected
+          ? "border-clay/70 text-clay shadow-inner hover:border-clay hover:bg-secondary"
+          : "border-border/80 hover:border-clay hover:bg-secondary hover:text-clay",
+      )}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      <Icon className="h-4 w-4" strokeWidth={1.5} />
+    </button>
+  );
+}
+
 function formatRecordingDuration(seconds: number) {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -71,6 +109,10 @@ function formatRecordingDuration(seconds: number) {
 function VoicesPage() {
   const { i18n: activeI18n, t } = useTranslation();
   const clonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []) ?? [];
+  const conversationVoiceId = useAppStore((s) => s.conversationVoiceId);
+  const cookingVoiceId = useAppStore((s) => s.cookingVoiceId);
+  const setConversationVoiceId = useAppStore((s) => s.setConversationVoiceId);
+  const setCookingVoiceId = useAppStore((s) => s.setCookingVoiceId);
   const {
     voices: elevenLabsVoices,
     isLoading: isLoadingElevenLabsVoices,
@@ -129,6 +171,13 @@ function VoicesPage() {
     previewUrl
       ? `preset:${voiceId}:url:${previewUrl}`
       : `preset:${voiceId}:tts:${activeI18n.language}`;
+  const handleCardKeyDown = (event: KeyboardEvent, preview: () => void) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    preview();
+  };
+  const stopCardPreview = (event: MouseEvent) => event.stopPropagation();
 
   const openCloneDialog = () => {
     setShowDialog(true);
@@ -487,9 +536,26 @@ function VoicesPage() {
     toast.success(t("voices.deleteSuccess", { name }));
   };
 
-  const handleSetDefault = async (id: string, name: string) => {
-    await setDefaultVoice(id);
-    toast.success(t("voices.defaultSuccess", { name }));
+  const handleSetConversationVoice = (voiceId: string, name: string) => {
+    if (conversationVoiceId === voiceId) {
+      setConversationVoiceId(null);
+      toast.success(t("voices.conversationVoiceCleared", { name }));
+      return;
+    }
+
+    setConversationVoiceId(voiceId);
+    toast.success(t("voices.conversationVoiceSuccess", { name }));
+  };
+
+  const handleSetCookingVoice = (voiceId: string, name: string) => {
+    if (cookingVoiceId === voiceId) {
+      setCookingVoiceId(null);
+      toast.success(t("voices.cookingVoiceCleared", { name }));
+      return;
+    }
+
+    setCookingVoiceId(voiceId);
+    toast.success(t("voices.cookingVoiceSuccess", { name }));
   };
 
   return (
@@ -523,35 +589,79 @@ function VoicesPage() {
             <VoiceHint>{t("voices.voiceHint")}</VoiceHint>
           </div>
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {clonedVoices.map((v, i) => (
-              <article key={v.id} className="relative rounded-3xl border border-border bg-card p-5 sm:p-6">
-                {(() => {
-                  const previewKey = getClonedPreviewKey(v);
-                  const isLoadingPreview = loadingPreviewKey === previewKey;
-                  const isPlayingPreview = activePreviewKey === previewKey;
-                  const isPausedPreview = pausedPreviewKey === previewKey;
+          <div className="mt-6 grid justify-start gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,260px))]">
+            {clonedVoices.map((v, i) => {
+                const previewKey = getClonedPreviewKey(v);
+                const isLoadingPreview = loadingPreviewKey === previewKey;
+                const isPlayingPreview = activePreviewKey === previewKey;
+                const isPausedPreview = pausedPreviewKey === previewKey;
 
-                  return (
-                    <>
+                return (
+                  <article
+                    key={v.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={
+                      isPlayingPreview
+                        ? t("cook.pause")
+                        : isPausedPreview
+                          ? t("cook.resume")
+                          : t("voices.preview")
+                    }
+                    title={t("voices.preview")}
+                    onClick={() => void handlePreviewVoice(v)}
+                    onKeyDown={(event) => handleCardKeyDown(event, () => void handlePreviewVoice(v))}
+                    className="group/voice-card relative cursor-pointer rounded-3xl border border-border bg-card p-5 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
                       <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
 
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
-                          <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
+                          {isLoadingPreview ? (
+                            <Loader2
+                              className="h-5 w-5 animate-spin text-clay"
+                              strokeWidth={1.5}
+                            />
+                          ) : isPlayingPreview ? (
+                            <Pause className="h-5 w-5 text-clay" strokeWidth={1.5} />
+                          ) : (
+                            <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
+                          )}
                         </div>
-                        {v.isDefault ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-[10px] uppercase tracking-wider text-background">
-                            <Star className="h-3 w-3" strokeWidth={2} /> {t("voices.default")}
-                          </span>
-                        ) : (
-                          <button
-                            className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-wider hover:border-foreground"
-                            onClick={() => handleSetDefault(v.id, v.name)}
-                          >
-                            {t("voices.setDefault")}
-                          </button>
-                        )}
+                        <div className="flex shrink-0 items-center justify-end gap-1.5">
+                          <VoiceRoleButton
+                            isSelected={conversationVoiceId === v.elevenLabsVoiceId}
+                            disabled={!v.elevenLabsVoiceId}
+                            Icon={MessageCircle}
+                            label={
+                              conversationVoiceId === v.elevenLabsVoiceId
+                                ? t("voices.clearConversationVoice")
+                                : t("voices.setConversationVoice")
+                            }
+                            onClick={(event) => {
+                              stopCardPreview(event);
+                              if (v.elevenLabsVoiceId) {
+                                handleSetConversationVoice(v.elevenLabsVoiceId, v.name);
+                              }
+                            }}
+                          />
+                          <VoiceRoleButton
+                            isSelected={cookingVoiceId === v.elevenLabsVoiceId}
+                            disabled={!v.elevenLabsVoiceId}
+                            Icon={ChefHat}
+                            label={
+                              cookingVoiceId === v.elevenLabsVoiceId
+                                ? t("voices.clearCookingVoice")
+                                : t("voices.setCookingVoice")
+                            }
+                            onClick={(event) => {
+                              stopCardPreview(event);
+                              if (v.elevenLabsVoiceId) {
+                                handleSetCookingVoice(v.elevenLabsVoiceId, v.name);
+                              }
+                            }}
+                          />
+                        </div>
                       </div>
 
                       <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
@@ -572,54 +682,31 @@ function VoicesPage() {
                         ))}
                       </div>
 
-                      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                        <button
-                          className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-foreground/80 px-4 py-2 text-xs hover:bg-foreground hover:text-background"
-                          onClick={() => handlePreviewVoice(v)}
-                        >
-                          {isLoadingPreview ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />{" "}
-                              {t("voices.generatingPreview")}
-                            </>
-                          ) : isPlayingPreview ? (
-                            <>
-                              <Pause className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("cook.pause")}
-                            </>
-                          ) : isPausedPreview ? (
-                            <>
-                              <Play className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("cook.resume")}
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-3.5 w-3.5" strokeWidth={1.75} />{" "}
-                              {t("voices.preview")}
-                            </>
-                          )}
-                        </button>
+                      <div className="mt-4 flex justify-end">
                         <button
                           className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border"
-                          onClick={() => handleDelete(v.id, v.name)}
+                          onClick={(event) => {
+                            stopCardPreview(event);
+                            void handleDelete(v.id, v.name);
+                          }}
                         >
                           <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                         </button>
                       </div>
-                    </>
-                  );
-                })()}
-              </article>
-            ))}
+                  </article>
+                );
+              })}
 
             {/* New voice slot */}
             <button
-              className="group flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-border bg-card transition-colors hover:border-clay sm:min-h-[280px]"
+              className="group flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-border bg-card transition-colors hover:border-clay"
               onClick={openCloneDialog}
             >
               <div className="flex h-14 w-14 items-center justify-center rounded-full border border-foreground/30 group-hover:border-clay">
                 <Mic className="h-6 w-6" strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <div className="font-display text-base">{t("voices.record30s")}</div>
+                <div className="font-display text-sm leading-snug">{t("voices.record30s")}</div>
                 <VoiceHint className="justify-center mt-1">{t("voices.addNewVoice")}</VoiceHint>
               </div>
             </button>
@@ -698,7 +785,23 @@ function VoicesPage() {
                 return (
                   <div
                     key={voice.voice_id}
-                    className="flex flex-col items-start gap-3 rounded-2xl border border-border bg-card px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={
+                      isPlayingPreview
+                        ? t("cook.pause")
+                        : isPausedPreview
+                          ? t("cook.resume")
+                          : t("voices.preview")
+                    }
+                    title={t("voices.preview")}
+                    onClick={() => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
+                    onKeyDown={(event) =>
+                      handleCardKeyDown(event, () =>
+                        void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl),
+                      )
+                    }
+                    className="group/voice-card flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-5 py-4 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <VoiceBadge n={i + 1} />
@@ -713,25 +816,39 @@ function VoicesPage() {
                         </div>
                       </div>
                     </div>
-                    <button
-                      className="inline-flex h-9 w-9 shrink-0 self-end items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border sm:self-auto"
-                      onClick={() => handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
-                      aria-label={
-                        isPlayingPreview
-                          ? t("cook.pause")
-                          : isPausedPreview
-                            ? t("cook.resume")
-                            : t("voices.preview")
-                      }
-                    >
+                    <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                      <VoiceRoleButton
+                        isSelected={conversationVoiceId === voice.voice_id}
+                        Icon={MessageCircle}
+                        label={
+                          conversationVoiceId === voice.voice_id
+                            ? t("voices.clearConversationVoice")
+                            : t("voices.setConversationVoice")
+                        }
+                        onClick={(event) => {
+                          stopCardPreview(event);
+                          handleSetConversationVoice(voice.voice_id, voice.name);
+                        }}
+                      />
+                      <VoiceRoleButton
+                        isSelected={cookingVoiceId === voice.voice_id}
+                        Icon={ChefHat}
+                        label={
+                          cookingVoiceId === voice.voice_id
+                            ? t("voices.clearCookingVoice")
+                            : t("voices.setCookingVoice")
+                        }
+                        onClick={(event) => {
+                          stopCardPreview(event);
+                          handleSetCookingVoice(voice.voice_id, voice.name);
+                        }}
+                      />
                       {isLoadingPreview ? (
-                        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
+                        <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
                       ) : isPlayingPreview ? (
-                        <Pause className="h-4 w-4" strokeWidth={1.5} />
-                      ) : (
-                        <Play className="h-4 w-4" strokeWidth={1.5} />
-                      )}
-                    </button>
+                        <Pause className="h-4 w-4 text-clay" strokeWidth={1.5} />
+                      ) : null}
+                    </div>
                   </div>
                 );
               })}
@@ -747,158 +864,180 @@ function VoicesPage() {
           if (!open) closeCloneDialog();
         }}
       >
-        <DialogContent className="w-[calc(100vw-2rem)] min-w-0 overflow-x-hidden sm:max-w-md">
+        <DialogContent className="w-[calc(100vw-1rem)] min-w-0 overflow-x-hidden px-4 py-4 sm:w-[calc(100vw-2rem)] sm:max-w-2xl sm:px-6 sm:py-5 md:max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="font-display text-2xl">
+            <DialogTitle className="font-display text-xl sm:text-2xl">
               {t("voices.cloneDialogTitle")}
             </DialogTitle>
           </DialogHeader>
 
           {/* Step 1: Record or upload */}
           {cloneStep === "record" && (
-            <div className="min-w-0 space-y-4">
-              <p className="text-sm text-muted-foreground">{t("voices.recordOrUpload")}</p>
-              <div className="min-w-0 rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground">
-                <p className="mb-1 font-medium text-foreground">{t("voices.samplePromptTitle")}</p>
-                <p className="break-words">{t("voices.samplePrompt")}</p>
-              </div>
-
-              <div className="rounded-2xl border border-border p-5 text-center">
-                {isRecording ? (
-                  <div className="space-y-3">
-                    {/* Live waveform bars */}
-                    <div className="flex h-14 items-center justify-center gap-0.5">
-                      {Array.from({ length: 24 }).map((_, k) => (
-                        <span
-                          key={k}
-                          className="w-1 rounded-full bg-clay animate-pulse"
-                          style={{
-                            height: `${24 + Math.abs(Math.sin(k * 0.9)) * 24}px`,
-                            animationDelay: `${k * 40}ms`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <p className="font-display text-3xl tabular-nums">
-                      {formatRecordingDuration(recordingTime)}
-                      <span className="text-sm font-sans text-muted-foreground">
-                        {" "}
-                        / {formatRecordingDuration(VOICE_CLONE_RECORDING_MAX_SECONDS)}
+            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] md:items-start">
+              <div className="min-w-0 space-y-3">
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  {t("voices.recordOrUpload")}
+                </p>
+                <div className="rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:hidden">
+                  <details className="group">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-left">
+                      <span className="min-w-0 flex-1 font-medium text-foreground">
+                        {t("voices.samplePromptTitle")}
                       </span>
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {t("voices.recordingMinimumHint")}
-                    </p>
-                    <button
-                      className="inline-flex items-center gap-2 rounded-full bg-destructive px-6 py-2.5 text-sm text-white hover:bg-destructive/80"
-                      onClick={() => stopRecording()}
-                    >
-                      <StopCircle className="h-4 w-4" /> {t("voices.stopRecording")}
-                    </button>
-                  </div>
-                ) : recordedAudio ? (
-                  <div className="space-y-3">
-                    {isRecordedAudioLongEnough ? (
-                      <CheckCircle2 className="mx-auto h-10 w-10 text-clay" strokeWidth={1.5} />
-                    ) : (
-                      <AlertCircle
-                        className="mx-auto h-10 w-10 text-destructive"
-                        strokeWidth={1.5}
-                      />
-                    )}
-                    <div>
-                      <p className="text-sm">
-                        {t("voices.recordedAudio", { count: recordingTime })}
+                      <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+                    </summary>
+                    <p className="mt-2 break-words">{t("voices.samplePrompt")}</p>
+                  </details>
+                </div>
+                <div className="hidden rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:block">
+                  <p className="mb-1 font-medium text-foreground">{t("voices.samplePromptTitle")}</p>
+                  <p className="break-words">{t("voices.samplePrompt")}</p>
+                </div>
+              </div>
+
+              <div className="min-w-0 space-y-3">
+                <div className="rounded-2xl border border-border p-4 text-center sm:p-5">
+                  {isRecording ? (
+                    <div className="space-y-3">
+                      <div className="flex h-12 items-center justify-center gap-0.5 sm:h-14">
+                        {Array.from({ length: 24 }).map((_, k) => (
+                          <span
+                            key={k}
+                            className="w-1 rounded-full bg-clay animate-pulse"
+                            style={{
+                              height: `${24 + Math.abs(Math.sin(k * 0.9)) * 24}px`,
+                              animationDelay: `${k * 40}ms`,
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <p className="font-display text-3xl tabular-nums sm:text-4xl">
+                        {formatRecordingDuration(recordingTime)}
+                        <span className="text-sm font-sans text-muted-foreground">
+                          {" "}
+                          / {formatRecordingDuration(VOICE_CLONE_RECORDING_MAX_SECONDS)}
+                        </span>
                       </p>
-                      {!isRecordedAudioLongEnough && (
-                        <p className="mt-1 text-xs text-destructive">
-                          {t("voices.recordingTooShortInline")}
-                        </p>
+                      <p className="text-xs text-muted-foreground">
+                        {t("voices.recordingMinimumHint")}
+                      </p>
+                      <button
+                        className="inline-flex items-center gap-2 rounded-full bg-destructive px-6 py-2.5 text-sm text-white hover:bg-destructive/80"
+                        onClick={() => stopRecording()}
+                        type="button"
+                      >
+                        <StopCircle className="h-4 w-4" /> {t("voices.stopRecording")}
+                      </button>
+                    </div>
+                  ) : recordedAudio ? (
+                    <div className="space-y-3">
+                      {isRecordedAudioLongEnough ? (
+                        <CheckCircle2 className="mx-auto h-10 w-10 text-clay" strokeWidth={1.5} />
+                      ) : (
+                        <AlertCircle
+                          className="mx-auto h-10 w-10 text-destructive"
+                          strokeWidth={1.5}
+                        />
                       )}
+                      <div>
+                        <p className="text-sm">
+                          {t("voices.recordedAudio", { count: recordingTime })}
+                        </p>
+                        {!isRecordedAudioLongEnough && (
+                          <p className="mt-1 text-xs text-destructive">
+                            {t("voices.recordingTooShortInline")}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        className="text-xs text-muted-foreground underline hover:text-foreground"
+                        onClick={() => {
+                          setRecordedAudio(null);
+                          setRecordingTime(0);
+                          void startRecording();
+                        }}
+                        type="button"
+                      >
+                        {t("voices.rerecord")}
+                      </button>
                     </div>
-                    <button
-                      className="text-xs text-muted-foreground hover:text-foreground underline"
-                      onClick={() => {
-                        setRecordedAudio(null);
-                        setRecordingTime(0);
-                        void startRecording();
-                      }}
-                    >
-                      {t("voices.rerecord")}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex h-14 items-center justify-center">
-                      <Mic className="h-10 w-10 text-muted-foreground" strokeWidth={1} />
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex h-12 items-center justify-center sm:h-14">
+                        <Mic className="h-10 w-10 text-muted-foreground" strokeWidth={1} />
+                      </div>
+                      <button
+                        className="inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-2.5 text-sm text-background hover:bg-clay"
+                        onClick={startRecording}
+                        type="button"
+                      >
+                        <Mic className="h-4 w-4" /> {t("voices.startRecording")}
+                      </button>
                     </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 border-t border-border" />
+                  <span className="text-xs text-muted-foreground">{t("common.or")}</span>
+                  <div className="flex-1 border-t border-border" />
+                </div>
+
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={handleAudioUpload}
+                  />
+                  {uploadedAudio ? (
+                    <div className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-border p-3">
+                      <span
+                        className="block min-w-0 flex-1 truncate text-sm"
+                        title={uploadedAudio.name}
+                      >
+                        {t("voices.audioSelectedWithName", { name: uploadedAudio.name })}
+                      </span>
+                      <button
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setUploadedAudio(null);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                        type="button"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      className="inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-2.5 text-sm text-background hover:bg-clay"
-                      onClick={startRecording}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border py-3 text-sm hover:border-foreground"
+                      onClick={() => fileInputRef.current?.click()}
+                      type="button"
                     >
-                      <Mic className="h-4 w-4" /> {t("voices.startRecording")}
+                      <Upload className="h-4 w-4" /> {t("voices.uploadAudio")}
                     </button>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
 
-              <div className="flex items-center gap-3">
-                <div className="flex-1 border-t border-border" />
-                <span className="text-xs text-muted-foreground">{t("common.or")}</span>
-                <div className="flex-1 border-t border-border" />
-              </div>
-
-              <div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  onChange={handleAudioUpload}
-                />
-                {uploadedAudio ? (
-                  <div className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-border p-3">
-                    <span
-                      className="block min-w-0 flex-1 truncate text-sm"
-                      title={uploadedAudio.name}
-                    >
-                      {t("voices.audioSelectedWithName", { name: uploadedAudio.name })}
-                    </span>
-                    <button
-                      className="shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => {
-                        setUploadedAudio(null);
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                      }}
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-border py-3 text-sm hover:border-foreground"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4" /> {t("voices.uploadAudio")}
-                  </button>
-                )}
-              </div>
-
-              <button
-                className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
-                disabled={!canContinueWithAudio}
-                onClick={() => {
-                  if (!canContinueWithAudio) {
-                    if (recordedAudio && !isRecordedAudioLongEnough) {
-                      toast.error(t("voices.recordingTooShort"));
+                <button
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
+                  disabled={!canContinueWithAudio}
+                  onClick={() => {
+                    if (!canContinueWithAudio) {
+                      if (recordedAudio && !isRecordedAudioLongEnough) {
+                        toast.error(t("voices.recordingTooShort"));
+                      }
+                      return;
                     }
-                    return;
-                  }
-                  setCloneStep("name");
-                }}
-              >
-                {t("common.continue")}
-              </button>
+                    setCloneStep("name");
+                  }}
+                  type="button"
+                >
+                  {t("common.continue")}
+                </button>
+              </div>
             </div>
           )}
 
