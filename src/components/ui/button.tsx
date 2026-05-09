@@ -21,7 +21,8 @@ const buttonVariants = cva(
         default: "h-9 px-4 py-2",
         sm: "h-8 rounded-md px-3 text-xs",
         lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        icon:
+          "h-9 w-9 rounded-full border border-transparent bg-transparent p-0 shadow-none ring-0 appearance-none hover:border-border hover:bg-transparent focus-visible:border-border focus-visible:ring-0 active:bg-transparent",
       },
     },
     defaultVariants: {

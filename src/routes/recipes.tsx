@@ -162,15 +162,15 @@ function RecipesPage() {
             </div>
             <Link
               to="/import"
-              className="inline-flex items-center gap-2 self-start rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:px-5"
+              className="inline-flex w-full items-center justify-center gap-2 self-start rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:w-auto sm:px-5"
             >
               <Plus className="h-4 w-4" strokeWidth={1.75} />
               {t("recipes.importVideo")}
             </Link>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            <div className="flex min-w-0 flex-[1_1_100%] items-center gap-2 rounded-full border border-border bg-card px-3 py-2.5 sm:min-w-[280px] sm:flex-1 sm:px-4">
+          <div className="mt-5 space-y-3">
+            <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-2.5 sm:min-w-[280px] sm:px-4">
               <Search className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
               <input
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
@@ -182,40 +182,41 @@ function RecipesPage() {
               <Mic className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
             </div>
 
-            {/* Cuisine filter buttons */}
-            <button
-              onClick={() => setActiveCuisine("all")}
-              className={`relative inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
-                activeCuisine === "all"
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border bg-card hover:border-foreground"
-              }`}
-            >
-              {t("recipes.all")}
-            </button>
-            {cuisines.map((c) => (
+            <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
               <button
-                key={c}
-                onClick={() => setActiveCuisine(c)}
+                onClick={() => setActiveCuisine("all")}
                 className={`relative inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
-                  activeCuisine === c
+                  activeCuisine === "all"
                     ? "border-foreground bg-foreground text-background"
                     : "border-border bg-card hover:border-foreground"
                 }`}
               >
-                {c}
+                {t("recipes.all")}
               </button>
-            ))}
+              {cuisines.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setActiveCuisine(c)}
+                  className={`relative inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
+                    activeCuisine === c
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border bg-card hover:border-foreground"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
 
-            <button className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground">
-              <Filter className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("recipes.filter")}
-            </button>
-            <button
-              onClick={cycleSortKey}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground"
-            >
-              <ArrowUpDown className="h-3.5 w-3.5" strokeWidth={1.75} /> {sortLabels[sort]}
-            </button>
+              <button className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground">
+                <Filter className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("recipes.filter")}
+              </button>
+              <button
+                onClick={cycleSortKey}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground"
+              >
+                <ArrowUpDown className="h-3.5 w-3.5" strokeWidth={1.75} /> {sortLabels[sort]}
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -286,14 +287,14 @@ function RecipeCard({
           {difficultyLabel}
         </div>
       </div>
-      <div className="flex flex-col gap-2 p-5">
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <div className="flex flex-col gap-2 p-4 sm:p-5">
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span>{recipe.tags.cuisine ?? "—"}</span>
           <span>{t("recipes.lastCooked")} · {lastCookedStr}</span>
         </div>
-        <h3 className="font-display text-xl font-semibold leading-tight group-hover:text-clay">{recipe.title}</h3>
+        <h3 className="font-display text-lg font-semibold leading-tight group-hover:text-clay sm:text-xl">{recipe.title}</h3>
         {flavorStr && <p className="text-xs text-muted-foreground">{flavorStr}</p>}
-        <div className="mt-2 flex items-center justify-between border-t border-border pt-3 text-xs">
+        <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3 text-xs sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />
             {recipe.tags.totalTimeMin != null
@@ -331,7 +332,7 @@ function EmptyState({
       {!search && (
         <Link
           to="/import"
-          className="inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
         >
           <Plus className="h-4 w-4" strokeWidth={1.75} />
           {t("recipes.importVideo")}

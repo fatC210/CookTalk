@@ -8,6 +8,7 @@ export type ElevenLabsVoiceOption = {
   label: string;
   value: string;
   description: string;
+  displayLabel: string;
   previewUrl: string | null;
 };
 
@@ -19,36 +20,35 @@ export function getElevenLabsVoicePreviewUrl(voice: ElevenLabsVoice): string | n
   );
 }
 
-export function describeElevenLabsVoice(
+export function getElevenLabsVoiceGender(
   voice: ElevenLabsVoice,
-  fallbackDescription = "ElevenLabs voice",
+  fallbackGender = "unknown",
 ): string {
-  const labels = voice.labels ?? {};
-  const languages = voice.verified_languages
-    ?.map((language) => language.locale ?? language.language ?? language.accent)
-    .filter(Boolean);
+  return voice.labels?.gender?.trim() || fallbackGender;
+}
 
-  const parts = [
-    voice.category,
-    labels.description,
-    labels.accent,
-    labels.gender,
-    labels.age,
-    labels.use_case,
-    ...(languages ?? []),
-  ].filter((part): part is string => Boolean(part?.trim()));
+export function formatElevenLabsVoiceDisplayLabel(
+  voice: ElevenLabsVoice,
+  fallbackGender = "unknown",
+): string {
+  return `${voice.name} - ${getElevenLabsVoiceGender(voice, fallbackGender)}`;
+}
 
-  return Array.from(new Set(parts)).join(" · ") || voice.description || fallbackDescription;
+function isSupportedElevenLabsVoice(voice: ElevenLabsVoice): boolean {
+  return voice.category?.trim().toLowerCase() !== "cloned";
 }
 
 export function toElevenLabsVoiceOption(
   voice: ElevenLabsVoice,
-  fallbackDescription?: string,
+  fallbackGender?: string,
 ): ElevenLabsVoiceOption {
+  const gender = getElevenLabsVoiceGender(voice, fallbackGender);
+
   return {
     label: voice.name,
     value: voice.voice_id,
-    description: describeElevenLabsVoice(voice, fallbackDescription),
+    description: gender,
+    displayLabel: formatElevenLabsVoiceDisplayLabel(voice, fallbackGender),
     previewUrl: getElevenLabsVoicePreviewUrl(voice),
   };
 }
@@ -82,7 +82,7 @@ export function useElevenLabsVoices(refreshKey?: unknown) {
       const nextVoices = await new ElevenLabsService(apiKey).listVoices({ showLegacy: true });
       setVoices(
         nextVoices
-          .filter((voice) => voice.voice_id && voice.name)
+          .filter((voice) => voice.voice_id && voice.name && isSupportedElevenLabsVoice(voice))
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
       setError(null);
@@ -99,8 +99,7 @@ export function useElevenLabsVoices(refreshKey?: unknown) {
   }, [loadVoices, refreshKey]);
 
   const options = useMemo(
-    () =>
-      voices.map((voice) => toElevenLabsVoiceOption(voice, t("voices.elevenLabsVoiceFallback"))),
+    () => voices.map((voice) => toElevenLabsVoiceOption(voice, t("common.unknown"))),
     [i18n.language, t, voices],
   );
 

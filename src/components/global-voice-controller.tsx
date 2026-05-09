@@ -3,7 +3,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useVoiceSession } from "@/hooks/use-voice-session";
-import { normalizeSpeechText } from "@/lib/voice-pipeline";
+import { hasWakeWord, normalizeSpeechText } from "@/lib/voice-pipeline";
 import { useAppStore } from "@/stores/app-store";
 
 type NavigablePath = "/" | "/recipes" | "/import" | "/voices" | "/settings" | "/onboarding";
@@ -22,6 +22,9 @@ export function GlobalVoiceController() {
   const listenMode = useAppStore((s) => s.listenMode);
   const manualWakeActive = useAppStore((s) => s.manualWakeActive);
   const clearManualWake = useAppStore((s) => s.clearManualWake);
+  const homeConversationActive = useAppStore((s) => s.homeConversationActive);
+  const pendingHomeAwake = useAppStore((s) => s.pendingHomeAwake);
+  const queueHomeAwake = useAppStore((s) => s.queueHomeAwake);
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const setListenMode = useAppStore((s) => s.setListenMode);
 
@@ -30,6 +33,8 @@ export function GlobalVoiceController() {
 
   const handleTranscript = useCallback(
     async (transcript: string) => {
+      if (pendingHomeAwake) return;
+
       const text = normalizeSpeechText(transcript);
       if (/show.*badge|显示.*(语音|徽标|编号)/i.test(text)) {
         toggleVoiceBadges(true);
@@ -55,8 +60,17 @@ export function GlobalVoiceController() {
         return;
       }
 
-      const intent = parseGlobalNavigationIntent(transcript);
+      if (pathname !== "/" && hasWakeWord(transcript, wakeWords)) {
+        queueHomeAwake({
+          phrase: transcript,
+          source: "wake-word",
+          transcript: text,
+        });
+        void navigate({ to: "/" });
+        return;
+      }
 
+      const intent = parseGlobalNavigationIntent(transcript);
       if (intent) {
         await navigate({ to: intent.path });
         toast.success(`${t("voice.opened")} ${intent.label}`);
@@ -74,7 +88,7 @@ export function GlobalVoiceController() {
 
       toast.info(t("voice.unhandled"));
     },
-    [navigate, pathname, setListenMode, t, toggleVoiceBadges],
+    [navigate, pathname, pendingHomeAwake, queueHomeAwake, setListenMode, t, toggleVoiceBadges, wakeWords],
   );
 
   const voiceSession = useVoiceSession({
@@ -84,9 +98,22 @@ export function GlobalVoiceController() {
     listenMode: activeListenMode,
     manualWakeActive,
     awakeResetKey: pathname,
+    preserveWakeWordsInTranscript: pathname === "/" && homeConversationActive,
+    suppressPureWakeWordTranscript: !(pathname === "/" && homeConversationActive),
     onWake: (event) => {
       clearManualWake();
-      if (pathname !== "/" || event.source === "always-listen") return;
+      if (event.source === "always-listen") return;
+
+      if (pathname !== "/") {
+        queueHomeAwake({
+          phrase: event.phrase,
+          source: event.source,
+          transcript: event.transcript ?? "",
+        });
+        void navigate({ to: "/" });
+        return;
+      }
+
       window.dispatchEvent(
         new CustomEvent("cooktalk:home-awake", {
           detail: {
@@ -129,7 +156,7 @@ export function GlobalVoiceController() {
 function parseGlobalNavigationIntent(transcript: string): NavigationIntent | null {
   const text = normalizeSpeechText(transcript);
 
-  if (/(打开|进入|去|跳到|open|go to|show).*(菜谱|菜單|菜单|recipes|recipe library)/i.test(text)) {
+  if (/(打开|进入|跳到|open|go to|show).*(菜谱|菜單|菜单|recipes|recipe library)/i.test(text)) {
     return { path: "/recipes", label: "Recipes" };
   }
 
@@ -137,7 +164,7 @@ function parseGlobalNavigationIntent(transcript: string): NavigationIntent | nul
     return { path: "/import", label: "Import" };
   }
 
-  if (/(声音库|声音|语音库|voice|voices|voice library)/i.test(text)) {
+  if (/(声音库|语音库|voice|voices|voice library)/i.test(text)) {
     return { path: "/voices", label: "Voices" };
   }
 

@@ -17,6 +17,10 @@ type RecipePayload = Omit<
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
+type ChatStreamOptions = {
+  onChunk?: (chunk: string) => void;
+};
+
 interface LLMConfig {
   apiKey: string;
   baseUrl?: string;
@@ -25,6 +29,14 @@ interface LLMConfig {
 
 interface ChatCompletionResponse {
   choices: Array<{ message: { content: string } }>;
+}
+
+interface ChatCompletionStreamResponse {
+  choices?: Array<{
+    delta?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
 }
 
 interface ImageGenerationResponse {
@@ -177,6 +189,93 @@ export class LLMService {
     return data.choices[0].message.content;
   }
 
+  async chatStream(messages: ChatMessage[], options: ChatStreamOptions = {}): Promise<string> {
+    const response = await fetchOpenAICompatible(`${this.config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages,
+        temperature: 0.7,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`LLM failed: ${response.status}`);
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!response.body || !contentType.includes("text/event-stream")) {
+      const data = (await response.json()) as ChatCompletionResponse;
+      const content = data.choices[0]?.message.content ?? "";
+      if (content) options.onChunk?.(content);
+      return content;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullText = "";
+
+    const processEvent = (rawEvent: string) => {
+      const dataLines = rawEvent
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .filter(Boolean);
+
+      for (const line of dataLines) {
+        if (line === "[DONE]") continue;
+
+        const payload = JSON.parse(line) as ChatCompletionStreamResponse;
+        const delta = payload.choices?.[0]?.delta?.content;
+        const chunk = Array.isArray(delta)
+          ? delta
+              .map((item) => (typeof item.text === "string" ? item.text : ""))
+              .join("")
+          : typeof delta === "string"
+            ? delta
+            : "";
+
+        if (!chunk) continue;
+        fullText += chunk;
+        options.onChunk?.(chunk);
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+      let boundaryIndex = buffer.indexOf("\n\n");
+      while (boundaryIndex >= 0) {
+        const rawEvent = buffer.slice(0, boundaryIndex).trim();
+        buffer = buffer.slice(boundaryIndex + 2);
+        if (rawEvent) processEvent(rawEvent);
+        boundaryIndex = buffer.indexOf("\n\n");
+      }
+
+      if (done) break;
+    }
+
+    const trailing = buffer.trim();
+    if (trailing) processEvent(trailing);
+
+    return fullText;
+  }
+
+  private parseRecipePayload(result: string, errorMessage: string): RecipePayload {
+    const cleaned = result.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+
+    try {
+      return JSON.parse(cleaned) as RecipePayload;
+    } catch {
+      throw new Error(errorMessage);
+    }
+  }
+
   async structureRecipe(transcript: string): Promise<RecipePayload> {
     const prompt = `以下是一段烹饪视频的语音转录。请提取为 JSON 格式：
 {
@@ -199,15 +298,85 @@ ${transcript}`;
       { role: "user", content: prompt },
     ]);
 
-    const cleaned = result
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim();
-    try {
-      return JSON.parse(cleaned) as RecipePayload;
-    } catch {
-      throw new Error("Failed to parse recipe JSON from LLM response");
-    }
+    return this.parseRecipePayload(result, "Failed to parse recipe JSON from LLM response");
+  }
+
+  async structureRecipeFromText(recipeText: string): Promise<RecipePayload> {
+    const prompt = [
+      "You are converting rough recipe text into structured CookTalk recipe JSON.",
+      "The input may be a pasted recipe, plain notes, or unformatted cooking text.",
+      "Return valid JSON only, no markdown, using this schema:",
+      "{",
+      '  "title": "Recipe name",',
+      '  "ingredients": [{"name": "ingredient", "amount": "amount"}],',
+      '  "steps": [{"order": 1, "description": "step text", "durationSec": 300, "tips": "optional tip"}],',
+      '  "tags": {',
+      '    "flavor": ["savory"],',
+      '    "difficulty": "easy|medium|hard",',
+      '    "cuisine": "cuisine name",',
+      '    "totalTimeMin": 20,',
+      '    "servings": 2,',
+      '    "spiceLevel": "mild",',
+      '    "notes": "optional notes"',
+      "  }",
+      "}",
+      "Rules:",
+      "- Preserve the user's intended dish and wording where practical.",
+      "- Break the recipe into clear ingredients and ordered steps.",
+      "- Keep step text concise and readable for cooking playback.",
+      "- Infer optional metadata only when reasonably supported by the text.",
+      "- Omit unknown optional fields instead of inventing details.",
+      "",
+      `Recipe text:\n${recipeText}`,
+    ].join("\n");
+
+    const result = await this.chat([
+      {
+        role: "system",
+        content:
+          "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+      },
+      { role: "user", content: prompt },
+    ]);
+
+    return this.parseRecipePayload(
+      result,
+      "Failed to parse structured recipe JSON from text input",
+    );
+  }
+
+  async refineRecipeWithAnswers(
+    recipe: RecipePayload,
+    answers: {
+      servings?: string;
+      spiceLevel?: string;
+      notes?: string;
+    },
+  ): Promise<RecipePayload> {
+    const prompt = [
+      "You are improving a structured recipe for CookTalk.",
+      "Return valid JSON only, with the exact same schema as the input recipe.",
+      "Update the recipe using the user's follow-up answers.",
+      "Keep ingredients and steps intact unless the answers imply a small wording adjustment.",
+      "Put numeric servings into tags.servings when possible.",
+      "Put spice preference into tags.spiceLevel.",
+      "Put the user's free-form note into tags.notes.",
+      "",
+      `Current recipe JSON:\n${JSON.stringify(recipe, null, 2)}`,
+      "",
+      `User answers:\n${JSON.stringify(answers, null, 2)}`,
+    ].join("\n");
+
+    const result = await this.chat([
+      {
+        role: "system",
+        content:
+          "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+      },
+      { role: "user", content: prompt },
+    ]);
+
+    return this.parseRecipePayload(result, "Failed to parse refined recipe JSON from LLM response");
   }
 
   async generateCoverPrompt(dishName: string, customStyle?: string): Promise<string> {

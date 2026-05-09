@@ -201,6 +201,20 @@
     margin-inline: auto;
     padding: 2rem 1rem;
   }
+  .import-stepper {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem 0.5rem;
+    align-items: start;
+  }
+  .import-stepper-item {
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+  .import-stepper-line {
+    display: none;
+  }
   @media (min-width: 640px) {
     .page-hero-container {
       padding: 1.75rem 1.5rem;
@@ -212,6 +226,21 @@
   @media (min-width: 1024px) {
     .page-hero-container {
       padding-block: 2rem;
+    }
+    .import-stepper {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0;
+    }
+    .import-stepper-item {
+      align-items: flex-start;
+    }
+    .import-stepper-line {
+      position: absolute;
+      left: calc(-50% + 2.25rem);
+      right: calc(50% + 2.25rem);
+      top: 1.25rem;
+      display: block;
+      height: 1px;
     }
   }
   .grain {
@@ -266,9 +295,7 @@
   .settings-page.app-page-bg {
     display: flex;
     flex-direction: column;
-    height: 100dvh;
     min-height: 100dvh;
-    overflow: hidden;
   }
   .settings-page.app-page-bg::before,
   .settings-page.app-page-bg::after {
@@ -279,60 +306,9 @@
   }
   .settings-main {
     flex: 1 1 auto;
-    min-height: 0;
   }
   .settings-content-container {
-    height: 100%;
-    min-height: 0;
     padding-block: clamp(1rem, 2.4vh, 2rem);
-  }
-  .settings-layout {
-    height: 100%;
-    min-height: 0;
-  }
-  .settings-sidebar,
-  .settings-tab-panel {
-    min-height: 0;
-  }
-  .settings-tab-scroll {
-    max-height: 100%;
-    min-height: 0;
-    overflow-y: auto;
-    padding-right: 0.25rem;
-    padding-bottom: 0.25rem;
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in oklch, var(--color-clay) 45%, transparent) transparent;
-  }
-  .settings-tab-scroll::-webkit-scrollbar {
-    display: block;
-    width: 0.5rem;
-    height: 0.5rem;
-  }
-  .settings-tab-scroll::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .settings-tab-scroll::-webkit-scrollbar-thumb {
-    border-radius: 9999px;
-    background: color-mix(in oklch, var(--color-clay) 45%, transparent);
-  }
-  @media (max-width: 1023px) {
-    .settings-page.app-page-bg {
-      height: auto;
-      min-height: 100dvh;
-      overflow: hidden;
-    }
-    .settings-main {
-      overflow-y: visible;
-    }
-    .settings-content-container,
-    .settings-layout {
-      height: auto;
-    }
-    .settings-tab-scroll {
-      max-height: none;
-      overflow: visible;
-      padding-right: 0;
-    }
   }
 }
 

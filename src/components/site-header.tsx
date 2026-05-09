@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Menu, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
   const { t } = useTranslation();
@@ -32,7 +33,10 @@ export function SiteHeader() {
   return (
     <header
       ref={headerRef}
-      className="sticky top-0 z-40 border-b border-border/20 bg-background/65 backdrop-blur-xl"
+      className={cn(
+        "sticky top-0 z-40 border-b border-border/20",
+        mobileOpen ? "bg-background" : "bg-background/65 backdrop-blur-xl",
+      )}
     >
       <div className="mx-auto grid h-14 max-w-7xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 sm:h-16 sm:gap-4 sm:px-6">
         <Link to="/" className="group flex min-w-0 items-center gap-2.5">
@@ -72,7 +76,7 @@ export function SiteHeader() {
         <div className="flex min-w-0 items-center justify-end gap-2">
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-background/45 transition-colors hover:bg-secondary md:hidden"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent bg-transparent transition-colors hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border md:hidden"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-expanded={mobileOpen}
             aria-label={mobileOpen ? "收起菜单" : "展开菜单"}
@@ -87,7 +91,7 @@ export function SiteHeader() {
       </div>
 
       {mobileOpen && (
-        <nav className="absolute inset-x-0 top-full z-50 border-t border-border/20 bg-background/90 px-4 py-3 shadow-[0_18px_45px_-24px_oklch(0.28_0.02_60_/_0.45)] backdrop-blur-xl md:hidden">
+        <nav className="absolute inset-x-0 top-full z-50 max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t border-border/20 bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_18px_45px_-24px_oklch(0.28_0.02_60_/_0.45)] sm:max-h-[calc(100dvh-4rem)] md:hidden">
           <div className="mx-auto flex max-w-7xl flex-col gap-1">
             {links.map((l) => (
               <Link

@@ -4,6 +4,7 @@ import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
   AlertCircle,
   Mic,
+  Pause,
   Play,
   Plus,
   Star,
@@ -19,13 +20,21 @@ import {
 import { useCallback, useEffect, useState, useRef } from "react";
 import type { ChangeEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, addVoice, deleteVoice, setDefaultVoice } from "@/lib/db";
+import {
+  db,
+  addVoice,
+  deleteVoice,
+  getVoicePreviewAudio,
+  saveVoicePreviewAudio,
+  setDefaultVoice,
+} from "@/lib/db";
 import type { Voice } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { getApiKey } from "@/lib/crypto";
 import i18n from "@/lib/i18n";
 import {
-  describeElevenLabsVoice,
+  formatElevenLabsVoiceDisplayLabel,
+  getElevenLabsVoiceGender,
   getElevenLabsVoicePreviewUrl,
   useElevenLabsVoices,
 } from "@/hooks/use-elevenlabs-voices";
@@ -80,9 +89,9 @@ function VoicesPage() {
   const [recordingTime, setRecordingTime] = useState(0);
 
   // Playback state
-  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
-  const [loadingVoicePreviewId, setLoadingVoicePreviewId] = useState<string | null>(null);
-  const [previewingPreset, setPreviewingPreset] = useState<string | null>(null);
+  const [activePreviewKey, setActivePreviewKey] = useState<string | null>(null);
+  const [loadingPreviewKey, setLoadingPreviewKey] = useState<string | null>(null);
+  const [pausedPreviewKey, setPausedPreviewKey] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -90,7 +99,7 @@ function VoicesPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playbackHandleRef = useRef<VoicePlaybackHandle | null>(null);
   const previewRunRef = useRef(0);
-  const clonedPreviewUrlCacheRef = useRef<Map<string, string>>(new Map());
+  const previewObjectUrlCacheRef = useRef<Map<string, string>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const discardRecordingOnStopRef = useRef(false);
@@ -112,6 +121,14 @@ function VoicesPage() {
   };
 
   // ── Dialog helpers ───────────────────────────────────────────────────────────
+
+  const getClonedPreviewKey = (voice: Voice) =>
+    `cloned:${voice.elevenLabsVoiceId}:${activeI18n.language}`;
+  const getClonedPreviewOwnerKey = (voice: Voice) => `cloned:${voice.id}`;
+  const getPresetPreviewKey = (voiceId: string, previewUrl: string | null) =>
+    previewUrl
+      ? `preset:${voiceId}:url:${previewUrl}`
+      : `preset:${voiceId}:tts:${activeI18n.language}`;
 
   const openCloneDialog = () => {
     setShowDialog(true);
@@ -251,48 +268,99 @@ function VoicesPage() {
       audioRef.current.pause();
       audioRef.current = null;
     }
-    setPlayingVoiceId(null);
-    setLoadingVoicePreviewId(null);
-    setPreviewingPreset(null);
+    setActivePreviewKey(null);
+    setLoadingPreviewKey(null);
+    setPausedPreviewKey(null);
   }, []);
 
+  const getCachedPreviewUrl = useCallback(
+    async (
+      cacheKey: string,
+      ownerKey: string,
+      createBlob: () => Promise<Blob>,
+    ): Promise<string> => {
+      const cachedObjectUrl = previewObjectUrlCacheRef.current.get(cacheKey);
+      if (cachedObjectUrl) return cachedObjectUrl;
+
+      let previewBlob = await getVoicePreviewAudio(cacheKey);
+      if (!previewBlob) {
+        previewBlob = await createBlob();
+        await saveVoicePreviewAudio({
+          key: cacheKey,
+          ownerKey,
+          audioBlob: previewBlob,
+        });
+      }
+
+      const objectUrl = URL.createObjectURL(previewBlob);
+      previewObjectUrlCacheRef.current.set(cacheKey, objectUrl);
+      return objectUrl;
+    },
+    [],
+  );
+
+  const toggleCurrentPreview = useCallback(
+    async (previewKey: string) => {
+      if (loadingPreviewKey === previewKey) {
+        stopAudio();
+        return true;
+      }
+      if (!audioRef.current) return false;
+      if (activePreviewKey === previewKey) {
+        audioRef.current.pause();
+        setActivePreviewKey(null);
+        setPausedPreviewKey(previewKey);
+        return true;
+      }
+      if (pausedPreviewKey === previewKey) {
+        await audioRef.current.play();
+        setPausedPreviewKey(null);
+        setActivePreviewKey(previewKey);
+        return true;
+      }
+      return false;
+    },
+    [activePreviewKey, loadingPreviewKey, pausedPreviewKey, stopAudio],
+  );
+
   useEffect(() => {
+    const cachedPreviewUrls = previewObjectUrlCacheRef.current;
+
     return () => {
       stopAudio();
-      clonedPreviewUrlCacheRef.current.forEach((url) => URL.revokeObjectURL(url));
-      clonedPreviewUrlCacheRef.current.clear();
+      cachedPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+      cachedPreviewUrls.clear();
     };
   }, [stopAudio]);
 
   const handlePreviewVoice = async (voice: Voice) => {
-    if (playingVoiceId === voice.id || loadingVoicePreviewId === voice.id) {
-      stopAudio();
-      return;
-    }
     if (!voice.elevenLabsVoiceId) {
       toast.error(t("voices.missingElevenLabsVoiceId"));
       return;
     }
 
     try {
+      const previewKey = getClonedPreviewKey(voice);
+      if (await toggleCurrentPreview(previewKey)) return;
+
       const runId = previewRunRef.current + 1;
       previewRunRef.current = runId;
       stopAudio(false);
-      setLoadingVoicePreviewId(voice.id);
+      setLoadingPreviewKey(previewKey);
 
-      const cacheKey = `${voice.elevenLabsVoiceId}:${activeI18n.language}`;
-      let url = clonedPreviewUrlCacheRef.current.get(cacheKey);
-      if (!url) {
-        const apiKey = await getApiKey("elevenlabs");
-        if (!apiKey) throw new Error(t("voices.elevenLabsKeyMissingShort"));
+      const url = await getCachedPreviewUrl(
+        previewKey,
+        getClonedPreviewOwnerKey(voice),
+        async () => {
+          const apiKey = await getApiKey("elevenlabs");
+          if (!apiKey) throw new Error(t("voices.elevenLabsKeyMissingShort"));
 
-        const blob = await new ElevenLabsService(apiKey).textToSpeech(
-          t("voices.previewText"),
-          voice.elevenLabsVoiceId,
-        );
-        url = URL.createObjectURL(blob);
-        clonedPreviewUrlCacheRef.current.set(cacheKey, url);
-      }
+          return new ElevenLabsService(apiKey).textToSpeech(
+            t("voices.previewText"),
+            voice.elevenLabsVoiceId!,
+          );
+        },
+      );
 
       const audio = new Audio(url);
       audio.preload = "auto";
@@ -302,12 +370,14 @@ function VoicesPage() {
       audioRef.current = audio;
       const finish = () => {
         if (previewRunRef.current !== runId) return;
-        setLoadingVoicePreviewId(null);
-        setPlayingVoiceId(null);
+        setLoadingPreviewKey(null);
+        setPausedPreviewKey(null);
+        setActivePreviewKey(null);
         if (audioRef.current === audio) audioRef.current = null;
         playbackHandleRef.current = null;
       };
       const playback = claimVoicePlayback(audio, {
+        signalAssistantSpeaking: false,
         onStop: finish,
       });
       playbackHandleRef.current = playback;
@@ -327,12 +397,14 @@ function VoicesPage() {
         playback.stop();
         return;
       }
-      setLoadingVoicePreviewId(null);
-      setPlayingVoiceId(voice.id);
+      setLoadingPreviewKey(null);
+      setPausedPreviewKey(null);
+      setActivePreviewKey(previewKey);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("voices.previewFailed"));
-      setLoadingVoicePreviewId(null);
-      setPlayingVoiceId(null);
+      setLoadingPreviewKey(null);
+      setActivePreviewKey(null);
+      setPausedPreviewKey(null);
     }
   };
 
@@ -340,48 +412,44 @@ function VoicesPage() {
     voiceId: string,
     previewUrl: string | null = null,
   ) => {
-    if (previewingPreset === voiceId) {
-      stopAudio();
-      return;
-    }
-
     try {
+      const previewKey = getPresetPreviewKey(voiceId, previewUrl);
+      if (await toggleCurrentPreview(previewKey)) return;
+
       const runId = previewRunRef.current + 1;
       previewRunRef.current = runId;
       stopAudio(false);
-      setPreviewingPreset(voiceId);
+      setLoadingPreviewKey(previewKey);
 
-      let objectUrl: string | null = null;
-      let audio: HTMLAudioElement;
-      if (previewUrl) {
-        audio = new Audio(previewUrl);
-      } else {
+      const objectUrl = await getCachedPreviewUrl(previewKey, `preset:${voiceId}`, async () => {
+        if (previewUrl) {
+          const response = await fetch(previewUrl);
+          if (!response.ok) throw new Error(t("voices.previewFailed"));
+          return response.blob();
+        }
+
         const apiKey = await getApiKey("elevenlabs");
         if (!apiKey) throw new Error(t("voices.elevenLabsKeyMissingFull"));
 
-        const blob = await new ElevenLabsService(apiKey).textToSpeech(
-          t("voices.previewPresetText"),
-          voiceId,
-        );
-        objectUrl = URL.createObjectURL(blob);
-        audio = new Audio(objectUrl);
-      }
+        return new ElevenLabsService(apiKey).textToSpeech(t("voices.previewPresetText"), voiceId);
+      });
 
+      const audio = new Audio(objectUrl);
+      audio.preload = "auto";
       if (previewRunRef.current !== runId) {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
         return;
       }
       audioRef.current = audio;
       const finish = () => {
         if (previewRunRef.current !== runId) return;
-        setPreviewingPreset(null);
+        setLoadingPreviewKey(null);
+        setPausedPreviewKey(null);
+        setActivePreviewKey(null);
         if (audioRef.current === audio) audioRef.current = null;
         playbackHandleRef.current = null;
       };
       const playback = claimVoicePlayback(audio, {
-        cleanup: () => {
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-        },
+        signalAssistantSpeaking: false,
         onStop: finish,
       });
       playbackHandleRef.current = playback;
@@ -393,10 +461,22 @@ function VoicesPage() {
         playback.release();
         finish();
       };
-      void audio.play();
+      await audio.play().catch((error: unknown) => {
+        playback.release();
+        throw error;
+      });
+      if (previewRunRef.current !== runId) {
+        playback.stop();
+        return;
+      }
+      setLoadingPreviewKey(null);
+      setPausedPreviewKey(null);
+      setActivePreviewKey(previewKey);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("voices.previewFailed"));
-      setPreviewingPreset(null);
+      setLoadingPreviewKey(null);
+      setActivePreviewKey(null);
+      setPausedPreviewKey(null);
     }
   };
 
@@ -435,87 +515,104 @@ function VoicesPage() {
       {/* My cloned voices */}
       <section className="border-b border-border/60">
         <div className="page-content-container">
-          <div className="flex items-end justify-between">
-            <h2 className="font-display text-2xl">{t("voices.myCloned")}</h2>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="font-display text-2xl">{t("voices.myCloned")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t("voices.myClonedDesc")}</p>
+            </div>
             <VoiceHint>{t("voices.voiceHint")}</VoiceHint>
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {clonedVoices.map((v, i) => (
-              <article key={v.id} className="relative rounded-3xl border border-border bg-card p-6">
-                <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
+              <article key={v.id} className="relative rounded-3xl border border-border bg-card p-5 sm:p-6">
+                {(() => {
+                  const previewKey = getClonedPreviewKey(v);
+                  const isLoadingPreview = loadingPreviewKey === previewKey;
+                  const isPlayingPreview = activePreviewKey === previewKey;
+                  const isPausedPreview = pausedPreviewKey === previewKey;
 
-                <div className="flex items-center justify-between">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
-                    <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
-                  </div>
-                  {v.isDefault ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-[10px] uppercase tracking-wider text-background">
-                      <Star className="h-3 w-3" strokeWidth={2} /> {t("voices.default")}
-                    </span>
-                  ) : (
-                    <button
-                      className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-wider hover:border-foreground"
-                      onClick={() => handleSetDefault(v.id, v.name)}
-                    >
-                      {t("voices.setDefault")}
-                    </button>
-                  )}
-                </div>
+                  return (
+                    <>
+                      <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
 
-                <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
-                <p className="text-xs text-muted-foreground">{formatClonedVoiceDescription(v)}</p>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
+                          <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
+                        </div>
+                        {v.isDefault ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-[10px] uppercase tracking-wider text-background">
+                            <Star className="h-3 w-3" strokeWidth={2} /> {t("voices.default")}
+                          </span>
+                        ) : (
+                          <button
+                            className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[10px] uppercase tracking-wider hover:border-foreground"
+                            onClick={() => handleSetDefault(v.id, v.name)}
+                          >
+                            {t("voices.setDefault")}
+                          </button>
+                        )}
+                      </div>
 
-                {/* Waveform */}
-                <div className="mt-4 flex h-10 items-center gap-1">
-                  {Array.from({ length: 40 }).map((_, k) => (
-                    <span
-                      key={k}
-                      className={`flex-1 rounded-full bg-clay/40 ${
-                        playingVoiceId === v.id ? "voice-preview-wave-bar" : ""
-                      }`}
-                      style={{
-                        height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
-                        animationDelay: `${k * 34}ms`,
-                        animationDuration: `${760 + (k % 7) * 54}ms`,
-                      }}
-                    />
-                  ))}
-                </div>
+                      <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
+                      {/* Waveform */}
+                      <div className="mt-4 flex h-10 items-center gap-1">
+                        {Array.from({ length: 40 }).map((_, k) => (
+                          <span
+                            key={k}
+                            className={`flex-1 rounded-full bg-clay/40 ${
+                              isPlayingPreview ? "voice-preview-wave-bar" : ""
+                            }`}
+                            style={{
+                              height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
+                              animationDelay: `${k * 34}ms`,
+                              animationDuration: `${760 + (k % 7) * 54}ms`,
+                            }}
+                          />
+                        ))}
+                      </div>
 
-                <div className="mt-4 flex gap-2">
-                  <button
-                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-foreground/80 py-2 text-xs hover:bg-foreground hover:text-background"
-                    onClick={() => handlePreviewVoice(v)}
-                  >
-                    {loadingVoicePreviewId === v.id ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />{" "}
-                        {t("voices.generatingPreview")}
-                      </>
-                    ) : playingVoiceId === v.id ? (
-                      <>
-                        <StopCircle className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("voices.stop")}
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("voices.preview")}
-                      </>
-                    )}
-                  </button>
-                  <button
-                    className="inline-flex items-center justify-center rounded-full border border-border p-2 text-muted-foreground hover:border-destructive hover:text-destructive"
-                    onClick={() => handleDelete(v.id, v.name)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  </button>
-                </div>
+                      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                        <button
+                          className="inline-flex flex-1 items-center justify-center gap-2 rounded-full border border-foreground/80 px-4 py-2 text-xs hover:bg-foreground hover:text-background"
+                          onClick={() => handlePreviewVoice(v)}
+                        >
+                          {isLoadingPreview ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />{" "}
+                              {t("voices.generatingPreview")}
+                            </>
+                          ) : isPlayingPreview ? (
+                            <>
+                              <Pause className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("cook.pause")}
+                            </>
+                          ) : isPausedPreview ? (
+                            <>
+                              <Play className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("cook.resume")}
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-3.5 w-3.5" strokeWidth={1.75} />{" "}
+                              {t("voices.preview")}
+                            </>
+                          )}
+                        </button>
+                        <button
+                          className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border"
+                          onClick={() => handleDelete(v.id, v.name)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
               </article>
             ))}
 
             {/* New voice slot */}
             <button
-              className="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-border bg-card hover:border-clay transition-colors"
+              className="group flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-border bg-card transition-colors hover:border-clay sm:min-h-[280px]"
               onClick={openCloneDialog}
             >
               <div className="flex h-14 w-14 items-center justify-center rounded-full border border-foreground/30 group-hover:border-clay">
@@ -533,7 +630,7 @@ function VoicesPage() {
       {/* ElevenLabs voices */}
       <section className="flex-1">
         <div className="page-content-container">
-          <div className="flex items-end justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="font-display text-2xl">{t("voices.elevenLabsVoices")}</h2>
               <p className="text-sm text-muted-foreground">
@@ -590,31 +687,47 @@ function VoicesPage() {
           ) : (
             <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
               {elevenLabsVoices.map((voice, i) => {
-                const description = describeElevenLabsVoice(
-                  voice,
-                  t("voices.elevenLabsVoiceFallback"),
-                );
+                const displayLabel = formatElevenLabsVoiceDisplayLabel(voice, t("common.unknown"));
+                const gender = getElevenLabsVoiceGender(voice, t("common.unknown"));
                 const previewUrl = getElevenLabsVoicePreviewUrl(voice);
+                const previewKey = getPresetPreviewKey(voice.voice_id, previewUrl);
+                const isLoadingPreview = loadingPreviewKey === previewKey;
+                const isPlayingPreview = activePreviewKey === previewKey;
+                const isPausedPreview = pausedPreviewKey === previewKey;
 
                 return (
                   <div
                     key={voice.voice_id}
-                    className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4"
+                    className="flex flex-col items-start gap-3 rounded-2xl border border-border bg-card px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <VoiceBadge n={i + 1} />
                       <div className="min-w-0">
-                        <div className="truncate font-display text-base">{voice.name}</div>
-                        <div className="truncate text-xs text-muted-foreground">{description}</div>
+                        <div className="truncate font-display text-base" title={displayLabel}>
+                          {voice.name}
+                        </div>
+                        <div className="mt-1">
+                          <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            {gender}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <button
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-foreground/30 hover:bg-foreground hover:text-background"
+                      className="inline-flex h-9 w-9 shrink-0 self-end items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border sm:self-auto"
                       onClick={() => handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
-                      aria-label={t("voices.preview")}
+                      aria-label={
+                        isPlayingPreview
+                          ? t("cook.pause")
+                          : isPausedPreview
+                            ? t("cook.resume")
+                            : t("voices.preview")
+                      }
                     >
-                      {previewingPreset === voice.voice_id ? (
+                      {isLoadingPreview ? (
                         <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
+                      ) : isPlayingPreview ? (
+                        <Pause className="h-4 w-4" strokeWidth={1.5} />
                       ) : (
                         <Play className="h-4 w-4" strokeWidth={1.5} />
                       )}
@@ -803,7 +916,7 @@ function VoicesPage() {
                 }}
                 autoFocus
               />
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
                   onClick={() => setCloneStep("record")}
@@ -836,7 +949,7 @@ function VoicesPage() {
               <p className="text-sm">
                 {t("voices.voiceName")} <span className="font-medium">{voiceName}</span>
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
                   onClick={() => setCloneStep("name")}

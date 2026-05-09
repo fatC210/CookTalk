@@ -27,6 +27,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { storeApiKey, getApiKey, removeApiKey } from "@/lib/crypto";
@@ -49,10 +56,10 @@ import { useElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings — CookTalk" },
+      { title: "Settings - CookTalk" },
       {
         name: "description",
-        content: "Configure API keys, voice wake-words, language, theme, and data — all by voice.",
+        content: "Configure API keys, voice wake-words, language, theme, and data - all by voice.",
       },
     ],
   }),
@@ -63,6 +70,7 @@ type VoiceOption = {
   label: string;
   value: string;
   description: string;
+  displayLabel?: string;
 };
 
 type ApiSettingsGroup = "elevenlabs" | "llm" | "image";
@@ -79,7 +87,66 @@ type ApiSettingsValues = {
 
 type SettingsTab = "apiKeys" | "voice" | "preferences" | "data";
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+const EMPTY_SELECT_VALUE = "__empty__";
+const EMPTY_API_SETTINGS_VALUES: ApiSettingsValues = {
+  elevenLabsKey: "",
+  llmKey: "",
+  llmEndpoint: "",
+  llmModel: "",
+  imageEndpoint: "",
+  imageKey: "",
+  imageModel: "",
+};
+
+function getTrimmedApiSettingsValues(values: ApiSettingsValues): ApiSettingsValues {
+  return {
+    elevenLabsKey: values.elevenLabsKey.trim(),
+    llmKey: values.llmKey.trim(),
+    llmEndpoint: values.llmEndpoint.trim(),
+    llmModel: values.llmModel.trim(),
+    imageEndpoint: values.imageEndpoint.trim(),
+    imageKey: values.imageKey.trim(),
+    imageModel: values.imageModel.trim(),
+  };
+}
+
+function areApiGroupValuesEqual(
+  group: ApiSettingsGroup,
+  left: ApiSettingsValues,
+  right: ApiSettingsValues,
+): boolean {
+  if (group === "elevenlabs") {
+    return left.elevenLabsKey === right.elevenLabsKey;
+  }
+
+  if (group === "llm") {
+    return (
+      left.llmKey === right.llmKey &&
+      left.llmEndpoint === right.llmEndpoint &&
+      left.llmModel === right.llmModel
+    );
+  }
+
+  return (
+    left.imageEndpoint === right.imageEndpoint &&
+    left.imageKey === right.imageKey &&
+    left.imageModel === right.imageModel
+  );
+}
+
+function isApiGroupReadyForValidation(group: ApiSettingsGroup, values: ApiSettingsValues): boolean {
+  if (group === "elevenlabs") {
+    return !!values.elevenLabsKey;
+  }
+
+  if (group === "llm") {
+    return !!(values.llmKey && values.llmEndpoint && values.llmModel);
+  }
+
+  return !!(values.imageEndpoint && values.imageKey && values.imageModel);
+}
+
+// 鈹€鈹€ Sub-components 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function KeyField({
   label,
@@ -94,7 +161,7 @@ function KeyField({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  onBlur?: () => void;
+  onBlur?: (event: FocusEvent<HTMLDivElement>) => void;
   placeholder?: string;
   type?: "password" | "text";
   showLabel: string;
@@ -102,6 +169,15 @@ function KeyField({
 }) {
   const [show, setShow] = useState(false);
   const canToggleSecret = type === "password" && value.length > 0;
+
+  const handleBlur = (event: FocusEvent<HTMLDivElement>) => {
+    const nextFocusedElement = event.relatedTarget;
+    if (nextFocusedElement instanceof Node && event.currentTarget.contains(nextFocusedElement)) {
+      return;
+    }
+
+    onBlur?.(event);
+  };
 
   useEffect(() => {
     if (!canToggleSecret) setShow(false);
@@ -114,21 +190,23 @@ function KeyField({
           <label className="inline-flex items-center gap-2 text-sm font-medium">{label}</label>
         </div>
       </div>
-      <div className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5">
+      <div
+        className="mt-3 flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5"
+        onBlur={handleBlur}
+      >
         <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
         <input
           type={canToggleSecret && show ? "text" : type === "text" ? "text" : "password"}
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
           className="secret-input min-w-0 flex-1 bg-transparent text-sm tracking-wider outline-none placeholder:text-muted-foreground"
         />
         {canToggleSecret && (
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+            className="-mr-1 inline-flex h-8 w-8 shrink-0 appearance-none items-center justify-center rounded-full border border-transparent bg-transparent p-0 text-muted-foreground shadow-none ring-0 hover:border-border hover:bg-transparent hover:text-foreground focus-visible:border-border focus-visible:ring-0 active:bg-transparent"
             aria-label={show ? hideLabel : showLabel}
           >
             {show ? (
@@ -166,7 +244,11 @@ function ApiSettingsCard({
   };
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-5" onBlur={handleBlur}>
+    <div
+      className="rounded-2xl border border-border bg-card p-5"
+      data-api-settings-card
+      onBlur={handleBlur}
+    >
       <div className="flex items-start gap-3">
         <VoiceBadge n={n} />
         <div>
@@ -207,6 +289,13 @@ function VoiceRoleSelect({
   defaultLabel: string;
 }) {
   const selected = options.find((option) => option.value === value);
+  const getOptionDisplayLabel = (option: VoiceOption) =>
+    option.displayLabel ?? `${option.label} - ${option.description}`;
+  const helperText = selected
+    ? getOptionDisplayLabel(selected)
+    : disabled
+      ? emptyLabel
+      : defaultLabel;
 
   return (
     <div className="rounded-2xl border border-border bg-card p-5">
@@ -217,22 +306,24 @@ function VoiceRoleSelect({
           <div className="voice-hint mt-0.5">{hint}</div>
         </div>
       </div>
-      <select
-        value={value ?? ""}
-        onChange={(event) => onChange(event.target.value || null)}
+      <Select
+        value={value ?? EMPTY_SELECT_VALUE}
+        onValueChange={(nextValue) => onChange(nextValue === EMPTY_SELECT_VALUE ? null : nextValue)}
         disabled={disabled}
-        className="mt-3 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-foreground disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <option value="">{disabled ? emptyLabel : defaultLabel}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label} · {option.description}
-          </option>
-        ))}
-      </select>
-      <div className="mt-2 text-xs text-muted-foreground">
-        {selected ? `${selected.label} · ${selected.description}` : defaultLabel}
-      </div>
+        <SelectTrigger className="mt-3">
+          <SelectValue placeholder={disabled ? emptyLabel : defaultLabel} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={EMPTY_SELECT_VALUE}>{disabled ? emptyLabel : defaultLabel}</SelectItem>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {getOptionDisplayLabel(option)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="mt-2 text-xs text-muted-foreground">{helperText}</div>
     </div>
   );
 }
@@ -263,13 +354,13 @@ function SwitchRow({
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Main page 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function SettingsPage() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>("apiKeys");
 
-  // ── App store ────────────────────────────────────────────────────────────
+  // 鈹€鈹€ App store 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const {
     theme,
     setTheme,
@@ -282,19 +373,15 @@ function SettingsPage() {
     removeWakeWord,
     sensitivity,
     setSensitivity,
-    screenWakeLock,
-    setScreenWakeLock,
-    listenMode,
-    setListenMode,
-    soundEffects,
-    setSoundEffects,
     setHasElevenLabsKey,
     setHasLlmKey,
     setHasImageGenKey,
     conversationVoiceId,
     cookingVoiceId,
+    cookingAgentId,
     setConversationVoiceId,
     setCookingVoiceId,
+    setCookingAgentId,
   } = useAppStore();
 
   const [elevenLabsVoiceRefreshKey, setElevenLabsVoiceRefreshKey] = useState(0);
@@ -325,11 +412,15 @@ function SettingsPage() {
         label: voice.name,
         value: voice.elevenLabsVoiceId!,
         description: formatClonedVoiceDescription(voice.language, voice.description),
+        displayLabel: `${voice.name} - ${formatClonedVoiceDescription(
+          voice.language,
+          voice.description,
+        )}`,
       })),
   ];
   const voiceSelectDisabled = !hasElevenLabsKey || voiceOptions.length === 0;
 
-  // ── API key state ────────────────────────────────────────────────────────
+  // 鈹€鈹€ API key state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const [elevenLabsKey, setElevenLabsKey] = useState("");
   const [llmKey, setLlmKey] = useState("");
   const [llmEndpoint, setLlmEndpoint] = useState("");
@@ -339,6 +430,12 @@ function SettingsPage() {
   const [imageModel, setImageModel] = useState("");
   const [savingKeys, setSavingKeys] = useState(false);
   const lastSavedApiValuesRef = useRef<ApiSettingsValues | null>(null);
+  const lastValidatedApiValuesRef = useRef<ApiSettingsValues | null>(null);
+  const apiGroupOperationQueueRef = useRef<Record<ApiSettingsGroup, Promise<void>>>({
+    elevenlabs: Promise.resolve(),
+    llm: Promise.resolve(),
+    image: Promise.resolve(),
+  });
 
   // Load existing keys on mount
   useEffect(() => {
@@ -359,7 +456,7 @@ function SettingsPage() {
       if (ie) setImageEndpoint(ie);
       if (ik) setImageKey(ik);
       if (im) setImageModel(im);
-      lastSavedApiValuesRef.current = {
+      const initialApiValues = {
         elevenLabsKey: el ?? "",
         llmKey: lk ?? "",
         llmEndpoint: le ?? "",
@@ -368,213 +465,303 @@ function SettingsPage() {
         imageKey: ik ?? "",
         imageModel: im ?? "",
       };
+      lastSavedApiValuesRef.current = initialApiValues;
+      lastValidatedApiValuesRef.current = initialApiValues;
       setHasElevenLabsKey(!!el);
       setHasLlmKey(!!lk);
       setHasImageGenKey(!!ik);
     })();
   }, [setHasElevenLabsKey, setHasImageGenKey, setHasLlmKey]);
 
-  const handleSaveApiGroup = useCallback(
-    async (group: ApiSettingsGroup) => {
-      const currentValues: ApiSettingsValues = {
-        elevenLabsKey,
-        llmKey,
-        llmEndpoint,
-        llmModel,
-        imageEndpoint,
-        imageKey,
-        imageModel,
+  const enqueueApiGroupOperation = useCallback(
+    (group: ApiSettingsGroup, operation: () => Promise<void>) => {
+      const queuedOperation = apiGroupOperationQueueRef.current[group]
+        .catch(() => undefined)
+        .then(operation);
+      apiGroupOperationQueueRef.current[group] = queuedOperation;
+      return queuedOperation;
+    },
+    [],
+  );
+
+  const persistApiGroupValues = useCallback(
+    async (group: ApiSettingsGroup, values: ApiSettingsValues) => {
+      const nextSavedValues = {
+        ...(lastSavedApiValuesRef.current ?? EMPTY_API_SETTINGS_VALUES),
       };
-      const savedValues = lastSavedApiValuesRef.current;
-      const hasGroupChanged =
-        !savedValues ||
-        (group === "elevenlabs"
-          ? currentValues.elevenLabsKey !== savedValues.elevenLabsKey
-          : group === "llm"
-            ? currentValues.llmKey !== savedValues.llmKey ||
-              currentValues.llmEndpoint !== savedValues.llmEndpoint ||
-              currentValues.llmModel !== savedValues.llmModel
-            : currentValues.imageEndpoint !== savedValues.imageEndpoint ||
-              currentValues.imageKey !== savedValues.imageKey ||
-              currentValues.imageModel !== savedValues.imageModel);
 
-      if (!hasGroupChanged) return;
+      if (group === "elevenlabs") {
+        if (values.elevenLabsKey) {
+          await storeApiKey("elevenlabs", values.elevenLabsKey);
+        } else {
+          await removeApiKey("elevenlabs");
+        }
 
-      const trimmedElevenLabsKey = elevenLabsKey.trim();
-      const trimmedLlmKey = llmKey.trim();
-      const trimmedLlmEndpoint = llmEndpoint.trim();
-      const trimmedLlmModel = llmModel.trim();
-      const trimmedImageEndpoint = imageEndpoint.trim();
-      const trimmedImageKey = imageKey.trim();
-      const trimmedImageModel = imageModel.trim();
+        nextSavedValues.elevenLabsKey = values.elevenLabsKey;
+        setElevenLabsKey(values.elevenLabsKey);
+      }
 
       if (group === "llm") {
-        if (!trimmedLlmKey) {
-          toast.error(t("settings.apiKeys.llmRequired"));
-          return;
-        }
+        await Promise.all([
+          values.llmKey ? storeApiKey("llm", values.llmKey) : removeApiKey("llm"),
+          values.llmEndpoint
+            ? storeApiKey("llm-endpoint", values.llmEndpoint)
+            : removeApiKey("llm-endpoint"),
+          values.llmModel ? storeApiKey("llm-model", values.llmModel) : removeApiKey("llm-model"),
+        ]);
 
-        if (!trimmedLlmEndpoint) {
-          toast.error(t("settings.apiKeys.llmEndpointRequired"));
-          return;
-        }
-
-        if (!trimmedLlmModel) {
-          toast.error(t("settings.apiKeys.llmModelRequired"));
-          return;
-        }
-
-        if (!isValidOpenAIBaseUrl(trimmedLlmEndpoint)) {
-          toast.error(t("settings.apiKeys.llmEndpointInvalid"));
-          return;
-        }
+        nextSavedValues.llmKey = values.llmKey;
+        nextSavedValues.llmEndpoint = values.llmEndpoint;
+        nextSavedValues.llmModel = values.llmModel;
+        setLlmKey(values.llmKey);
+        setLlmEndpoint(values.llmEndpoint);
+        setLlmModel(values.llmModel);
       }
 
       if (group === "image") {
-        const hasAnyImageConfig = !!(trimmedImageEndpoint || trimmedImageKey || trimmedImageModel);
+        await Promise.all([
+          values.imageEndpoint
+            ? storeApiKey("imagegen-endpoint", values.imageEndpoint)
+            : removeApiKey("imagegen-endpoint"),
+          values.imageKey
+            ? storeApiKey("imagegen-key", values.imageKey)
+            : removeApiKey("imagegen-key"),
+          values.imageModel
+            ? storeApiKey("imagegen-model", values.imageModel)
+            : removeApiKey("imagegen-model"),
+        ]);
 
-        if (hasAnyImageConfig) {
-          if (!trimmedImageEndpoint) {
-            toast.error(t("settings.apiKeys.imageEndpointRequired"));
-            return;
-          }
-
-          if (!trimmedImageKey) {
-            toast.error(t("settings.apiKeys.imageKeyRequired"));
-            return;
-          }
-
-          if (!trimmedImageModel) {
-            toast.error(t("settings.apiKeys.imageModelRequired"));
-            return;
-          }
-        }
-
-        if (trimmedImageEndpoint && !isValidOpenAIBaseUrl(trimmedImageEndpoint)) {
-          toast.error(t("settings.apiKeys.imageEndpointInvalid"));
-          return;
-        }
+        nextSavedValues.imageEndpoint = values.imageEndpoint;
+        nextSavedValues.imageKey = values.imageKey;
+        nextSavedValues.imageModel = values.imageModel;
+        setImageEndpoint(values.imageEndpoint);
+        setImageKey(values.imageKey);
+        setImageModel(values.imageModel);
       }
 
-      setSavingKeys(true);
-      try {
-        const nextSavedValues = savedValues ?? {
-          elevenLabsKey: "",
-          llmKey: "",
-          llmEndpoint: "",
-          llmModel: "",
-          imageEndpoint: "",
-          imageKey: "",
-          imageModel: DEFAULT_IMAGE_MODEL,
-        };
-
-        if (group === "elevenlabs") {
-          if (trimmedElevenLabsKey) {
-            const isValid = await new ElevenLabsService(trimmedElevenLabsKey).validateKey();
-            if (!isValid) {
-              toast.error(t("settings.apiKeys.elevenlabsValidationFailed"));
-              return;
-            }
-
-            await storeApiKey("elevenlabs", trimmedElevenLabsKey);
-          } else {
-            await removeApiKey("elevenlabs");
-          }
-          nextSavedValues.elevenLabsKey = trimmedElevenLabsKey;
-          setElevenLabsKey(trimmedElevenLabsKey);
-          setHasElevenLabsKey(!!trimmedElevenLabsKey);
-          setElevenLabsVoiceRefreshKey((key) => key + 1);
-        }
-
-        if (group === "llm") {
-          const normalizedLlmEndpoint = normalizeOpenAIBaseUrl(trimmedLlmEndpoint);
-          const isValid = await validateOpenAIChatConfig({
-            apiKey: trimmedLlmKey,
-            baseUrl: normalizedLlmEndpoint,
-            model: trimmedLlmModel,
-          });
-
-          if (!isValid) {
-            toast.error(t("settings.apiKeys.llmValidationFailed"));
-            return;
-          }
-
-          await Promise.all([
-            storeApiKey("llm", trimmedLlmKey),
-            storeApiKey("llm-endpoint", normalizedLlmEndpoint),
-            storeApiKey("llm-model", trimmedLlmModel),
-          ]);
-          nextSavedValues.llmKey = trimmedLlmKey;
-          nextSavedValues.llmEndpoint = normalizedLlmEndpoint;
-          nextSavedValues.llmModel = trimmedLlmModel;
-          setLlmKey(trimmedLlmKey);
-          setLlmEndpoint(normalizedLlmEndpoint);
-          setLlmModel(trimmedLlmModel);
-          setHasLlmKey(true);
-        }
-
-        if (group === "image") {
-          const normalizedImageEndpoint = trimmedImageEndpoint
-            ? normalizeOpenAIBaseUrl(trimmedImageEndpoint)
-            : "";
-          if (normalizedImageEndpoint && trimmedImageKey && trimmedImageModel) {
-            const isValid = await validateOpenAIModelConfig({
-              apiKey: trimmedImageKey,
-              baseUrl: normalizedImageEndpoint,
-              model: trimmedImageModel,
-            });
-
-            if (!isValid) {
-              toast.error(t("settings.apiKeys.imageValidationFailed"));
-              return;
-            }
-          }
-
-          await Promise.all([
-            normalizedImageEndpoint
-              ? storeApiKey("imagegen-endpoint", normalizedImageEndpoint)
-              : removeApiKey("imagegen-endpoint"),
-            trimmedImageKey
-              ? storeApiKey("imagegen-key", trimmedImageKey)
-              : removeApiKey("imagegen-key"),
-            trimmedImageModel
-              ? storeApiKey("imagegen-model", trimmedImageModel)
-              : removeApiKey("imagegen-model"),
-          ]);
-          nextSavedValues.imageEndpoint = normalizedImageEndpoint;
-          nextSavedValues.imageKey = trimmedImageKey;
-          nextSavedValues.imageModel = trimmedImageModel;
-          setImageEndpoint(normalizedImageEndpoint);
-          setImageKey(trimmedImageKey);
-          setImageModel(trimmedImageModel);
-          setHasImageGenKey(!!trimmedImageKey);
-        }
-
-        lastSavedApiValuesRef.current = { ...nextSavedValues };
-        toast.success(t("settings.apiKeys.saved"));
-      } catch {
-        toast.error(t("settings.apiKeys.saveError"));
-      } finally {
-        setSavingKeys(false);
-      }
+      lastSavedApiValuesRef.current = nextSavedValues;
+      return nextSavedValues;
     },
+    [],
+  );
+
+  const markApiGroupNeedsValidation = useCallback(
+    (group: ApiSettingsGroup, values: ApiSettingsValues) => {
+      const lastValidatedValues = lastValidatedApiValuesRef.current;
+      if (lastValidatedValues && areApiGroupValuesEqual(group, values, lastValidatedValues)) {
+        return;
+      }
+
+      if (group === "elevenlabs") {
+        setHasElevenLabsKey(false);
+        return;
+      }
+
+      if (group === "llm") {
+        setHasLlmKey(false);
+        return;
+      }
+
+      setHasImageGenKey(false);
+    },
+    [setHasElevenLabsKey, setHasImageGenKey, setHasLlmKey],
+  );
+
+  const handleSaveApiGroup = useCallback(
+    (group: ApiSettingsGroup) =>
+      enqueueApiGroupOperation(group, async () => {
+        const currentValues = getTrimmedApiSettingsValues({
+          elevenLabsKey,
+          llmKey,
+          llmEndpoint,
+          llmModel,
+          imageEndpoint,
+          imageKey,
+          imageModel,
+        });
+        const savedValues = lastSavedApiValuesRef.current;
+        const hasGroupChanged =
+          !savedValues || !areApiGroupValuesEqual(group, currentValues, savedValues);
+
+        if (!hasGroupChanged) return;
+
+        try {
+          await persistApiGroupValues(group, currentValues);
+          markApiGroupNeedsValidation(group, currentValues);
+        } catch {
+          toast.error(t("settings.apiKeys.saveError"));
+        }
+      }),
     [
       elevenLabsKey,
+      enqueueApiGroupOperation,
       imageEndpoint,
       imageKey,
       imageModel,
       llmEndpoint,
       llmKey,
       llmModel,
-      setHasElevenLabsKey,
-      setHasImageGenKey,
-      setHasLlmKey,
-      setElevenLabsVoiceRefreshKey,
+      markApiGroupNeedsValidation,
+      persistApiGroupValues,
       t,
     ],
   );
 
-  // ── Wake word input ──────────────────────────────────────────────────────
+  const handleValidateApiGroup = useCallback(
+    (group: ApiSettingsGroup) =>
+      enqueueApiGroupOperation(group, async () => {
+        const currentValues = getTrimmedApiSettingsValues({
+          elevenLabsKey,
+          llmKey,
+          llmEndpoint,
+          llmModel,
+          imageEndpoint,
+          imageKey,
+          imageModel,
+        });
+        const savedValues = lastSavedApiValuesRef.current;
+        const hasGroupChanged =
+          !savedValues || !areApiGroupValuesEqual(group, currentValues, savedValues);
+
+        try {
+          if (hasGroupChanged) {
+            await persistApiGroupValues(group, currentValues);
+            markApiGroupNeedsValidation(group, currentValues);
+          }
+        } catch {
+          toast.error(t("settings.apiKeys.saveError"));
+          return;
+        }
+
+        if (!isApiGroupReadyForValidation(group, currentValues)) {
+          return;
+        }
+
+        const lastValidatedValues = lastValidatedApiValuesRef.current;
+        if (
+          lastValidatedValues &&
+          areApiGroupValuesEqual(group, currentValues, lastValidatedValues)
+        ) {
+          return;
+        }
+
+        if (group === "llm" && !isValidOpenAIBaseUrl(currentValues.llmEndpoint)) {
+          toast.error(t("settings.apiKeys.llmEndpointInvalid"));
+          return;
+        }
+
+        if (group === "image" && !isValidOpenAIBaseUrl(currentValues.imageEndpoint)) {
+          toast.error(t("settings.apiKeys.imageEndpointInvalid"));
+          return;
+        }
+
+        setSavingKeys(true);
+        try {
+          const nextValidatedValues = {
+            ...(lastValidatedApiValuesRef.current ?? EMPTY_API_SETTINGS_VALUES),
+          };
+
+          if (group === "elevenlabs") {
+            const isValid = await new ElevenLabsService(currentValues.elevenLabsKey).validateKey();
+            if (!isValid) {
+              toast.error(t("settings.apiKeys.elevenlabsValidationFailed"));
+              return;
+            }
+
+            await persistApiGroupValues(group, currentValues);
+            nextValidatedValues.elevenLabsKey = currentValues.elevenLabsKey;
+            setHasElevenLabsKey(true);
+            setElevenLabsVoiceRefreshKey((key) => key + 1);
+          }
+
+          if (group === "llm") {
+            const normalizedLlmEndpoint = normalizeOpenAIBaseUrl(currentValues.llmEndpoint);
+            const normalizedValues = {
+              ...currentValues,
+              llmEndpoint: normalizedLlmEndpoint,
+            };
+            const isValid = await validateOpenAIChatConfig({
+              apiKey: normalizedValues.llmKey,
+              baseUrl: normalizedValues.llmEndpoint,
+              model: normalizedValues.llmModel,
+            });
+
+            if (!isValid) {
+              toast.error(t("settings.apiKeys.llmValidationFailed"));
+              return;
+            }
+
+            await persistApiGroupValues(group, normalizedValues);
+            nextValidatedValues.llmKey = normalizedValues.llmKey;
+            nextValidatedValues.llmEndpoint = normalizedValues.llmEndpoint;
+            nextValidatedValues.llmModel = normalizedValues.llmModel;
+            setHasLlmKey(true);
+          }
+
+          if (group === "image") {
+            const normalizedImageEndpoint = normalizeOpenAIBaseUrl(currentValues.imageEndpoint);
+            const normalizedValues = {
+              ...currentValues,
+              imageEndpoint: normalizedImageEndpoint,
+            };
+            const isValid = await validateOpenAIModelConfig({
+              apiKey: normalizedValues.imageKey,
+              baseUrl: normalizedValues.imageEndpoint,
+              model: normalizedValues.imageModel,
+            });
+
+            if (!isValid) {
+              toast.error(t("settings.apiKeys.imageValidationFailed"));
+              return;
+            }
+
+            await persistApiGroupValues(group, normalizedValues);
+            nextValidatedValues.imageEndpoint = normalizedValues.imageEndpoint;
+            nextValidatedValues.imageKey = normalizedValues.imageKey;
+            nextValidatedValues.imageModel = normalizedValues.imageModel;
+            setHasImageGenKey(true);
+          }
+
+          lastValidatedApiValuesRef.current = nextValidatedValues;
+          toast.success(t("settings.apiKeys.saved"));
+        } catch {
+          toast.error(t("settings.apiKeys.saveError"));
+        } finally {
+          setSavingKeys(false);
+        }
+      }),
+    [
+      elevenLabsKey,
+      enqueueApiGroupOperation,
+      imageEndpoint,
+      imageKey,
+      imageModel,
+      llmEndpoint,
+      llmKey,
+      llmModel,
+      markApiGroupNeedsValidation,
+      persistApiGroupValues,
+      setHasElevenLabsKey,
+      setHasImageGenKey,
+      setHasLlmKey,
+      t,
+    ],
+  );
+
+  const handleApiFieldBlur = useCallback(
+    (group: ApiSettingsGroup, event: FocusEvent<HTMLDivElement>) => {
+      const nextFocusedElement = event.relatedTarget;
+      const card = event.currentTarget.closest("[data-api-settings-card]");
+      if (card && nextFocusedElement instanceof Node && !card.contains(nextFocusedElement)) {
+        return;
+      }
+
+      void handleSaveApiGroup(group);
+    },
+    [handleSaveApiGroup],
+  );
+
+  // 鈹€鈹€ Wake word input 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const [newWakeWord, setNewWakeWord] = useState("");
 
   const handleAddWakeWord = () => {
@@ -584,13 +771,12 @@ function SettingsPage() {
     setNewWakeWord("");
   };
 
-  // ── Language ─────────────────────────────────────────────────────────────
+  // 鈹€鈹€ Language 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const handleLanguage = (lang: "en" | "zh") => {
     setLanguage(lang);
-    i18n.changeLanguage(lang);
   };
 
-  // ── Export / Import / Clear ──────────────────────────────────────────────
+  // 鈹€鈹€ Export / Import / Clear 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const importRef = useRef<HTMLInputElement>(null);
 
   const handleExport = async () => {
@@ -630,7 +816,7 @@ function SettingsPage() {
     toast.success(t("settings.data.clearSuccess"));
   };
 
-  // ── Sidebar sections ─────────────────────────────────────────────────────
+  // 鈹€鈹€ Sidebar sections 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const sections: Array<{
     icon: typeof Key;
     label: string;
@@ -659,14 +845,14 @@ function SettingsPage() {
           <div className="settings-layout grid gap-8 lg:grid-cols-12">
             {/* Sidebar */}
             <aside className="settings-sidebar lg:col-span-3">
-              <nav className="space-y-1">
+              <nav className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
                 {sections.map((s) => (
                   <button
                     key={s.label}
                     type="button"
                     onClick={() => setActiveTab(s.value)}
                     aria-current={activeTab === s.value ? "page" : undefined}
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+                    className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm whitespace-nowrap transition-colors lg:w-full ${
                       activeTab === s.value
                         ? "bg-secondary text-foreground"
                         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
@@ -678,9 +864,9 @@ function SettingsPage() {
               </nav>
             </aside>
 
-            <div className="settings-tab-panel lg:col-span-9">
+            <div className="settings-tab-panel min-w-0 lg:col-span-9">
               <div className="settings-tab-scroll">
-                {/* ── API keys ─────────────────────────────────────────────── */}
+                {/* 鈹€鈹€ API keys 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
                 {activeTab === "apiKeys" && (
                   <section>
                     <h2 className="font-display text-2xl">{t("settings.apiKeys.title")}</h2>
@@ -692,12 +878,13 @@ function SettingsPage() {
                         n={1}
                         title={t("settings.apiKeys.elevenlabsGroup")}
                         required
-                        onBlur={() => void handleSaveApiGroup("elevenlabs")}
+                        onBlur={() => void handleValidateApiGroup("elevenlabs")}
                       >
                         <KeyField
                           label={t("settings.apiKeys.elevenlabs")}
                           value={elevenLabsKey}
                           onChange={setElevenLabsKey}
+                          onBlur={(event) => handleApiFieldBlur("elevenlabs", event)}
                           placeholder="sk_..."
                           showLabel={t("settings.aria.showSecret")}
                           hideLabel={t("settings.aria.hideSecret")}
@@ -708,12 +895,13 @@ function SettingsPage() {
                         n={2}
                         title={t("settings.apiKeys.llmGroup")}
                         required
-                        onBlur={() => void handleSaveApiGroup("llm")}
+                        onBlur={() => void handleValidateApiGroup("llm")}
                       >
                         <KeyField
                           label={t("settings.apiKeys.llmEndpoint")}
                           value={llmEndpoint}
                           onChange={setLlmEndpoint}
+                          onBlur={(event) => handleApiFieldBlur("llm", event)}
                           placeholder={DEFAULT_LLM_BASE_URL}
                           type="text"
                           showLabel={t("settings.aria.showSecret")}
@@ -723,6 +911,7 @@ function SettingsPage() {
                           label={t("settings.apiKeys.llm")}
                           value={llmKey}
                           onChange={setLlmKey}
+                          onBlur={(event) => handleApiFieldBlur("llm", event)}
                           placeholder="sk-..."
                           showLabel={t("settings.aria.showSecret")}
                           hideLabel={t("settings.aria.hideSecret")}
@@ -731,6 +920,7 @@ function SettingsPage() {
                           label={t("settings.apiKeys.llmModel")}
                           value={llmModel}
                           onChange={setLlmModel}
+                          onBlur={(event) => handleApiFieldBlur("llm", event)}
                           placeholder={DEFAULT_LLM_MODEL}
                           type="text"
                           showLabel={t("settings.aria.showSecret")}
@@ -741,12 +931,13 @@ function SettingsPage() {
                       <ApiSettingsCard
                         n={3}
                         title={t("settings.apiKeys.imageGroup")}
-                        onBlur={() => void handleSaveApiGroup("image")}
+                        onBlur={() => void handleValidateApiGroup("image")}
                       >
                         <KeyField
                           label={t("settings.apiKeys.imageEndpoint")}
                           value={imageEndpoint}
                           onChange={setImageEndpoint}
+                          onBlur={(event) => handleApiFieldBlur("image", event)}
                           placeholder="https://api.openai.com/v1"
                           type="text"
                           showLabel={t("settings.aria.showSecret")}
@@ -756,6 +947,7 @@ function SettingsPage() {
                           label={t("settings.apiKeys.imageKey")}
                           value={imageKey}
                           onChange={setImageKey}
+                          onBlur={(event) => handleApiFieldBlur("image", event)}
                           placeholder="sk-..."
                           showLabel={t("settings.aria.showSecret")}
                           hideLabel={t("settings.aria.hideSecret")}
@@ -764,6 +956,7 @@ function SettingsPage() {
                           label={t("settings.apiKeys.imageModel")}
                           value={imageModel}
                           onChange={setImageModel}
+                          onBlur={(event) => handleApiFieldBlur("image", event)}
                           placeholder={DEFAULT_IMAGE_MODEL}
                           type="text"
                           showLabel={t("settings.aria.showSecret")}
@@ -779,7 +972,7 @@ function SettingsPage() {
                   </section>
                 )}
 
-                {/* ── Voice & wake-word ──────────────────────────────────── */}
+                {/* 鈹€鈹€ Voice & wake-word 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
                 {activeTab === "voice" && (
                   <section>
                     <h2 className="font-display text-2xl">{t("settings.voice.title")}</h2>
@@ -795,6 +988,31 @@ function SettingsPage() {
                               })}
                     </p>
                     <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-border bg-card p-5 md:col-span-2">
+                        <div className="flex items-center gap-3">
+                          <VoiceBadge n={8} />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">
+                              {t("settings.voice.cookingAgentId")}
+                            </div>
+                            <div className="voice-hint mt-0.5">
+                              {t("settings.voice.cookingAgentIdHint")}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <KeyField
+                            label={t("settings.voice.cookingAgentId")}
+                            value={cookingAgentId}
+                            onChange={setCookingAgentId}
+                            placeholder={t("settings.voice.cookingAgentIdPlaceholder")}
+                            type="text"
+                            showLabel={t("settings.aria.showSecret")}
+                            hideLabel={t("settings.aria.hideSecret")}
+                          />
+                        </div>
+                      </div>
+
                       {/* Wake words */}
                       <div className="rounded-2xl border border-border bg-card p-5">
                         <div className="flex items-center gap-3">
@@ -818,7 +1036,7 @@ function SettingsPage() {
                               <button
                                 type="button"
                                 onClick={() => removeWakeWord(w)}
-                                className="ml-0.5 hover:opacity-70"
+                                className="ml-0.5 inline-flex h-5 w-5 appearance-none items-center justify-center rounded-full border border-transparent bg-transparent p-0 shadow-none ring-0 hover:border-border hover:bg-transparent hover:opacity-70 focus-visible:border-border focus-visible:ring-0 active:bg-transparent"
                                 aria-label={t("settings.aria.removeWakeWord", { word: w })}
                               >
                                 <X className="h-3 w-3" />
@@ -826,7 +1044,7 @@ function SettingsPage() {
                             </span>
                           ))}
                         </div>
-                        <div className="mt-3 flex gap-2">
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                           <input
                             type="text"
                             value={newWakeWord}
@@ -838,7 +1056,7 @@ function SettingsPage() {
                           <button
                             type="button"
                             onClick={handleAddWakeWord}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground hover:border-foreground hover:text-foreground"
+                            className="inline-flex h-10 w-full appearance-none items-center justify-center rounded-xl border border-border/70 bg-background p-0 text-muted-foreground shadow-none ring-0 hover:border-border hover:bg-transparent hover:text-foreground focus-visible:border-border focus-visible:ring-0 active:bg-transparent sm:h-8 sm:w-8 sm:rounded-full sm:border-transparent"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
@@ -861,7 +1079,7 @@ function SettingsPage() {
                             {t(`settings.voice.${sensitivity}`)}
                           </span>
                         </div>
-                        <div className="mt-4 flex gap-1">
+                        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:gap-1">
                           {(["low", "medium", "high"] as const).map((s) => (
                             <button
                               key={s}
@@ -880,7 +1098,7 @@ function SettingsPage() {
                       </div>
 
                       <VoiceRoleSelect
-                        n={8}
+                        n={9}
                         label={t("settings.voice.conversationVoice")}
                         hint={t("settings.voice.conversationVoiceHint")}
                         value={conversationVoiceId}
@@ -891,7 +1109,7 @@ function SettingsPage() {
                         defaultLabel={t("settings.voice.followDefaultVoice")}
                       />
                       <VoiceRoleSelect
-                        n={9}
+                        n={10}
                         label={t("settings.voice.cookingVoice")}
                         hint={t("settings.voice.cookingVoiceHint")}
                         value={cookingVoiceId}
@@ -903,38 +1121,17 @@ function SettingsPage() {
                       />
 
                       <SwitchRow
-                        n={10}
+                        n={11}
                         label={t("settings.voice.badges")}
                         hint={t("settings.voice.badgesHint")}
                         checked={voiceBadgesVisible}
                         onCheckedChange={toggleVoiceBadges}
                       />
-                      <SwitchRow
-                        n={11}
-                        label={t("settings.voice.alwaysListen")}
-                        hint={t("settings.voice.alwaysListenHint")}
-                        checked={listenMode === "always"}
-                        onCheckedChange={(v) => setListenMode(v ? "always" : "wake-word")}
-                      />
-                      <SwitchRow
-                        n={12}
-                        label={t("settings.voice.wakeLock")}
-                        hint={t("settings.voice.wakeLockHint")}
-                        checked={screenWakeLock}
-                        onCheckedChange={setScreenWakeLock}
-                      />
-                      <SwitchRow
-                        n={13}
-                        label={t("settings.voice.soundEffects")}
-                        hint={t("settings.voice.soundEffectsHint")}
-                        checked={soundEffects}
-                        onCheckedChange={setSoundEffects}
-                      />
                     </div>
                   </section>
                 )}
 
-                {/* ── Preferences ─────────────────────────────────────────── */}
+                {/* 鈹€鈹€ Preferences 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
                 {activeTab === "preferences" && (
                   <section>
                     <h2 className="font-display text-2xl">{t("settings.preferences.title")}</h2>
@@ -950,7 +1147,7 @@ function SettingsPage() {
                             {t("settings.language.title")}
                           </span>
                         </div>
-                        <div className="mt-3 flex gap-2">
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                           {(["en", "zh"] as const).map((lang) => (
                             <button
                               key={lang}
@@ -976,7 +1173,7 @@ function SettingsPage() {
                             {t("settings.appearance.title")}
                           </span>
                         </div>
-                        <div className="mt-3 flex gap-2">
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                           {(["light", "dark", "auto"] as const).map((th) => (
                             <button
                               key={th}
@@ -997,7 +1194,7 @@ function SettingsPage() {
                   </section>
                 )}
 
-                {/* ── Data management ───────────────────────────────────── */}
+                {/* 鈹€鈹€ Data management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */}
                 {activeTab === "data" && (
                   <section>
                     <h2 className="font-display text-2xl">{t("settings.data.title")}</h2>

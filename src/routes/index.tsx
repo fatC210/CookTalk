@@ -75,6 +75,7 @@ type ChatMessage = {
   role: "user" | "assistant" | "system";
   kind: "text" | "recipes" | "confirm" | "guide" | "system";
   text: string;
+  displayText?: string;
   createdAt: Date;
   recipes?: ChatRecipe[];
   isReading?: boolean;
@@ -202,6 +203,20 @@ type KitchenAssistantOptions = {
   language: AppLanguage;
 };
 
+type StreamKitchenAssistantOptions = KitchenAssistantOptions & {
+  onChunk: (chunk: string) => void;
+};
+
+type SpeechSegment = {
+  speechText: string;
+  displayText: string;
+};
+
+type AssistantSpeechScheduler = {
+  append: (chunk: string, force?: boolean) => void;
+  finish: () => Promise<void>;
+};
+
 function buildRecipeLibraryContext(recipes: Recipe[], language: AppLanguage): string {
   if (recipes.length === 0) {
     return language === "zh"
@@ -261,6 +276,104 @@ async function answerKitchenAssistant({
   return reply.trim() || ASSISTANT_COPY[language].emptyReply;
 }
 
+async function streamKitchenAssistantReply({
+  text,
+  messages,
+  recipes,
+  language,
+  onChunk,
+}: StreamKitchenAssistantOptions): Promise<string> {
+  const service = await getConfiguredLLMService();
+  if (!service) throw new Error(ASSISTANT_COPY[language].llmKeyRequired);
+
+  const history = messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .slice(-8)
+    .map((message) => ({ role: message.role, content: message.text }));
+
+  const reply = await service.chatStream(
+    [
+      { role: "system", content: KITCHEN_ASSISTANT_SYSTEM_PROMPTS[language] },
+      {
+        role: "system",
+        content:
+          language === "zh"
+            ? `鐢ㄦ埛鏈湴鑿滆氨搴撴憳瑕侊細\n${buildRecipeLibraryContext(recipes, language)}`
+            : `User's saved recipe library summary:\n${buildRecipeLibraryContext(recipes, language)}`,
+      },
+      ...history,
+      { role: "user", content: text },
+    ],
+    { onChunk },
+  );
+
+  return reply.trim() || ASSISTANT_COPY[language].emptyReply;
+}
+
+function splitSpeechSegments(
+  text: string,
+  force = false,
+): { segments: SpeechSegment[]; remaining: string } {
+  const segments: SpeechSegment[] = [];
+  let cursor = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (!/[.!?。！？\n]/.test(char)) continue;
+
+    const displayText = text.slice(cursor, index + 1);
+    const speechText = displayText.trim();
+    if (speechText) segments.push({ speechText, displayText });
+    cursor = index + 1;
+  }
+
+  let remaining = text.slice(cursor);
+  if (!force) {
+    const softBoundaryIndex = Math.max(
+      remaining.lastIndexOf("，"),
+      remaining.lastIndexOf(","),
+      remaining.lastIndexOf("；"),
+      remaining.lastIndexOf(";"),
+      remaining.lastIndexOf("："),
+      remaining.lastIndexOf(":"),
+    );
+
+    if (softBoundaryIndex >= 0 && remaining.slice(0, softBoundaryIndex + 1).trim().length >= 24) {
+      const displayText = remaining.slice(0, softBoundaryIndex + 1);
+      const speechText = displayText.trim();
+      if (speechText) segments.push({ speechText, displayText });
+      remaining = remaining.slice(softBoundaryIndex + 1);
+    } else if (remaining.trim().length >= 90) {
+      const fallbackIndex = remaining.lastIndexOf(" ", 90);
+      const splitIndex = fallbackIndex >= 24 ? fallbackIndex : 90;
+      const displayText = remaining.slice(0, splitIndex);
+      const speechText = displayText.trim();
+      if (speechText) segments.push({ speechText, displayText });
+      remaining = remaining.slice(splitIndex);
+    }
+  } else {
+    const displayText = remaining;
+    const speechText = displayText.trim();
+    if (speechText) segments.push({ speechText, displayText });
+    remaining = "";
+  }
+
+  return { segments, remaining };
+}
+
+function estimateSpeechDurationMs(text: string): number {
+  const normalizedLength = text.replace(/\s+/g, "").length;
+  return Math.max(700, normalizedLength * 90);
+}
+
+function getInitialAssistantDisplayText(text: string): string {
+  if (!text) return "";
+
+  const firstVisibleIndex = text.search(/\S/);
+  if (firstVisibleIndex < 0) return "";
+  return text.slice(0, firstVisibleIndex + 1);
+}
+
 function HomePage() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -268,6 +381,9 @@ function HomePage() {
   const recipes = liveRecipes ?? EMPTY_RECIPES;
   const triggerManualWake = useAppStore((s) => s.triggerManualWake);
   const setSpeechRate = useAppStore((s) => s.setSpeechRate);
+  const setHomeConversationActive = useAppStore((s) => s.setHomeConversationActive);
+  const pendingHomeAwake = useAppStore((s) => s.pendingHomeAwake);
+  const clearHomeAwake = useAppStore((s) => s.clearHomeAwake);
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const hasElevenLabsKey = useAppStore((s) => s.hasElevenLabsKey);
   const hasLlmKey = useAppStore((s) => s.hasLlmKey);
@@ -289,6 +405,7 @@ function HomePage() {
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const assistantRunRef = useRef<string | null>(null);
   const commandTurnRef = useRef(0);
+  const mutedMessageIdRef = useRef<string | null>(null);
 
   const currentStatus = isAssistantLoading
     ? "thinking"
@@ -334,6 +451,15 @@ function HomePage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [isAssistantLoading, messages]);
 
+  useEffect(() => {
+    mutedMessageIdRef.current = mutedMessageId;
+  }, [mutedMessageId]);
+
+  useEffect(() => {
+    setHomeConversationActive(isConversationActive);
+    return () => setHomeConversationActive(false);
+  }, [isConversationActive, setHomeConversationActive]);
+
   const recipeLookup = useMemo(() => {
     return new Map(recipes.map((recipe) => [recipe.id, recipe]));
   }, [recipes]);
@@ -353,6 +479,219 @@ function HomePage() {
       current.map((message) => (message.id === id ? { ...message, ...changes } : message)),
     );
   }, []);
+
+  const revealMessageText = useCallback(
+    (id: string, text?: string, changes: Partial<ChatMessage> = {}) => {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === id
+            ? {
+                ...message,
+                ...(text !== undefined ? { text } : {}),
+                ...changes,
+                displayText: text ?? message.text,
+              }
+            : message,
+        ),
+      );
+    },
+    [],
+  );
+
+  const finalizeAssistantRun = useCallback(
+    (runId: string, messageId: string, text?: string) => {
+      if (assistantRunRef.current === runId) assistantRunRef.current = null;
+      if (activeAssistantMessageIdRef.current === messageId)
+        activeAssistantMessageIdRef.current = null;
+      playbackHandleRef.current = null;
+      audioRef.current = null;
+      audioUrlRef.current = null;
+      mutedMessageIdRef.current = null;
+      setMutedMessageId(null);
+      setAssistantLoading(false);
+      setAssistantStatus("idle");
+      revealMessageText(messageId, text, { isReading: false });
+    },
+    [revealMessageText],
+  );
+
+  const playAssistantAudioBlob = useCallback(
+    (
+      runId: string,
+      messageId: string,
+      audioBlob: Blob,
+      textSync?: { prefixText: string; segmentText: string },
+    ) =>
+      new Promise<void>((resolve) => {
+        if (assistantRunRef.current !== runId) {
+          resolve();
+          return;
+        }
+
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.muted = mutedMessageIdRef.current === messageId;
+        audioRef.current = audio;
+        audioUrlRef.current = audioUrl;
+        updateMessage(messageId, { isReading: true });
+
+        const prefixText = textSync?.prefixText ?? "";
+        const segmentText = textSync?.segmentText ?? "";
+        const fallbackDurationMs = estimateSpeechDurationMs(segmentText);
+        let revealFrame: number | null = null;
+        let revealStopped = false;
+        let settled = false;
+
+        const updateDisplayText = (forceComplete = false) => {
+          if (!segmentText) return;
+
+          const durationMs =
+            Number.isFinite(audio.duration) && audio.duration > 0
+              ? audio.duration * 1000
+              : fallbackDurationMs;
+          const progress = forceComplete
+            ? 1
+            : durationMs > 0
+              ? Math.min((audio.currentTime * 1000) / durationMs, 1)
+              : 1;
+          const nextLength = forceComplete
+            ? segmentText.length
+            : Math.max(1, Math.min(segmentText.length, Math.floor(segmentText.length * progress)));
+
+          updateMessage(messageId, {
+            displayText: `${prefixText}${segmentText.slice(0, nextLength)}`,
+          });
+        };
+
+        const stopReveal = (forceComplete = true) => {
+          if (revealStopped) return;
+          revealStopped = true;
+          if (revealFrame !== null) {
+            window.cancelAnimationFrame(revealFrame);
+            revealFrame = null;
+          }
+          updateDisplayText(forceComplete);
+        };
+
+        const startReveal = () => {
+          if (!segmentText || revealStopped) return;
+
+          const tick = () => {
+            if (revealStopped) return;
+            updateDisplayText(false);
+            if (!audio.paused && !audio.ended) {
+              revealFrame = window.requestAnimationFrame(tick);
+            }
+          };
+
+          updateDisplayText(false);
+          revealFrame = window.requestAnimationFrame(tick);
+        };
+
+        const settle = () => {
+          if (settled) return;
+          settled = true;
+          stopReveal(true);
+          resolve();
+        };
+
+        setAssistantStatus("speaking");
+        const playback = claimVoicePlayback(audio, {
+          cleanup: () => {
+            stopReveal(true);
+            URL.revokeObjectURL(audioUrl);
+            if (audioUrlRef.current === audioUrl) audioUrlRef.current = null;
+            if (audioRef.current === audio) audioRef.current = null;
+            if (playbackHandleRef.current?.isActive() === false) playbackHandleRef.current = null;
+          },
+          onStop: settle,
+        });
+        playbackHandleRef.current = playback;
+
+        audio.onended = () => {
+          playback.release();
+          settle();
+        };
+        audio.onerror = () => {
+          playback.release();
+          settle();
+        };
+        audio
+          .play()
+          .then(startReveal)
+          .catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : assistantCopy.voicePlayFailed);
+            playback.release();
+            settle();
+          });
+      }),
+    [assistantCopy.voicePlayFailed, updateMessage],
+  );
+
+  const createAssistantSpeechScheduler = useCallback(
+    (runId: string, messageId: string): AssistantSpeechScheduler => {
+      let pendingText = "";
+      let revealedText = "";
+      let playbackChain = Promise.resolve();
+
+      const queueSegment = ({ speechText, displayText }: SpeechSegment) => {
+        if (!hasElevenLabsKey || !speechText.trim()) return;
+
+        const prefixText = revealedText;
+        revealedText += displayText;
+
+        updateMessage(messageId, { isReading: true });
+        const blobPromise = synthesizeWithElevenLabs(speechText, conversationVoiceId).catch(
+          (error: unknown) => {
+            if (assistantRunRef.current === runId) {
+              toast.error(error instanceof Error ? error.message : assistantCopy.voiceGenFailed);
+            }
+            return null;
+          },
+        );
+
+        playbackChain = playbackChain.then(async () => {
+          if (assistantRunRef.current !== runId) return;
+          const audioBlob = await blobPromise;
+          if (!audioBlob || assistantRunRef.current !== runId) {
+            updateMessage(messageId, { displayText: `${prefixText}${displayText}` });
+            return;
+          }
+          await playAssistantAudioBlob(runId, messageId, audioBlob, {
+            prefixText,
+            segmentText: displayText,
+          });
+        });
+      };
+
+      return {
+        append(chunk: string, force = false) {
+          pendingText += chunk;
+          const { segments, remaining } = splitSpeechSegments(pendingText, force);
+          pendingText = remaining;
+          segments.forEach(queueSegment);
+        },
+        async finish() {
+          if (pendingText.trim()) {
+            const finalSegment: SpeechSegment = {
+              speechText: pendingText.trim(),
+              displayText: pendingText,
+            };
+            pendingText = "";
+            queueSegment(finalSegment);
+          }
+          await playbackChain;
+        },
+      };
+    },
+    [
+      assistantCopy.voiceGenFailed,
+      conversationVoiceId,
+      hasElevenLabsKey,
+      playAssistantAudioBlob,
+      updateMessage,
+    ],
+  );
 
   const stopAssistantPlayback = useCallback(
     (finishActiveMessage = false) => {
@@ -374,15 +713,16 @@ function HomePage() {
       }
 
       if (finishActiveMessage && activeAssistantMessageIdRef.current) {
-        updateMessage(activeAssistantMessageIdRef.current, { isReading: false });
+        revealMessageText(activeAssistantMessageIdRef.current, undefined, { isReading: false });
       }
 
       activeAssistantMessageIdRef.current = null;
+      mutedMessageIdRef.current = null;
       setMutedMessageId(null);
       setAssistantLoading(false);
       setAssistantStatus("idle");
     },
-    [updateMessage],
+    [revealMessageText],
   );
 
   useEffect(() => {
@@ -400,110 +740,48 @@ function HomePage() {
       stopAssistantPlayback(true);
 
       const runId = crypto.randomUUID();
-      const fullText = message.text;
       assistantRunRef.current = runId;
-      setAssistantLoading(true);
-      setAssistantStatus("thinking");
+      setAssistantLoading(false);
+      setAssistantStatus(hasElevenLabsKey && !!message.text ? "thinking" : "idle");
+
+      const nextMessage = addMessage({
+        ...message,
+        role: "assistant",
+        displayText:
+          hasElevenLabsKey && message.text
+            ? getInitialAssistantDisplayText(message.text)
+            : message.text,
+        isReading: false,
+      });
+      activeAssistantMessageIdRef.current = nextMessage.id;
+
+      if (!message.text || !hasElevenLabsKey) {
+        finalizeAssistantRun(runId, nextMessage.id);
+        return nextMessage;
+      }
+
+      const speechScheduler = createAssistantSpeechScheduler(runId, nextMessage.id);
+      speechScheduler.append(message.text, true);
 
       void (async () => {
-        let audio: HTMLAudioElement | null = null;
-        let audioUrl: string | null = null;
-
-        try {
-          if (fullText && hasElevenLabsKey) {
-            const audioBlob = await synthesizeWithElevenLabs(fullText, conversationVoiceId);
-            if (assistantRunRef.current !== runId) return;
-            audioUrl = URL.createObjectURL(audioBlob);
-            audio = new Audio(audioUrl);
-            audioRef.current = audio;
-            audioUrlRef.current = audioUrl;
-          }
-        } catch (error: unknown) {
-          if (assistantRunRef.current !== runId) return;
-          toast.error(error instanceof Error ? error.message : assistantCopy.voiceGenFailed);
-        }
-
-        if (assistantRunRef.current !== runId) {
-          if (audioUrl) URL.revokeObjectURL(audioUrl);
-          return;
-        }
-
-        const nextMessage = addMessage({
-          ...message,
-          role: "assistant",
-          text: fullText,
-          isReading: !!audio,
-        });
-        activeAssistantMessageIdRef.current = nextMessage.id;
-        setAssistantLoading(false);
-
-        const audioDone = audio
-          ? new Promise<void>((resolve) => {
-              let settled = false;
-              const settle = () => {
-                if (settled) return;
-                settled = true;
-                resolve();
-              };
-
-              setAssistantStatus("speaking");
-              const playback = claimVoicePlayback(audio, {
-                cleanup: () => {
-                  if (audioUrl) URL.revokeObjectURL(audioUrl);
-                  if (audioUrlRef.current === audioUrl) audioUrlRef.current = null;
-                  if (audioRef.current === audio) audioRef.current = null;
-                  if (playbackHandleRef.current?.isActive() === false) {
-                    playbackHandleRef.current = null;
-                  }
-                },
-                onStop: settle,
-              });
-              playbackHandleRef.current = playback;
-
-              audio.onended = () => {
-                playback.release();
-                settle();
-              };
-              audio.onerror = () => {
-                playback.release();
-                settle();
-              };
-              audio.play().catch((error: unknown) => {
-                toast.error(error instanceof Error ? error.message : assistantCopy.voicePlayFailed);
-                playback.release();
-                settle();
-              });
-            })
-          : Promise.resolve();
-
-        await audioDone;
-
+        await speechScheduler.finish();
         if (
           assistantRunRef.current !== runId ||
           activeAssistantMessageIdRef.current !== nextMessage.id
-        )
+        ) {
           return;
-        updateMessage(nextMessage.id, { isReading: false, text: fullText });
-
-        playbackHandleRef.current?.release();
-        playbackHandleRef.current = null;
-        audioUrlRef.current = null;
-        audioRef.current = null;
-        activeAssistantMessageIdRef.current = null;
-        assistantRunRef.current = null;
-        setMutedMessageId(null);
-        setAssistantStatus("idle");
+        }
+        finalizeAssistantRun(runId, nextMessage.id, message.text);
       })();
 
-      return null;
+      return nextMessage;
     },
     [
       addMessage,
-      conversationVoiceId,
+      createAssistantSpeechScheduler,
+      finalizeAssistantRun,
       hasElevenLabsKey,
       stopAssistantPlayback,
-      updateMessage,
-      assistantCopy,
     ],
   );
 
@@ -512,8 +790,113 @@ function HomePage() {
     if (!audio || activeAssistantMessageIdRef.current !== messageId) return;
 
     audio.muted = !audio.muted;
-    setMutedMessageId(audio.muted ? messageId : null);
+    mutedMessageIdRef.current = audio.muted ? messageId : null;
+    setMutedMessageId(mutedMessageIdRef.current);
   }, []);
+
+  const streamAssistantTextReply = useCallback(
+    async (text: string, conversationMessages: ChatMessage[]) => {
+      stopAssistantPlayback(true);
+
+      const runId = crypto.randomUUID();
+      assistantRunRef.current = runId;
+      setAssistantLoading(true);
+      setAssistantStatus("thinking");
+
+      let assistantMessage: ChatMessage | null = null;
+      let assistantText = "";
+      let speechScheduler: AssistantSpeechScheduler | null = null;
+      let receivedChunk = false;
+
+      const ensureAssistantMessage = () => {
+        if (assistantMessage) return assistantMessage;
+        assistantMessage = addMessage({
+          role: "assistant",
+          kind: "text",
+          text: assistantText,
+          displayText: hasElevenLabsKey
+            ? getInitialAssistantDisplayText(assistantText)
+            : assistantText,
+          isReading: false,
+        });
+        activeAssistantMessageIdRef.current = assistantMessage.id;
+        speechScheduler = createAssistantSpeechScheduler(runId, assistantMessage.id);
+        setAssistantLoading(false);
+        return assistantMessage;
+      };
+
+      try {
+        const fullReply = await streamKitchenAssistantReply({
+          text,
+          messages: conversationMessages,
+          recipes,
+          language,
+          onChunk: (chunk) => {
+            if (assistantRunRef.current !== runId) return;
+            receivedChunk = true;
+            assistantText += chunk;
+            const message = ensureAssistantMessage();
+            updateMessage(message.id, {
+              text: assistantText,
+              ...(!hasElevenLabsKey ? { displayText: assistantText } : {}),
+            });
+            speechScheduler?.append(chunk);
+          },
+        });
+
+        if (assistantRunRef.current !== runId) return;
+
+        assistantText = fullReply;
+        const message = ensureAssistantMessage();
+        updateMessage(message.id, {
+          text: assistantText,
+          ...(!hasElevenLabsKey ? { displayText: assistantText } : {}),
+        });
+        if (!receivedChunk && assistantText) {
+          (speechScheduler as AssistantSpeechScheduler | null)?.append(assistantText, true);
+        }
+        await (speechScheduler as AssistantSpeechScheduler | null)?.finish();
+
+        if (
+          assistantRunRef.current !== runId ||
+          activeAssistantMessageIdRef.current !== message.id
+        ) {
+          return;
+        }
+        finalizeAssistantRun(runId, message.id, assistantText);
+      } catch (error: unknown) {
+        if (assistantRunRef.current !== runId) return;
+
+        const failedAssistantMessage = assistantMessage as ChatMessage | null;
+        if (failedAssistantMessage) {
+          finalizeAssistantRun(
+            runId,
+            failedAssistantMessage.id,
+            assistantText || failedAssistantMessage.text,
+          );
+        } else {
+          assistantRunRef.current = null;
+          activeAssistantMessageIdRef.current = null;
+          setAssistantLoading(false);
+          setAssistantStatus("idle");
+        }
+
+        if (error instanceof Error) toast.error(error.message);
+        else toast.error(assistantCopy.assistantUnavailable);
+      }
+    },
+    [
+      addMessage,
+      assistantCopy.assistantUnavailable,
+      createAssistantSpeechScheduler,
+      finalizeAssistantRun,
+      hasElevenLabsKey,
+      language,
+      recipes,
+      stopAssistantPlayback,
+      updateMessage,
+    ],
+  );
 
   const handleOpenRecipe = useCallback(
     (chatRecipe: ChatRecipe) => {
@@ -729,23 +1112,7 @@ function HomePage() {
             return;
           }
 
-          const reply = await answerKitchenAssistant({
-            text,
-            messages: conversationMessages,
-            recipes,
-            language,
-          }).catch((error: unknown) => {
-            if (error instanceof Error) toast.error(error.message);
-            else toast.error(assistantCopy.assistantUnavailable);
-            return null;
-          });
-          if (commandTurnRef.current !== turnId) return;
-          if (!reply) {
-            setAssistantLoading(false);
-            setAssistantStatus("idle");
-            return;
-          }
-          pushAssistant({ kind: "text", text: reply });
+          await streamAssistantTextReply(text, conversationMessages);
         })();
       }, 420);
     },
@@ -766,6 +1133,7 @@ function HomePage() {
       recipes,
       setSpeechRate,
       stopAssistantPlayback,
+      streamAssistantTextReply,
       toggleVoiceBadges,
     ],
   );
@@ -780,15 +1148,10 @@ function HomePage() {
   }, [handleCommand]);
 
   useEffect(() => {
-    const handleHomeAwake = (event: Event) => {
-      const detail = (event as CustomEvent<HomeAwakeDetail>).detail;
-      if (detail.transcript.trim()) return;
-      pushAssistant({ kind: "confirm", text: assistantCopy.awakeReady });
-    };
-
-    window.addEventListener("cooktalk:home-awake", handleHomeAwake);
-    return () => window.removeEventListener("cooktalk:home-awake", handleHomeAwake);
-  }, [assistantCopy, pushAssistant]);
+    if (!pendingHomeAwake) return;
+    pushAssistant({ kind: "confirm", text: assistantCopy.awakeReady });
+    clearHomeAwake();
+  }, [assistantCopy.awakeReady, clearHomeAwake, pendingHomeAwake, pushAssistant]);
 
   const submitText = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
@@ -861,16 +1224,16 @@ function HomePage() {
             <div
               className={cn(
                 "relative mx-auto w-full max-w-[760px]",
-                isConversationActive && "pt-8",
+                isConversationActive && "pt-12 sm:pt-8",
               )}
             >
               {isConversationActive && (
-                <div className="group/clear absolute left-1/2 top-0 z-20 flex h-9 w-36 -translate-x-1/2 items-center justify-center">
+                <div className="group/clear absolute left-1/2 top-0 z-20 flex h-10 w-full max-w-[220px] -translate-x-1/2 items-center justify-center">
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    className="h-8 translate-y-1 gap-1.5 rounded-full border border-border/80 bg-card/95 px-3 text-xs opacity-0 shadow-sm backdrop-blur transition-all duration-150 pointer-events-none group-hover/clear:translate-y-0 group-hover/clear:opacity-100 group-hover/clear:pointer-events-auto focus-visible:translate-y-0 focus-visible:opacity-100 focus-visible:pointer-events-auto"
+                    className="h-8 w-full gap-1.5 rounded-full border border-border/80 bg-card/95 px-3 text-xs opacity-100 shadow-sm backdrop-blur transition-all duration-150 sm:translate-y-1 sm:opacity-0 sm:pointer-events-none sm:group-hover/clear:translate-y-0 sm:group-hover/clear:opacity-100 sm:group-hover/clear:pointer-events-auto sm:focus-visible:translate-y-0 sm:focus-visible:opacity-100 sm:focus-visible:pointer-events-auto"
                     onClick={clearConversation}
                     aria-label="清空对话"
                   >
@@ -901,8 +1264,8 @@ function HomePage() {
                   className={cn(
                     "h-10 w-10 shrink-0 rounded-full transition-all sm:h-12 sm:w-12",
                     currentStatus === "recording" || currentStatus === "awake"
-                      ? "scale-105 animate-pulse bg-clay text-primary-foreground"
-                      : "bg-foreground text-background hover:bg-clay",
+                      ? "scale-105 animate-pulse border-clay/40 bg-accent/35 text-clay shadow-[0_10px_24px_-16px_oklch(0.48_0.04_55_/_0.45)]"
+                      : "border-border/70 bg-background/80 text-foreground shadow-[0_10px_24px_-16px_oklch(0.28_0.02_60_/_0.35)] hover:border-clay/40 hover:bg-background hover:text-clay",
                   )}
                   aria-label={
                     input.trim() ? assistantCopy.sendLabel : assistantCopy.manualWakeLabel
@@ -927,7 +1290,7 @@ function StatusPanel({ onManualWake }: { onManualWake: () => void }) {
   return (
     <button
       type="button"
-      className="z-20 mx-auto flex w-fit items-center gap-2 rounded-full border border-border/80 bg-card/75 px-4 py-2 text-sm font-medium shadow-[var(--shadow-soft)] backdrop-blur-xl transition-colors hover:border-clay/60 hover:text-clay"
+      className="z-20 mx-auto flex w-full items-center justify-center gap-2 rounded-full border border-border/80 bg-card/75 px-4 py-2 text-sm font-medium shadow-[var(--shadow-soft)] backdrop-blur-xl transition-colors hover:border-clay/60 hover:text-clay sm:w-fit"
       onClick={onManualWake}
       aria-label="说 Hey CookTalk 唤醒我"
     >
@@ -959,7 +1322,7 @@ function WelcomePanel() {
             />
           </div>
         </div>
-        <h2 className="mt-6 font-display text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+        <h2 className="mt-6 font-display text-[clamp(2rem,9vw,2.75rem)] font-semibold tracking-tight text-foreground sm:text-4xl">
           CookTalk
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">说出唤醒词，或从底部输入开始</p>
@@ -983,6 +1346,8 @@ function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system" || message.kind === "system";
+  const assistantText = message.displayText ?? message.text;
+  const hasAssistantText = assistantText.trim().length > 0;
 
   if (isSystem) {
     return (
@@ -995,11 +1360,11 @@ function MessageBubble({
   if (isUser) {
     return (
       <article className="group flex justify-end">
-        <div className="max-w-[78%] text-right sm:max-w-[68%]">
+        <div className="max-w-[88%] text-right sm:max-w-[68%]">
           <p className="whitespace-pre-line break-words px-1 text-sm leading-6 text-foreground sm:text-base md:text-base">
             {message.text}
           </p>
-          <time className="mt-1 block text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <time className="mt-1 block text-[11px] text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
             {formatTime(message.createdAt)}
           </time>
         </div>
@@ -1009,13 +1374,15 @@ function MessageBubble({
 
   return (
     <article className="group flex flex-col items-start">
-      <div className="w-full max-w-[92%] rounded-[1.5rem] border border-border bg-card p-4 shadow-sm sm:max-w-[88%]">
-        <p className="min-h-7 whitespace-pre-line break-words font-sans text-sm leading-6 text-foreground sm:text-base md:text-base">
-          {message.text}
-        </p>
+      <div className="w-full max-w-full rounded-[1.5rem] border border-border bg-card p-4 shadow-sm sm:max-w-[88%]">
+        {hasAssistantText && (
+          <p className="whitespace-pre-line break-words font-sans text-sm leading-6 text-foreground sm:text-base md:text-base">
+            {assistantText}
+          </p>
+        )}
 
         {message.recipes && message.recipes.length > 0 && (
-          <div className="mt-4 space-y-3">
+          <div className={cn("space-y-3", hasAssistantText && "mt-4")}>
             {message.recipes.map((recipe, index) => (
               <RecipeResultCard
                 key={`${recipe.id}-${index}`}
@@ -1031,11 +1398,13 @@ function MessageBubble({
           </div>
         )}
 
-        {message.isReading && !isUser && (
-          <ReadingIndicator isMuted={isAudioMuted} onToggleAudio={onToggleAudio} />
-        )}
       </div>
-      <time className="ml-3 mt-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      {message.isReading && !isUser && (
+        <div className="ml-3 mt-2">
+          <ReadingIndicator isMuted={isAudioMuted} onToggleAudio={onToggleAudio} />
+        </div>
+      )}
+      <time className="ml-3 mt-1 text-[11px] text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
         {formatTime(message.createdAt)}
       </time>
     </article>
@@ -1073,14 +1442,14 @@ function RecipeResultCard({
 }) {
   return (
     <div className="animate-in slide-in-from-bottom-2 fade-in rounded-2xl border border-border bg-background/80 p-3 duration-200">
-      <div className="grid grid-cols-[auto_56px_minmax(0,1fr)] gap-3">
+      <div className="grid grid-cols-[auto_56px] gap-3 sm:grid-cols-[auto_56px_minmax(0,1fr)]">
         <div className="pt-1 font-display text-lg text-clay">
           {NUMBER_SYMBOLS[index] ?? index + 1}
         </div>
         <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-accent/60 to-secondary text-clay">
           <ChefHat className="h-7 w-7" strokeWidth={1.5} />
         </div>
-        <div className="min-w-0">
+        <div className="col-span-2 min-w-0 sm:col-span-1">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <h3 className="truncate font-sans text-lg font-semibold leading-tight tracking-normal">
               {recipe.title}
@@ -1097,19 +1466,26 @@ function RecipeResultCard({
             </span>
             {recipe.cuisine && <span>{recipe.cuisine}</span>}
           </div>
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              className="h-8 rounded-full px-3"
+              className="h-8 rounded-full px-3 sm:min-w-[72px]"
               onClick={onOpen}
             >
               查看
             </Button>
-            <Button type="button" size="sm" className="h-8 rounded-full px-3" onClick={onStart}>
-              {recipe.source === "local" ? "开始做" : "打开网页"}
-            </Button>
+            {recipe.source === "local" && (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-full px-3 sm:min-w-[72px]"
+                onClick={onStart}
+              >
+                开始做
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -1145,14 +1521,14 @@ function ReadingIndicator({
   onToggleAudio: () => void;
 }) {
   return (
-    <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-secondary py-1 pl-3 pr-1 text-xs text-muted-foreground">
-      <Waves className="h-3.5 w-3.5 animate-pulse text-clay" />
+    <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-clay/12 bg-card/95 py-1 pl-3 pr-1 text-xs text-secondary-foreground shadow-sm backdrop-blur-sm">
+      <Waves className="h-3.5 w-3.5 animate-pulse text-clay/85" />
       {isMuted ? "已静音播放中" : "朗读中"}
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="h-7 w-7 rounded-full text-clay hover:text-clay"
+        className="h-7 w-7 rounded-full bg-transparent text-clay/90 hover:bg-transparent hover:text-clay"
         onClick={onToggleAudio}
         aria-label={isMuted ? "取消静音 AI 朗读" : "静音 AI 朗读"}
       >

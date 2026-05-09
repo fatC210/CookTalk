@@ -110,13 +110,13 @@ function OnboardingPage() {
 
       <section className="relative flex-1 overflow-hidden">
         <div className="absolute -top-40 -right-20 h-[500px] w-[500px] rounded-full bg-accent/30 blur-3xl" aria-hidden />
-        <div className="relative mx-auto max-w-5xl px-6 py-20">
+        <div className="relative mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-20">
           <div className="text-center">
             <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs">
               <span className="h-1.5 w-1.5 rounded-full bg-clay animate-pulse" />
               {t("onboarding.badge")}
             </span>
-            <h1 className="mt-6 font-display text-5xl font-semibold tracking-tight md:text-6xl">
+            <h1 className="mt-6 font-display text-[clamp(2.5rem,11vw,4.75rem)] font-semibold tracking-tight md:text-6xl">
               {t("onboarding.title")}
             </h1>
             <p className="mt-4 mx-auto max-w-xl text-muted-foreground">
@@ -124,7 +124,7 @@ function OnboardingPage() {
             </p>
           </div>
 
-          <ol className="mt-14 space-y-3">
+          <ol className="mt-10 space-y-3 sm:mt-14">
             {stepTitleKeys.map((key, i) => {
               const Icon = stepIcons[i];
               const done = stepDone[i];
@@ -133,7 +133,7 @@ function OnboardingPage() {
               return (
                 <li
                   key={key}
-                  className={`relative flex items-start gap-5 rounded-3xl border p-6 transition-colors ${
+                  className={`relative flex flex-col gap-4 rounded-3xl border p-5 transition-colors sm:flex-row sm:items-start sm:gap-5 sm:p-6 ${
                     isActive
                       ? "border-border bg-card"
                       : done
@@ -141,11 +141,11 @@ function OnboardingPage() {
                       : "border-border/30 bg-card/20"
                   }`}
                 >
-                  <VoiceBadge n={i + 1} className="absolute -left-3 top-6" />
+                  <VoiceBadge n={i + 1} className="absolute left-5 top-5 sm:-left-3 sm:top-6" />
 
                   {/* Step icon */}
                   <div
-                    className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl sm:h-14 sm:w-14 ${
                       done ? "bg-foreground text-background" : isActive ? "bg-secondary" : "bg-secondary/40"
                     }`}
                   >
@@ -157,7 +157,7 @@ function OnboardingPage() {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                       <h3 className="font-display text-2xl">{t(`onboarding.steps.${key}.title`)}</h3>
                       {done && <span className="text-xs text-clay">{t("onboarding.done")}</span>}
                     </div>
@@ -172,7 +172,7 @@ function OnboardingPage() {
                             type="button"
                             onClick={requestMic}
                             disabled={micLoading}
-                            className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-60"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-60 sm:w-auto"
                           >
                             {micLoading ? (
                               <span className="h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent" />
@@ -185,8 +185,8 @@ function OnboardingPage() {
 
                         {/* Step 1: API key */}
                         {i === 1 && (
-                          <div className="flex items-center gap-2 max-w-md">
-                            <div className="flex-1 flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5">
+                          <div className="flex max-w-md flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                            <div className="flex flex-1 items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5">
                               <input
                                 type={showKey ? "text" : "password"}
                                 value={apiKey}
@@ -212,7 +212,7 @@ function OnboardingPage() {
                               type="button"
                               onClick={saveApiKey}
                               disabled={savingKey}
-                              className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-60 whitespace-nowrap"
+                              className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-60 sm:w-auto"
                             >
                               {savingKey ? (
                                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent" />
@@ -227,7 +227,7 @@ function OnboardingPage() {
                         {/* Step 2: Voice selection */}
                         {i === 2 && (
                           <div className="space-y-3">
-                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                               {DEFAULT_VOICES.map((v) => (
                                 <button
                                   key={v.id}
@@ -250,7 +250,7 @@ function OnboardingPage() {
                               type="button"
                               onClick={confirmVoice}
                               disabled={!selectedVoice}
-                              className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-40"
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-40 sm:w-auto"
                             >
                               {t("onboarding.steps.voice.action")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
                             </button>
@@ -262,7 +262,7 @@ function OnboardingPage() {
                           <button
                             type="button"
                             onClick={openSampleRecipe}
-                            className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay sm:w-auto"
                           >
                             {t("onboarding.steps.recipe.action")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
                           </button>
@@ -290,7 +290,7 @@ function OnboardingPage() {
             <button
               type="button"
               onClick={handleReady}
-              className={`inline-flex items-center gap-2 rounded-full px-7 py-4 text-base transition-colors ${
+              className={`inline-flex w-full max-w-sm items-center justify-center gap-2 rounded-full px-7 py-4 text-base transition-colors ${
                 allDone
                   ? "bg-clay text-background hover:bg-clay/90"
                   : "bg-foreground text-background hover:bg-clay"

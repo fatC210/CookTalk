@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import i18n from "@/lib/i18n";
+import { LANGUAGE_COOKIE_NAME } from "@/lib/language";
+
+export type HomeAwakeDetail = {
+  phrase: string;
+  source: "manual" | "wake-word";
+  transcript: string;
+};
 
 interface AppState {
   // Theme
@@ -38,6 +45,13 @@ interface AppState {
   triggerManualWake: (durationMs?: number) => void;
   clearManualWake: () => void;
 
+  // Home conversation state
+  homeConversationActive: boolean;
+  setHomeConversationActive: (active: boolean) => void;
+  pendingHomeAwake: HomeAwakeDetail | null;
+  queueHomeAwake: (detail: HomeAwakeDetail) => void;
+  clearHomeAwake: () => void;
+
   // Sound effects
   soundEffects: boolean;
   setSoundEffects: (on: boolean) => void;
@@ -53,8 +67,10 @@ interface AppState {
   // Voice roles
   conversationVoiceId: string | null;
   cookingVoiceId: string | null;
+  cookingAgentId: string;
   setConversationVoiceId: (id: string | null) => void;
   setCookingVoiceId: (id: string | null) => void;
+  setCookingAgentId: (id: string) => void;
 
   // Onboarding completed
   onboardingCompleted: boolean;
@@ -80,6 +96,9 @@ export const useAppStore = create<AppState>()(
       language: "en",
       setLanguage: (language) => {
         set({ language });
+        if (typeof document !== "undefined") {
+          document.cookie = `${LANGUAGE_COOKIE_NAME}=${language}; Path=/; Max-Age=31536000; SameSite=Lax`;
+        }
         void i18n.changeLanguage(language);
       },
 
@@ -115,6 +134,13 @@ export const useAppStore = create<AppState>()(
         set({ manualWakeActive: true, manualWakeExpiresAt: Date.now() + durationMs }),
       clearManualWake: () => set({ manualWakeActive: false, manualWakeExpiresAt: null }),
 
+      // Home conversation state
+      homeConversationActive: false,
+      setHomeConversationActive: (homeConversationActive) => set({ homeConversationActive }),
+      pendingHomeAwake: null,
+      queueHomeAwake: (pendingHomeAwake) => set({ pendingHomeAwake }),
+      clearHomeAwake: () => set({ pendingHomeAwake: null }),
+
       // Sound effects
       soundEffects: false,
       setSoundEffects: (soundEffects) => set({ soundEffects }),
@@ -130,8 +156,10 @@ export const useAppStore = create<AppState>()(
       // Voice roles
       conversationVoiceId: null,
       cookingVoiceId: null,
+      cookingAgentId: "",
       setConversationVoiceId: (conversationVoiceId) => set({ conversationVoiceId }),
       setCookingVoiceId: (cookingVoiceId) => set({ cookingVoiceId }),
+      setCookingAgentId: (cookingAgentId) => set({ cookingAgentId }),
 
       // Onboarding
       onboardingCompleted: false,
@@ -147,7 +175,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "cooktalk-app",
-      partialize: ({ manualWakeActive, manualWakeExpiresAt, ...state }) => state,
+      partialize: ({ manualWakeActive, manualWakeExpiresAt, pendingHomeAwake, ...state }) => state,
       skipHydration: true,
     },
   ),

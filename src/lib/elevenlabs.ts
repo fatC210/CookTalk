@@ -18,6 +18,10 @@ export interface ElevenLabsUsage {
   character_limit: number;
 }
 
+interface ElevenLabsSignedUrlResponse {
+  signed_url?: string;
+}
+
 export class ElevenLabsService {
   private apiKey: string;
   private baseUrl = "https://api.elevenlabs.io/v1";
@@ -108,6 +112,26 @@ export class ElevenLabsService {
     } catch {
       return false;
     }
+  }
+
+  async getConversationSignedUrl(agentId: string): Promise<string> {
+    const url = new URL(`${this.baseUrl}/convai/conversation/get-signed-url`);
+    url.searchParams.set("agent_id", agentId);
+
+    const response = await fetch(url, {
+      headers: { "xi-api-key": this.apiKey },
+    });
+
+    if (!response.ok) {
+      throw new Error(await buildElevenLabsError("Get signed URL failed", response));
+    }
+
+    const data = (await response.json()) as ElevenLabsSignedUrlResponse;
+    if (!data.signed_url) {
+      throw new Error("Get signed URL failed: missing signed_url");
+    }
+
+    return data.signed_url;
   }
 }
 

@@ -16,6 +16,8 @@ interface UseVoiceSessionOptions {
   manualWakeActive: boolean;
   awakeResetKey?: string | number | boolean;
   commandDurationMs?: number;
+  preserveWakeWordsInTranscript?: boolean;
+  suppressPureWakeWordTranscript?: boolean;
   onWake?: (event: VoiceWakeEvent) => void;
   onTranscript: (transcript: string) => Promise<void> | void;
   onError?: (message: string) => void;
@@ -65,6 +67,8 @@ export function useVoiceSession({
   manualWakeActive,
   awakeResetKey,
   commandDurationMs = 5000,
+  preserveWakeWordsInTranscript = false,
+  suppressPureWakeWordTranscript = true,
   onWake,
   onTranscript,
   onError,
@@ -286,7 +290,10 @@ export function useVoiceSession({
           return;
         }
         onWakeRef.current?.({ phrase, source: "always-listen", transcript: phrase });
-        void onTranscriptRef.current(stripWakeWords(phrase, wakeWords) || phrase);
+        const transcript = preserveWakeWordsInTranscript
+          ? phrase
+          : stripWakeWords(phrase, wakeWords) || phrase;
+        void onTranscriptRef.current(transcript);
         return;
       }
 
@@ -296,7 +303,10 @@ export function useVoiceSession({
           return;
         }
         setStatus("awake");
-        void onTranscriptRef.current(stripWakeWords(phrase, wakeWords) || phrase);
+        const transcript = preserveWakeWordsInTranscript
+          ? phrase
+          : stripWakeWords(phrase, wakeWords) || phrase;
+        void onTranscriptRef.current(transcript);
         return;
       }
 
@@ -305,11 +315,17 @@ export function useVoiceSession({
           notifyMissingElevenLabsKey();
           return;
         }
-        const transcript = stripWakeWords(phrase, wakeWords);
+        const transcript = preserveWakeWordsInTranscript ? phrase : stripWakeWords(phrase, wakeWords);
         isAwakeRef.current = true;
         onWakeRef.current?.({ phrase, source: "wake-word", transcript });
         setStatus("awake");
-        if (transcript) void onTranscriptRef.current(transcript);
+        if (transcript) {
+          void onTranscriptRef.current(transcript);
+          return;
+        }
+        if (!suppressPureWakeWordTranscript) {
+          void onTranscriptRef.current(phrase);
+        }
       }
     };
 
@@ -345,8 +361,10 @@ export function useVoiceSession({
     language,
     listenMode,
     notifyMissingElevenLabsKey,
+    preserveWakeWordsInTranscript,
     restartRecognition,
     stopRecognition,
+    suppressPureWakeWordTranscript,
     wakeWords,
   ]);
 

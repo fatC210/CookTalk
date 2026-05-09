@@ -168,16 +168,16 @@ function DetailPage() {
       {/* Hero */}
       <section className="relative border-b border-border/60">
         <div className="absolute inset-0 bg-gradient-to-br from-[#c4654a]/20 via-transparent to-[#8b7355]/15" aria-hidden />
-        <div className="relative mx-auto max-w-7xl px-6 py-14">
+        <div className="relative mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-14">
           <div className="grid gap-10 lg:grid-cols-12">
             <div className="lg:col-span-7">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <Link to="/recipes" className="hover:text-foreground">{t("recipeDetail.back")}</Link>
                 <span>/</span>
                 {tags.cuisine && <><span>{tags.cuisine}</span><span>/</span></>}
                 <span className="text-foreground">{title}</span>
               </div>
-              <h1 className="mt-4 font-display text-6xl font-semibold leading-[1.05] tracking-tight">
+              <h1 className="mt-4 font-display text-[clamp(2.4rem,12vw,4.5rem)] font-semibold leading-[1.05] tracking-tight sm:text-6xl">
                 {title}
               </h1>
               <p className="mt-4 max-w-lg text-muted-foreground">
@@ -205,25 +205,25 @@ function DetailPage() {
                 </span>
               </div>
 
-              <div className="mt-8 flex flex-wrap gap-3">
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <button
                   onClick={() => navigate({ to: "/cook", search: { id } })}
-                  className="group inline-flex items-center gap-2 rounded-full bg-foreground px-7 py-4 text-base text-background hover:bg-clay"
+                  className="group inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-7 py-4 text-base text-background hover:bg-clay sm:w-auto"
                 >
                   <VoiceBadge n={1} className="!border-background/40 !text-background !bg-transparent !opacity-100" />
                   <Play className="h-5 w-5" strokeWidth={1.75} />
                   {t("recipeDetail.startCooking")}
                 </button>
-                <button className="inline-flex items-center gap-2 rounded-full border border-foreground/80 px-5 py-4 text-sm hover:bg-foreground hover:text-background">
+                <button className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-foreground/80 px-5 py-4 text-sm hover:bg-foreground hover:text-background sm:w-auto">
                   <Pencil className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.edit")}
                 </button>
                 <button
                   onClick={handleExport}
-                  className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground sm:w-auto"
                 >
                   <Share2 className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.export")}
                 </button>
-                <button className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground">
+                <button className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground sm:w-auto">
                   <RefreshCw className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.newCover")}
                 </button>
               </div>
@@ -254,10 +254,10 @@ function DetailPage() {
 
       {/* Body */}
       <section className="flex-1">
-        <div className="mx-auto max-w-7xl px-6 py-14 grid gap-12 lg:grid-cols-12">
+        <div className="mx-auto grid max-w-7xl gap-12 px-4 py-10 sm:px-6 sm:py-14 lg:grid-cols-12">
           {/* Ingredients */}
           <aside className="lg:col-span-4">
-            <div className="sticky top-24">
+            <div className="lg:sticky lg:top-24">
               <div className="flex items-end justify-between">
                 <h2 className="font-display text-2xl">{t("recipeDetail.ingredients")}</h2>
               </div>
@@ -266,7 +266,7 @@ function DetailPage() {
                 {ingredients.map((ing, i) => (
                   <li
                     key={i}
-                    className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3 cursor-pointer"
+                    className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 cursor-pointer"
                     onClick={() => toggleChecked(i)}
                   >
                     <div className="flex items-center gap-3">
@@ -281,7 +281,7 @@ function DetailPage() {
                         {ing.name}
                       </span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{ing.amount}</span>
+                    <span className="shrink-0 pt-0.5 text-right text-xs text-muted-foreground">{ing.amount}</span>
                   </li>
                 ))}
               </ul>
@@ -290,7 +290,7 @@ function DetailPage() {
                 <div className="text-xs text-muted-foreground">{t("recipeDetail.lastCooked")}</div>
                 <div className="mt-1 font-display text-lg">{formatTimeAgo(lastCookedAt, t)}</div>
                 <div className="mt-3 text-xs text-muted-foreground">
-                  {t("recipeDetail.source")} · {recipe.sourceUrl ? t("recipeDetail.imported") : t("recipeDetail.manual")}<br />
+                  {t("recipeDetail.source")} · {(recipe.sourceUrl || recipe.rawTranscript) ? t("recipeDetail.imported") : t("recipeDetail.manual")}<br />
                   {t("recipeDetail.saved")} · {formatSaved(createdAt, i18n.language, t)}
                 </div>
               </div>
@@ -299,15 +299,15 @@ function DetailPage() {
 
           {/* Steps */}
           <div className="lg:col-span-8">
-            <div className="flex items-end justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <h2 className="font-display text-2xl">{t("recipeDetail.steps")}</h2>
               <VoiceHint>{t("recipeDetail.stepsHint")}</VoiceHint>
             </div>
             <ol className="mt-4 space-y-3">
               {steps.map((s, i) => (
-                <li key={i} className="group relative flex gap-5 rounded-2xl border border-border bg-card p-5 hover:border-clay/60">
-                  <VoiceBadge n={i + 1} className="absolute -left-3 top-5 !bg-card" />
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary font-display text-xl">
+                <li key={i} className="group relative flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 hover:border-clay/60 sm:flex-row sm:gap-5 sm:p-5">
+                  <VoiceBadge n={i + 1} className="absolute left-4 top-4 !bg-card sm:-left-3 sm:top-5" />
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary font-display text-lg sm:h-12 sm:w-12 sm:text-xl">
                     {i + 1}
                   </div>
                   <div className="flex-1">
@@ -325,14 +325,14 @@ function DetailPage() {
                       )}
                     </div>
                   </div>
-                  <button className="self-start opacity-0 group-hover:opacity-100 transition-opacity inline-flex h-9 w-9 items-center justify-center rounded-full border border-border hover:bg-foreground hover:text-background">
+                  <button className="inline-flex h-9 w-9 self-start items-center justify-center rounded-full border border-transparent bg-transparent text-foreground opacity-100 transition-opacity hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border sm:opacity-0 sm:group-hover:opacity-100">
                     <Play className="h-4 w-4" strokeWidth={1.75} />
                   </button>
                 </li>
               ))}
             </ol>
 
-            <div className="mt-8 flex items-center justify-between rounded-2xl border border-dashed border-border bg-card p-5">
+            <div className="mt-8 flex flex-col gap-4 rounded-2xl border border-dashed border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <Trash2 className="h-5 w-5 text-destructive" strokeWidth={1.5} />
                 <div>
@@ -342,7 +342,7 @@ function DetailPage() {
               </div>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <button className="rounded-full border border-destructive/40 px-4 py-2 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground">
+                  <button className="w-full rounded-full border border-destructive/40 px-4 py-2 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground sm:w-auto">
                     {t("recipeDetail.deleteConfirm")}
                   </button>
                 </AlertDialogTrigger>

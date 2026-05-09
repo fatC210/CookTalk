@@ -1,11 +1,11 @@
-import Dexie, { type EntityTable } from 'dexie';
-import { v4 as uuidv4 } from 'uuid';
+import Dexie, { type EntityTable } from "dexie";
+import { v4 as uuidv4 } from "uuid";
 
 export interface Recipe {
   id: string;
   title: string;
   coverImage?: Blob;
-  coverSource: 'user' | 'ai' | 'default';
+  coverSource: "user" | "ai" | "default";
   sourceUrl?: string;
   ingredients: { name: string; amount: string }[];
   steps: {
@@ -16,9 +16,12 @@ export interface Recipe {
   }[];
   tags: {
     flavor?: string[];
-    difficulty?: 'easy' | 'medium' | 'hard';
+    difficulty?: "easy" | "medium" | "hard";
     cuisine?: string;
     totalTimeMin?: number;
+    servings?: number;
+    spiceLevel?: string;
+    notes?: string;
   };
   rawVideo?: Blob;
   rawAudio?: Blob;
@@ -40,15 +43,28 @@ export interface Voice {
   createdAt: number;
 }
 
+export interface VoicePreviewCacheEntry {
+  key: string;
+  ownerKey: string;
+  audioBlob: Blob;
+  createdAt: number;
+}
+
 class CookTalkDB extends Dexie {
-  recipes!: EntityTable<Recipe, 'id'>;
-  voices!: EntityTable<Voice, 'id'>;
+  recipes!: EntityTable<Recipe, "id">;
+  voices!: EntityTable<Voice, "id">;
+  voicePreviewCache!: EntityTable<VoicePreviewCacheEntry, "key">;
 
   constructor() {
-    super('CookTalkDB');
+    super("CookTalkDB");
     this.version(1).stores({
-      recipes: 'id, title, createdAt, lastCookedAt, *tags.flavor',
-      voices: 'id, name, isDefault, language, createdAt',
+      recipes: "id, title, createdAt, lastCookedAt, *tags.flavor",
+      voices: "id, name, isDefault, language, createdAt",
+    });
+    this.version(2).stores({
+      recipes: "id, title, createdAt, lastCookedAt, *tags.flavor",
+      voices: "id, name, isDefault, language, createdAt",
+      voicePreviewCache: "key, ownerKey, createdAt",
     });
   }
 }
@@ -58,7 +74,7 @@ export const db = new CookTalkDB();
 // ── Recipe helpers ──────────────────────────────────────────────────────────
 
 export async function getAllRecipes(): Promise<Recipe[]> {
-  return db.recipes.orderBy('createdAt').reverse().toArray();
+  return db.recipes.orderBy("createdAt").reverse().toArray();
 }
 
 export async function getRecipeById(id: string): Promise<Recipe | undefined> {
@@ -66,7 +82,7 @@ export async function getRecipeById(id: string): Promise<Recipe | undefined> {
 }
 
 export async function addRecipe(
-  recipe: Omit<Recipe, 'id' | 'createdAt'> & { id?: string; createdAt?: number },
+  recipe: Omit<Recipe, "id" | "createdAt"> & { id?: string; createdAt?: number },
 ): Promise<string> {
   const id = recipe.id ?? uuidv4();
   const createdAt = recipe.createdAt ?? Date.now();
@@ -76,7 +92,7 @@ export async function addRecipe(
 
 export async function updateRecipe(
   id: string,
-  changes: Partial<Omit<Recipe, 'id'>>,
+  changes: Partial<Omit<Recipe, "id">>,
 ): Promise<void> {
   await db.recipes.update(id, changes);
 }
@@ -101,11 +117,11 @@ export async function searchRecipes(query: string): Promise<Recipe[]> {
 // ── Voice helpers ────────────────────────────────────────────────────────────
 
 export async function getAllVoices(): Promise<Voice[]> {
-  return db.voices.orderBy('createdAt').toArray();
+  return db.voices.orderBy("createdAt").toArray();
 }
 
 export async function addVoice(
-  voice: Omit<Voice, 'id' | 'createdAt'> & { id?: string; createdAt?: number },
+  voice: Omit<Voice, "id" | "createdAt"> & { id?: string; createdAt?: number },
 ): Promise<string> {
   const id = voice.id ?? uuidv4();
   const createdAt = voice.createdAt ?? Date.now();
@@ -114,30 +130,44 @@ export async function addVoice(
 }
 
 export async function deleteVoice(id: string): Promise<void> {
-  await db.voices.delete(id);
+  await db.transaction("rw", db.voices, db.voicePreviewCache, async () => {
+    await db.voices.delete(id);
+    const previewKeys = await db.voicePreviewCache
+      .where("ownerKey")
+      .equals(`cloned:${id}`)
+      .primaryKeys();
+    if (previewKeys.length > 0) {
+      await db.voicePreviewCache.bulkDelete(previewKeys as string[]);
+    }
+  });
 }
 
 export async function setDefaultVoice(id: string): Promise<void> {
-  await db.transaction('rw', db.voices, async () => {
+  await db.transaction("rw", db.voices, async () => {
     const all = await db.voices.toArray();
-    const updates = all.map((v) =>
-      db.voices.update(v.id, { isDefault: v.id === id }),
-    );
+    const updates = all.map((v) => db.voices.update(v.id, { isDefault: v.id === id }));
     await Promise.all(updates);
   });
 }
 
 // ── Seed data cleanup ────────────────────────────────────────────────────────
 
-const SAMPLE_RECIPE_IDS = [
-  'seed-001',
-  'seed-002',
-  'seed-003',
-  'seed-004',
-  'seed-005',
-  'seed-006',
-];
+const SAMPLE_RECIPE_IDS = ["seed-001", "seed-002", "seed-003", "seed-004", "seed-005", "seed-006"];
 
 export async function removeSampleRecipes(): Promise<void> {
   await db.recipes.bulkDelete(SAMPLE_RECIPE_IDS);
+}
+
+export async function getVoicePreviewAudio(key: string): Promise<Blob | null> {
+  const entry = await db.voicePreviewCache.get(key);
+  return entry?.audioBlob ?? null;
+}
+
+export async function saveVoicePreviewAudio(
+  entry: Omit<VoicePreviewCacheEntry, "createdAt"> & { createdAt?: number },
+): Promise<void> {
+  await db.voicePreviewCache.put({
+    ...entry,
+    createdAt: entry.createdAt ?? Date.now(),
+  });
 }

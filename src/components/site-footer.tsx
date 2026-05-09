@@ -6,7 +6,7 @@ export function SiteFooter() {
 
   return (
     <footer className="border-t border-border/60 bg-card/30">
-      <div className="mx-auto max-w-7xl px-6 py-12">
+      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-12">
         <div className="grid gap-8 md:grid-cols-4">
           <div className="md:col-span-2">
             <h3 className="font-display text-2xl font-semibold tracking-tight">{t("app.name")}</h3>
