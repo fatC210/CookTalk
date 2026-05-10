@@ -4,14 +4,15 @@ import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import { Search, Filter, ArrowUpDown, Plus, Clock, ChefHat, Mic, UtensilsCrossed } from "lucide-react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Recipe } from "@/lib/db";
+import i18n from "@/lib/i18n";
 import { useTranslation } from "react-i18next";
 import { useState, useEffect, useMemo } from "react";
 
 export const Route = createFileRoute("/recipes")({
   head: () => ({
     meta: [
-      { title: "My recipes — CookTalk" },
-      { name: "description", content: "Your personal voice-controlled recipe library." },
+      { title: `${i18n.t("recipes.title")} - CookTalk` },
+      { name: "description", content: i18n.t("recipes.metaDescription") },
     ],
   }),
   component: RecipesPage,
@@ -83,12 +84,16 @@ function filterAndSort(
 }
 
 function RecipesPage() {
-  const { t } = useTranslation();
+  const { t, i18n: activeI18n } = useTranslation();
   const [search, setSearch] = useState("");
   const [activeCuisine, setActiveCuisine] = useState("all");
   const [sort, setSort] = useState<SortKey>("lastCookedAt");
 
   const allRecipes = useLiveQuery(() => db.recipes.toArray(), []) ?? [];
+
+  useEffect(() => {
+    document.title = `${t("recipes.title")} - CookTalk`;
+  }, [t, activeI18n.language]);
 
   // Extract unique cuisines from loaded recipes
   const cuisines = useMemo<string[]>(() => {
@@ -141,7 +146,7 @@ function RecipesPage() {
 
       <section className="page-hero">
         <div className="page-hero-container">
-          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <span className="page-kicker">
                 {t("recipes.personalKb")} · {t("recipes.recipesCount", { count: allRecipes.length })}
@@ -151,30 +156,30 @@ function RecipesPage() {
             </div>
             <Link
               to="/import"
-              className="inline-flex w-full items-center justify-center gap-2 self-start rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:w-auto sm:px-5"
+              className="inline-flex w-full items-center justify-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:w-auto sm:px-5"
             >
               <Plus className="h-4 w-4" strokeWidth={1.75} />
               {t("recipes.importVideo")}
             </Link>
           </div>
 
-          <div className="mt-5 space-y-3">
-            <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-2.5 sm:min-w-[280px] sm:px-4">
+          <div className="mt-5 flex w-full min-w-0 items-center gap-3">
+            <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-border bg-card px-3 sm:px-4">
               <Search className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
               <input
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                 placeholder={t("recipes.searchPlaceholder")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <span className="voice-hint hidden sm:inline">{t("recipes.orSaySearch")}</span>
+              <span className="voice-hint hidden lg:inline">{t("recipes.orSaySearch")}</span>
               <Mic className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
             </div>
 
-            <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+            <div className="flex min-w-0 flex-none items-center justify-end gap-2 overflow-x-auto pb-1">
               <button
                 onClick={() => setActiveCuisine("all")}
-                className={`relative inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
+                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
                   activeCuisine === "all"
                     ? "border-foreground bg-foreground text-background"
                     : "border-border bg-card hover:border-foreground"
@@ -186,7 +191,7 @@ function RecipesPage() {
                 <button
                   key={c}
                   onClick={() => setActiveCuisine(c)}
-                  className={`relative inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
+                  className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
                     activeCuisine === c
                       ? "border-foreground bg-foreground text-background"
                       : "border-border bg-card hover:border-foreground"
@@ -196,12 +201,12 @@ function RecipesPage() {
                 </button>
               ))}
 
-              <button className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground">
+              <button className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground">
                 <Filter className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("recipes.filter")}
               </button>
               <button
                 onClick={cycleSortKey}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground"
               >
                 <ArrowUpDown className="h-3.5 w-3.5" strokeWidth={1.75} /> {sortLabels[sort]}
               </button>

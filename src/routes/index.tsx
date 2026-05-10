@@ -2,11 +2,13 @@ import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-ro
 import { useLiveQuery } from "dexie-react-hooks";
 import { ChefHat, Clock, Mic, Send, Trash2, Volume2, VolumeX, Waves } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SiteHeader } from "@/components/site-header";
 import { db, type Recipe } from "@/lib/db";
+import i18n from "@/lib/i18n";
 import { getConfiguredLLMService } from "@/lib/llm";
 import { synthesizeWithElevenLabs } from "@/lib/voice-pipeline";
 import { cn } from "@/lib/utils";
@@ -21,15 +23,15 @@ import type { VoiceStatus } from "@/lib/voice-pipeline";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "CookTalk — 对话工作台" },
+      { title: i18n.t("home.chat.metaTitle") },
       {
         name: "description",
-        content: "和 CookTalk 语音或文字对话，搜索菜谱、获取推荐，并跳转到详情、导入或烹饪模式。",
+        content: i18n.t("home.chat.metaDescription"),
       },
-      { property: "og:title", content: "CookTalk — 对话工作台" },
+      { property: "og:title", content: i18n.t("home.chat.metaTitle") },
       {
         property: "og:description",
-        content: "首页只承载对话：语音、文字、菜谱卡片和明确的功能跳转。",
+        content: i18n.t("home.chat.metaOgDescription"),
       },
     ],
   }),
@@ -83,6 +85,20 @@ type ChatMessage = {
 
 type AppLanguage = "en" | "zh";
 
+type StructuredRecipeDraft = Omit<
+  Recipe,
+  | "id"
+  | "coverImage"
+  | "coverSource"
+  | "sourceUrl"
+  | "rawVideo"
+  | "rawAudio"
+  | "rawTranscript"
+  | "voiceId"
+  | "createdAt"
+  | "lastCookedAt"
+>;
+
 const NUMBER_SYMBOLS = ["①", "②", "③", "④", "⑤", "⑥"];
 const EMPTY_RECIPES: Recipe[] = [];
 const KITCHEN_ASSISTANT_SYSTEM_PROMPTS: Record<AppLanguage, string> = {
@@ -111,7 +127,11 @@ const ASSISTANT_COPY: Record<
     openingSettings: string;
     openingRecipes: string;
     noLocalRecipes: string;
+    webSearchEmpty: string;
     recommendations: string;
+    recipeSaved: (title: string) => string;
+    recipeSaveFailed: string;
+    noRecipeDraft: string;
     stayHere: string;
     emptyReply: string;
     clearSuccess: string;
@@ -144,7 +164,11 @@ const ASSISTANT_COPY: Record<
     openingSettings: "好的，打开设置。",
     openingRecipes: "好的，打开你的菜谱库。",
     noLocalRecipes: "当前没有匹配的本地菜谱。你可以换个菜名或口味，我会继续给你网页搜索结果。",
+    webSearchEmpty: "我没搜到可以直接打开的网页结果。你可以换个更具体的菜名或食材再试。",
     recommendations: "根据你的菜谱库和当前口味，我推荐这几道：",
+    recipeSaved: (title) => `已整理并上传到菜谱「${title}」。`,
+    recipeSaveFailed: "整理并上传菜谱失败，请稍后再试。",
+    noRecipeDraft: "我还没有可上传或开始烹饪的做菜方案。请先让我生成一道菜的做法。",
     stayHere: "好的，我会留在这里。需要时直接说菜名、口味，或让我从网页搜索菜谱。",
     emptyReply: "我刚才没组织好回答，你可以换个说法再问一次，我会按做菜场景继续帮你。",
     clearSuccess: "已清空当前对话",
@@ -182,7 +206,13 @@ const ASSISTANT_COPY: Record<
     openingRecipes: "Sure, opening your recipe library.",
     noLocalRecipes:
       "No matching saved recipes right now. Try another dish or flavor, and I can continue with web results.",
+    webSearchEmpty:
+      "I couldn't find web results that can be opened directly. Try a more specific dish or ingredient.",
     recommendations: "Based on your recipe library and current taste, I recommend these:",
+    recipeSaved: (title) => `Structured and saved “${title}” to your recipes.`,
+    recipeSaveFailed: "Failed to structure and save the recipe. Please try again.",
+    noRecipeDraft:
+      "I don't have a recipe plan to save or start yet. Ask me to create a dish plan first.",
     stayHere:
       "Sure, I'll stay here. When ready, tell me a dish, flavor, or ask me to search recipes from the web.",
     emptyReply:
@@ -215,6 +245,11 @@ type SpeechSegment = {
 type AssistantSpeechScheduler = {
   append: (chunk: string, force?: boolean) => void;
   finish: () => Promise<void>;
+};
+
+type AssistantAudioReveal = {
+  baseText: string;
+  segmentText: string;
 };
 
 function buildRecipeLibraryContext(recipes: Recipe[], language: AppLanguage): string {
@@ -296,10 +331,10 @@ async function streamKitchenAssistantReply({
       { role: "system", content: KITCHEN_ASSISTANT_SYSTEM_PROMPTS[language] },
       {
         role: "system",
-        content:
-          language === "zh"
-            ? `鐢ㄦ埛鏈湴鑿滆氨搴撴憳瑕侊細\n${buildRecipeLibraryContext(recipes, language)}`
-            : `User's saved recipe library summary:\n${buildRecipeLibraryContext(recipes, language)}`,
+          content:
+            language === "zh"
+              ? `用户本地菜谱库摘要：\n${buildRecipeLibraryContext(recipes, language)}`
+              : `User's saved recipe library summary:\n${buildRecipeLibraryContext(recipes, language)}`,
       },
       ...history,
       { role: "user", content: text },
@@ -361,21 +396,30 @@ function splitSpeechSegments(
   return { segments, remaining };
 }
 
-function estimateSpeechDurationMs(text: string): number {
-  const normalizedLength = text.replace(/\s+/g, "").length;
-  return Math.max(700, normalizedLength * 90);
+function getInitialAssistantDisplayText(_text?: string): string {
+  return "";
 }
 
-function getInitialAssistantDisplayText(text: string): string {
-  if (!text) return "";
+function estimateSpeechRevealDurationMs(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) return 0;
 
+  const cjkCount = (normalized.match(/[\u3400-\u9fff]/g) ?? []).length;
+  const punctuationCount = (normalized.match(/[,.!?;:，。！？；：]/g) ?? []).length;
+  const otherCount = Math.max(0, normalized.length - cjkCount - punctuationCount);
+  const estimatedMs = cjkCount * 190 + otherCount * 45 + punctuationCount * 130 + 400;
+
+  return Math.max(800, Math.min(estimatedMs, 16_000));
+}
+
+function getInitialSegmentRevealLength(text: string): number {
   const firstVisibleIndex = text.search(/\S/);
-  if (firstVisibleIndex < 0) return "";
-  return text.slice(0, firstVisibleIndex + 1);
+  return firstVisibleIndex >= 0 ? firstVisibleIndex + 1 : 0;
 }
 
 function HomePage() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const liveRecipes = useLiveQuery(() => db.recipes.orderBy("createdAt").reverse().toArray(), []);
   const recipes = liveRecipes ?? EMPTY_RECIPES;
@@ -396,6 +440,7 @@ function HomePage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [latestRecipes, setLatestRecipes] = useState<ChatRecipe[]>([]);
+  const [latestRecipeDraftText, setLatestRecipeDraftText] = useState("");
   const [mutedMessageId, setMutedMessageId] = useState<string | null>(null);
   const [isAssistantLoading, setAssistantLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -417,6 +462,10 @@ function HomePage() {
     currentStatus,
   );
   const shouldShowWakeTip = !isConversationActive && !isWakeActive;
+
+  useEffect(() => {
+    document.title = t("home.chat.metaTitle");
+  }, [t, language]);
 
   const promptConfigureElevenLabsKey = useCallback(() => {
     toast.error(assistantCopy.elevenLabsKeyRequired, {
@@ -520,7 +569,7 @@ function HomePage() {
       runId: string,
       messageId: string,
       audioBlob: Blob,
-      textSync?: { prefixText: string; segmentText: string },
+      reveal?: AssistantAudioReveal,
     ) =>
       new Promise<void>((resolve) => {
         if (assistantRunRef.current !== runId) {
@@ -533,72 +582,72 @@ function HomePage() {
         audio.muted = mutedMessageIdRef.current === messageId;
         audioRef.current = audio;
         audioUrlRef.current = audioUrl;
-        updateMessage(messageId, { isReading: true });
-
-        const prefixText = textSync?.prefixText ?? "";
-        const segmentText = textSync?.segmentText ?? "";
-        const fallbackDurationMs = estimateSpeechDurationMs(segmentText);
-        let revealFrame: number | null = null;
-        let revealStopped = false;
         let settled = false;
+        let revealFrame: number | null = null;
+        let revealStarted = false;
 
-        const updateDisplayText = (forceComplete = false) => {
-          if (!segmentText) return;
-
-          const durationMs =
-            Number.isFinite(audio.duration) && audio.duration > 0
-              ? audio.duration * 1000
-              : fallbackDurationMs;
-          const progress = forceComplete
-            ? 1
-            : durationMs > 0
-              ? Math.min((audio.currentTime * 1000) / durationMs, 1)
-              : 1;
-          const nextLength = forceComplete
-            ? segmentText.length
-            : Math.max(1, Math.min(segmentText.length, Math.floor(segmentText.length * progress)));
-
-          updateMessage(messageId, {
-            displayText: `${prefixText}${segmentText.slice(0, nextLength)}`,
-          });
-        };
-
-        const stopReveal = (forceComplete = true) => {
-          if (revealStopped) return;
-          revealStopped = true;
+        const revealFullSegment = () => {
+          if (!reveal || assistantRunRef.current !== runId) return;
           if (revealFrame !== null) {
             window.cancelAnimationFrame(revealFrame);
             revealFrame = null;
           }
-          updateDisplayText(forceComplete);
+          updateMessage(messageId, {
+            displayText: `${reveal.baseText}${reveal.segmentText}`,
+          });
         };
 
-        const startReveal = () => {
-          if (!segmentText || revealStopped) return;
+        const startTextReveal = () => {
+          if (!reveal || revealStarted || assistantRunRef.current !== runId) return;
+          revealStarted = true;
+
+          const fallbackDuration = estimateSpeechRevealDurationMs(reveal.segmentText);
+          const initialRevealLength = getInitialSegmentRevealLength(reveal.segmentText);
+          const initialText = reveal.segmentText.slice(0, initialRevealLength);
+          updateMessage(messageId, {
+            displayText: `${reveal.baseText}${initialText}`,
+            isReading: true,
+          });
+          setAssistantLoading(false);
 
           const tick = () => {
-            if (revealStopped) return;
-            updateDisplayText(false);
-            if (!audio.paused && !audio.ended) {
+            if (assistantRunRef.current !== runId) return;
+
+            const duration =
+              Number.isFinite(audio.duration) && audio.duration > 0
+                ? audio.duration * 1000
+                : fallbackDuration;
+            const progress =
+              duration > 0 ? Math.min(1, (audio.currentTime * 1000) / duration) : 1;
+            const revealLength = Math.min(
+              reveal.segmentText.length,
+              Math.max(initialRevealLength, Math.floor(reveal.segmentText.length * progress)),
+            );
+
+            updateMessage(messageId, {
+              displayText: `${reveal.baseText}${reveal.segmentText.slice(0, revealLength)}`,
+            });
+
+            if (progress < 1) {
               revealFrame = window.requestAnimationFrame(tick);
+            } else {
+              revealFrame = null;
             }
           };
 
-          updateDisplayText(false);
           revealFrame = window.requestAnimationFrame(tick);
         };
 
         const settle = () => {
           if (settled) return;
           settled = true;
-          stopReveal(true);
+          revealFullSegment();
           resolve();
         };
 
         setAssistantStatus("speaking");
         const playback = claimVoicePlayback(audio, {
           cleanup: () => {
-            stopReveal(true);
             URL.revokeObjectURL(audioUrl);
             if (audioUrlRef.current === audioUrl) audioUrlRef.current = null;
             if (audioRef.current === audio) audioRef.current = null;
@@ -618,7 +667,7 @@ function HomePage() {
         };
         audio
           .play()
-          .then(startReveal)
+          .then(startTextReveal)
           .catch((error: unknown) => {
             toast.error(error instanceof Error ? error.message : assistantCopy.voicePlayFailed);
             playback.release();
@@ -637,11 +686,7 @@ function HomePage() {
       const queueSegment = ({ speechText, displayText }: SpeechSegment) => {
         if (!hasElevenLabsKey || !speechText.trim()) return;
 
-        const prefixText = revealedText;
-        revealedText += displayText;
-
-        updateMessage(messageId, { isReading: true });
-        const blobPromise = synthesizeWithElevenLabs(speechText, conversationVoiceId).catch(
+        const blobPromise = synthesizeWithElevenLabs(speechText, conversationVoiceId, language).catch(
           (error: unknown) => {
             if (assistantRunRef.current === runId) {
               toast.error(error instanceof Error ? error.message : assistantCopy.voiceGenFailed);
@@ -652,15 +697,19 @@ function HomePage() {
 
         playbackChain = playbackChain.then(async () => {
           if (assistantRunRef.current !== runId) return;
+          const baseText = revealedText;
           const audioBlob = await blobPromise;
           if (!audioBlob || assistantRunRef.current !== runId) {
-            updateMessage(messageId, { displayText: `${prefixText}${displayText}` });
+            revealedText = `${baseText}${displayText}`;
+            updateMessage(messageId, { displayText: revealedText });
+            setAssistantLoading(false);
             return;
           }
           await playAssistantAudioBlob(runId, messageId, audioBlob, {
-            prefixText,
+            baseText,
             segmentText: displayText,
           });
+          revealedText = `${baseText}${displayText}`;
         });
       };
 
@@ -688,6 +737,7 @@ function HomePage() {
       assistantCopy.voiceGenFailed,
       conversationVoiceId,
       hasElevenLabsKey,
+      language,
       playAssistantAudioBlob,
       updateMessage,
     ],
@@ -741,7 +791,7 @@ function HomePage() {
 
       const runId = crypto.randomUUID();
       assistantRunRef.current = runId;
-      setAssistantLoading(false);
+      setAssistantLoading(hasElevenLabsKey && !!message.text);
       setAssistantStatus(hasElevenLabsKey && !!message.text ? "thinking" : "idle");
 
       const nextMessage = addMessage({
@@ -821,7 +871,7 @@ function HomePage() {
         });
         activeAssistantMessageIdRef.current = assistantMessage.id;
         speechScheduler = createAssistantSpeechScheduler(runId, assistantMessage.id);
-        setAssistantLoading(false);
+        if (!hasElevenLabsKey) setAssistantLoading(false);
         return assistantMessage;
       };
 
@@ -836,10 +886,10 @@ function HomePage() {
             receivedChunk = true;
             assistantText += chunk;
             const message = ensureAssistantMessage();
-            updateMessage(message.id, {
-              text: assistantText,
-              ...(!hasElevenLabsKey ? { displayText: assistantText } : {}),
-            });
+            updateMessage(
+              message.id,
+              hasElevenLabsKey ? { text: assistantText } : { text: assistantText, displayText: assistantText },
+            );
             speechScheduler?.append(chunk);
           },
         });
@@ -848,10 +898,11 @@ function HomePage() {
 
         assistantText = fullReply;
         const message = ensureAssistantMessage();
-        updateMessage(message.id, {
-          text: assistantText,
-          ...(!hasElevenLabsKey ? { displayText: assistantText } : {}),
-        });
+        updateMessage(
+          message.id,
+          hasElevenLabsKey ? { text: assistantText } : { text: assistantText, displayText: assistantText },
+        );
+        setLatestRecipeDraftText(`${text}\n\n${assistantText}`.trim());
         if (!receivedChunk && assistantText) {
           (speechScheduler as AssistantSpeechScheduler | null)?.append(assistantText, true);
         }
@@ -895,6 +946,88 @@ function HomePage() {
       recipes,
       stopAssistantPlayback,
       updateMessage,
+    ],
+  );
+
+  const structureAndSaveRecipeDraft = useCallback(
+    async (draftText: string): Promise<Recipe> => {
+      const service = await getConfiguredLLMService();
+      if (!service) throw new Error(assistantCopy.llmKeyRequired);
+
+      const draft = (await service.structureRecipeFromText(draftText)) as StructuredRecipeDraft;
+      const title = draft.title?.trim() || i18n.t("import.untitledRecipe", { lng: language });
+      const ingredients = (draft.ingredients ?? [])
+        .map((ingredient) => ({
+          name: ingredient.name?.trim() ?? "",
+          amount: ingredient.amount?.trim() ?? "",
+        }))
+        .filter((ingredient) => ingredient.name);
+      const steps = (draft.steps ?? [])
+        .map((step, index) => ({
+          order: index + 1,
+          description: step.description?.trim() ?? "",
+          durationSec: step.durationSec,
+          tips: step.tips?.trim() || undefined,
+        }))
+        .filter((step) => step.description);
+
+      if (steps.length === 0) throw new Error(assistantCopy.recipeSaveFailed);
+
+      const recipe: Recipe = {
+        title,
+        ingredients,
+        steps,
+        tags: draft.tags ?? {},
+        coverSource: "default",
+        rawTranscript: draftText,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+      };
+
+      await db.recipes.add(recipe);
+      return recipe;
+    },
+    [assistantCopy.llmKeyRequired, assistantCopy.recipeSaveFailed, language],
+  );
+
+  const handleSaveLatestRecipeDraft = useCallback(
+    async (options: { startCooking?: boolean } = {}) => {
+      const draftText = latestRecipeDraftText.trim();
+      if (!draftText) {
+        pushAssistant({ kind: "guide", text: assistantCopy.noRecipeDraft });
+        return;
+      }
+
+      stopAssistantPlayback(true);
+      setAssistantLoading(true);
+      setAssistantStatus("thinking");
+
+      try {
+        const recipe = await structureAndSaveRecipeDraft(draftText);
+        setLatestRecipes([recipeToChatRecipe(recipe)]);
+        pushAssistant({ kind: "confirm", text: assistantCopy.recipeSaved(recipe.title) });
+
+        window.setTimeout(() => {
+          stopAssistantPlayback(true);
+          void navigate({
+            to: options.startCooking ? "/cook" : "/recipe-detail",
+            search: { id: recipe.id },
+          });
+        }, 450);
+      } catch (error) {
+        setAssistantLoading(false);
+        setAssistantStatus("idle");
+        toast.error(error instanceof Error ? error.message : assistantCopy.recipeSaveFailed);
+        pushAssistant({ kind: "guide", text: assistantCopy.recipeSaveFailed });
+      }
+    },
+    [
+      assistantCopy,
+      latestRecipeDraftText,
+      navigate,
+      pushAssistant,
+      stopAssistantPlayback,
+      structureAndSaveRecipeDraft,
     ],
   );
 
@@ -951,6 +1084,11 @@ function HomePage() {
     [assistantCopy, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
   );
 
+  const handleAwakeReady = useCallback(() => {
+    if (assistantRunRef.current || isAssistantLoading) return;
+    pushAssistant({ kind: "confirm", text: assistantCopy.awakeReady });
+  }, [assistantCopy.awakeReady, isAssistantLoading, pushAssistant]);
+
   const findRecipeNumber = useCallback((text: string) => {
     const normalized = text.toLowerCase();
     const numberMap = [
@@ -992,19 +1130,15 @@ function HomePage() {
 
       if (localMatches.length > 0) return localMatches;
 
-      return await fetchWebRecipeCards(query);
+      return await fetchWebRecipeCards(query, language);
     },
-    [recipes],
+    [language, recipes],
   );
 
   const handleCommand = useCallback(
     (rawText: string) => {
       const text = rawText.trim();
       if (!text) return;
-      if (!hasLlmKey) {
-        promptConfigureLlmKey();
-        return;
-      }
 
       const turnId = commandTurnRef.current + 1;
       commandTurnRef.current = turnId;
@@ -1017,7 +1151,54 @@ function HomePage() {
         void (async () => {
           if (commandTurnRef.current !== turnId) return;
 
+          if (
+            /(网页|网上|联网|搜索|搜一下|查一下|web|online|internet)/i.test(text) &&
+            /(菜谱|食谱|做法|recipe|recipes|search|搜索|搜一下|查一下)/i.test(text)
+          ) {
+            const cards = await fetchWebRecipeCards(text, language);
+            if (commandTurnRef.current !== turnId) return;
+            setLatestRecipes(cards);
+            pushAssistant({
+              kind: cards.length > 0 ? "recipes" : "guide",
+              text: cards.length > 0 ? assistantCopy.recommendations : assistantCopy.webSearchEmpty,
+              recipes: cards,
+            });
+            return;
+          }
+
+          if (/(上传|保存|加入|添加).*(菜谱|菜谱库)|save.*recipe/i.test(text)) {
+            if (!hasLlmKey) {
+              promptConfigureLlmKey();
+              return;
+            }
+            await handleSaveLatestRecipeDraft();
+            return;
+          }
+
+          if (/(开始|进入).*(烹饪|烹调|做菜|cooking)|start cooking|cooking mode/i.test(text)) {
+            const selectedIndex = findRecipeNumber(text);
+            const selectedRecipe = selectedIndex == null ? latestRecipes[0] : latestRecipes[selectedIndex];
+            if (selectedRecipe?.source === "local") {
+              handleStartCooking(selectedRecipe);
+              return;
+            }
+            if (!hasLlmKey) {
+              promptConfigureLlmKey();
+              return;
+            }
+            await handleSaveLatestRecipeDraft({ startCooking: true });
+            return;
+          }
+
           if (/(导入|视频|新菜谱|import)/i.test(text)) {
+            if (/(菜谱|菜谱库|recipe)/i.test(text) && !/(视频|video)/i.test(text)) {
+              if (!hasLlmKey) {
+                promptConfigureLlmKey();
+                return;
+              }
+              await handleSaveLatestRecipeDraft();
+              return;
+            }
             const cards = await buildRecipeCards(text);
             if (commandTurnRef.current !== turnId) return;
             setLatestRecipes(cards);
@@ -1112,14 +1293,20 @@ function HomePage() {
             return;
           }
 
+          if (!hasLlmKey) {
+            promptConfigureLlmKey();
+            return;
+          }
+
           await streamAssistantTextReply(text, conversationMessages);
         })();
-      }, 420);
+      }, 0);
     },
     [
       addMessage,
       buildRecipeCards,
       findRecipeNumber,
+      handleSaveLatestRecipeDraft,
       handleOpenRecipe,
       handleStartCooking,
       assistantCopy,
@@ -1139,8 +1326,14 @@ function HomePage() {
   );
 
   useEffect(() => {
-    const handleHomeAwake = () => {
-      pushAssistant({ kind: "confirm", text: assistantCopy.awakeReady });
+    const handleHomeAwake = (event: Event) => {
+      const transcript =
+        (event as CustomEvent<HomeAwakeDetail>).detail?.transcript?.trim() ?? "";
+      if (transcript) {
+        handleCommand(transcript);
+        return;
+      }
+      handleAwakeReady();
     };
 
     const handleHomeTranscript = (event: Event) => {
@@ -1153,22 +1346,20 @@ function HomePage() {
       window.removeEventListener("cooktalk:home-awake", handleHomeAwake);
       window.removeEventListener("cooktalk:home-transcript", handleHomeTranscript);
     };
-  }, [assistantCopy.awakeReady, handleCommand, pushAssistant]);
+  }, [handleAwakeReady, handleCommand]);
 
   useEffect(() => {
     if (!pendingHomeAwake) return;
-    pushAssistant({ kind: "confirm", text: assistantCopy.awakeReady });
+    const transcript = pendingHomeAwake.transcript.trim();
     clearHomeAwake();
-  }, [assistantCopy.awakeReady, clearHomeAwake, pendingHomeAwake, pushAssistant]);
+    if (transcript) handleCommand(transcript);
+    else triggerManualWake();
+  }, [clearHomeAwake, handleCommand, pendingHomeAwake, triggerManualWake]);
 
   const submitText = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
     const text = input.trim();
     if (!text) return;
-    if (!hasLlmKey) {
-      promptConfigureLlmKey();
-      return;
-    }
     setInput("");
     handleCommand(text);
   };
@@ -1200,6 +1391,7 @@ function HomePage() {
           {shouldShowWakeTip && (
             <div className="mx-auto w-full max-w-[760px] px-3 sm:px-6">
               <StatusPanel
+                label={t("home.wakeTip", { wakeWord: t("app.wakeWord") })}
                 onManualWake={() => {
                   if (hasElevenLabsKey) triggerManualWake();
                   else promptConfigureElevenLabsKey();
@@ -1243,10 +1435,10 @@ function HomePage() {
                     size="sm"
                     className="h-8 w-full gap-1.5 rounded-full border border-border/80 bg-card/95 px-3 text-xs opacity-100 shadow-sm backdrop-blur transition-all duration-150 sm:translate-y-1 sm:opacity-0 sm:pointer-events-none sm:group-hover/clear:translate-y-0 sm:group-hover/clear:opacity-100 sm:group-hover/clear:pointer-events-auto sm:focus-visible:translate-y-0 sm:focus-visible:opacity-100 sm:focus-visible:pointer-events-auto"
                     onClick={clearConversation}
-                    aria-label="清空对话"
+                    aria-label={t("home.chat.clearConversation")}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    清空对话
+                    {t("home.chat.clearConversation")}
                   </Button>
                 </div>
               )}
@@ -1294,21 +1486,23 @@ function HomePage() {
   );
 }
 
-function StatusPanel({ onManualWake }: { onManualWake: () => void }) {
+function StatusPanel({ label, onManualWake }: { label: string; onManualWake: () => void }) {
   return (
     <button
       type="button"
       className="z-20 mx-auto flex w-full items-center justify-center gap-2 rounded-full border border-border/80 bg-card/75 px-4 py-2 text-sm font-medium shadow-[var(--shadow-soft)] backdrop-blur-xl transition-colors hover:border-clay/60 hover:text-clay sm:w-fit"
       onClick={onManualWake}
-      aria-label="说 Hey CookTalk 唤醒我"
+      aria-label={label}
     >
       <Mic className="h-4 w-4 text-clay" />
-      <span>说 Hey CookTalk 唤醒我</span>
+      <span>{label}</span>
     </button>
   );
 }
 
 function WelcomePanel() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex min-h-full items-center justify-center px-4 pb-4 text-center">
       <div className="flex flex-col items-center">
@@ -1333,7 +1527,7 @@ function WelcomePanel() {
         <h2 className="mt-6 font-display text-[clamp(2rem,9vw,2.75rem)] font-semibold tracking-tight text-foreground sm:text-4xl">
           CookTalk
         </h2>
-        <p className="mt-2 text-sm text-muted-foreground">说出唤醒词，或从底部输入开始</p>
+        <p className="mt-2 text-sm text-muted-foreground">{t("home.chat.emptyPrompt")}</p>
       </div>
     </div>
   );
@@ -1352,6 +1546,7 @@ function MessageBubble({
   onToggleAudio: () => void;
   isAudioMuted: boolean;
 }) {
+  const { t, i18n: activeI18n } = useTranslation();
   const isUser = message.role === "user";
   const isSystem = message.role === "system" || message.kind === "system";
   const assistantText = message.displayText ?? message.text;
@@ -1373,11 +1568,15 @@ function MessageBubble({
             {message.text}
           </p>
           <time className="mt-1 block text-[11px] text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-            {formatTime(message.createdAt)}
+            {formatTime(message.createdAt, activeI18n.language)}
           </time>
         </div>
       </article>
     );
+  }
+
+  if (!hasAssistantText && !message.recipes?.length) {
+    return null;
   }
 
   return (
@@ -1401,27 +1600,29 @@ function MessageBubble({
               />
             ))}
             <p className="pt-1 text-xs text-muted-foreground">
-              💡 说“开始做第二个”或“看看第一个详情”
+              {t("home.chat.recipeSuggestion")}
             </p>
           </div>
         )}
 
       </div>
-      {message.isReading && !isUser && (
+      {message.isReading && !isUser && hasAssistantText && (
         <div className="ml-3 mt-2">
           <ReadingIndicator isMuted={isAudioMuted} onToggleAudio={onToggleAudio} />
         </div>
       )}
       <time className="ml-3 mt-1 text-[11px] text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-        {formatTime(message.createdAt)}
+        {formatTime(message.createdAt, activeI18n.language)}
       </time>
     </article>
   );
 }
 
 function AssistantLoadingBubble() {
+  const { t } = useTranslation();
+
   return (
-    <article className="flex flex-col items-start" aria-live="polite" aria-label="AI 正在生成回复">
+    <article className="flex flex-col items-start" aria-live="polite" aria-label={t("home.chat.loadingReply")}>
       <div className="rounded-[1.5rem] border border-border bg-card px-4 py-3 shadow-sm">
         <div className="flex items-center gap-1.5 py-1" aria-hidden>
           {[0, 1, 2].map((index) => (
@@ -1448,6 +1649,8 @@ function RecipeResultCard({
   onOpen: () => void;
   onStart: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="animate-in slide-in-from-bottom-2 fade-in rounded-2xl border border-border bg-background/80 p-3 duration-200">
       <div className="grid grid-cols-[auto_56px] gap-3 sm:grid-cols-[auto_56px_minmax(0,1fr)]">
@@ -1463,14 +1666,21 @@ function RecipeResultCard({
               {recipe.title}
             </h3>
             <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
-              {recipe.source === "local" ? "📚 我的菜谱" : "🌐 网页搜索"}
+              {recipe.source === "local"
+                ? `📚 ${t("home.chat.localRecipe")}`
+                : `🌐 ${t("home.chat.webRecipe")}`}
             </span>
           </div>
           <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
-            <span>🌶️ {recipe.flavor || "适中"}</span>
+            <span>
+              🌶️{" "}
+              {recipe.source === "web"
+                ? t("home.chat.webResultFlavor")
+                : recipe.flavor || t("home.chat.neutralFlavor")}
+            </span>
             <span className="inline-flex items-center gap-1">
               <Clock className="h-3 w-3" />
-              {recipe.totalTimeMin ?? 30} 分钟
+              {t("recipes.minutes", { count: recipe.totalTimeMin ?? 30 })}
             </span>
             {recipe.cuisine && <span>{recipe.cuisine}</span>}
           </div>
@@ -1482,7 +1692,7 @@ function RecipeResultCard({
               className="h-8 rounded-full px-3 sm:min-w-[72px]"
               onClick={onOpen}
             >
-              查看
+              {t("home.chat.open")}
             </Button>
             {recipe.source === "local" && (
               <Button
@@ -1491,7 +1701,7 @@ function RecipeResultCard({
                 className="h-8 rounded-full px-3 sm:min-w-[72px]"
                 onClick={onStart}
               >
-                开始做
+                {t("home.chat.startCooking")}
               </Button>
             )}
           </div>
@@ -1528,26 +1738,28 @@ function ReadingIndicator({
   isMuted: boolean;
   onToggleAudio: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-clay/12 bg-card/95 py-1 pl-3 pr-1 text-xs text-secondary-foreground shadow-sm backdrop-blur-sm">
       <Waves className="h-3.5 w-3.5 animate-pulse text-clay/85" />
-      {isMuted ? "已静音播放中" : "朗读中"}
+      {isMuted ? t("home.chat.mutedReading") : t("home.chat.reading")}
       <Button
         type="button"
         variant="ghost"
         size="icon"
         className="h-7 w-7 rounded-full bg-transparent text-clay/90 hover:bg-transparent hover:text-clay"
         onClick={onToggleAudio}
-        aria-label={isMuted ? "取消静音 AI 朗读" : "静音 AI 朗读"}
+        aria-label={isMuted ? t("home.chat.unmuteReading") : t("home.chat.muteReading")}
       >
         {isMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
       </Button>
     </div>
   );
 }
-async function fetchWebRecipeCards(query: string): Promise<ChatRecipe[]> {
+async function fetchWebRecipeCards(query: string, language: AppLanguage): Promise<ChatRecipe[]> {
   const cleaned = cleanRecipeSearchKeyword(query);
-  const keyword = cleaned || "家常菜";
+  const keyword = cleaned || i18n.t("home.chat.fallbackSearchKeyword", { lng: language });
 
   try {
     const url = new URL("/api/web-recipe-search", window.location.origin);
@@ -1569,9 +1781,12 @@ async function fetchWebRecipeCards(query: string): Promise<ChatRecipe[]> {
         id: `web-${encodeURIComponent(result.url)}-${index}`,
         title: result.title.trim(),
         source: "web",
-        flavor: "网页结果",
+        flavor: i18n.t("home.chat.webResultFlavor", { lng: language }),
         totalTimeMin: undefined,
-        cuisine: typeof result.source === "string" ? result.source : "网页",
+        cuisine:
+          typeof result.source === "string"
+            ? result.source
+            : i18n.t("home.chat.webSourceDefault", { lng: language }),
         sourceUrl: result.url,
       }));
   } catch {
@@ -1598,8 +1813,11 @@ function cleanRecipeSearchKeyword(query: string): string {
   return cleaned;
 }
 
-function formatTime(date: Date) {
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+function formatTime(date: Date, language: string) {
+  return date.toLocaleTimeString(language.startsWith("zh") ? "zh-CN" : "en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function recipeToChatRecipe(recipe: Recipe): ChatRecipe {

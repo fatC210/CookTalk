@@ -34,8 +34,14 @@ export function formatElevenLabsVoiceDisplayLabel(
   return `${voice.name} - ${getElevenLabsVoiceGender(voice, fallbackGender)}`;
 }
 
-function isSupportedElevenLabsVoice(voice: ElevenLabsVoice): boolean {
+export function isSupportedElevenLabsVoice(voice: ElevenLabsVoice): boolean {
   return voice.category?.trim().toLowerCase() !== "cloned";
+}
+
+export function getSupportedElevenLabsVoices(voices: ElevenLabsVoice[]): ElevenLabsVoice[] {
+  return voices
+    .filter((voice) => voice.voice_id && voice.name && isSupportedElevenLabsVoice(voice))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function toElevenLabsVoiceOption(
@@ -54,7 +60,7 @@ export function toElevenLabsVoiceOption(
 }
 
 export function useElevenLabsVoices(refreshKey?: unknown) {
-  const { i18n, t } = useTranslation();
+  const { t } = useTranslation();
   const hasElevenLabsKey = useAppStore((state) => state.hasElevenLabsKey);
   const setHasElevenLabsKey = useAppStore((state) => state.setHasElevenLabsKey);
   const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
@@ -80,11 +86,7 @@ export function useElevenLabsVoices(refreshKey?: unknown) {
       }
 
       const nextVoices = await new ElevenLabsService(apiKey).listVoices({ showLegacy: true });
-      setVoices(
-        nextVoices
-          .filter((voice) => voice.voice_id && voice.name && isSupportedElevenLabsVoice(voice))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      );
+      setVoices(getSupportedElevenLabsVoices(nextVoices));
       setError(null);
     } catch (err) {
       setVoices([]);
@@ -100,7 +102,7 @@ export function useElevenLabsVoices(refreshKey?: unknown) {
 
   const options = useMemo(
     () => voices.map((voice) => toElevenLabsVoiceOption(voice, t("common.unknown"))),
-    [i18n.language, t, voices],
+    [t, voices],
   );
 
   return {

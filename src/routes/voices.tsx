@@ -19,15 +19,9 @@ import {
   ChefHat,
 } from "lucide-react";
 import { useCallback, useEffect, useState, useRef } from "react";
-import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
+import type { ChangeEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import {
-  db,
-  addVoice,
-  deleteVoice,
-  getVoicePreviewAudio,
-  saveVoicePreviewAudio,
-} from "@/lib/db";
+import { db, addVoice, deleteVoice, getVoicePreviewAudio, saveVoicePreviewAudio } from "@/lib/db";
 import type { Voice } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { getApiKey } from "@/lib/crypto";
@@ -84,10 +78,10 @@ function VoiceRoleButton({
       aria-pressed={isSelected}
       disabled={disabled}
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-full border bg-secondary/80 text-foreground/80 shadow-sm transition-[border-color,background-color,color,opacity,box-shadow] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40",
+        "inline-flex h-8 w-8 items-center justify-center rounded-full border bg-secondary/90 text-foreground/80 shadow-sm backdrop-blur transition-[border-color,background-color,color,opacity,box-shadow] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40",
         "opacity-0 pointer-events-none group-hover/voice-card:pointer-events-auto group-hover/voice-card:opacity-100 group-focus-within/voice-card:pointer-events-auto group-focus-within/voice-card:opacity-100",
         isSelected
-          ? "border-clay/70 text-clay shadow-inner hover:border-clay hover:bg-secondary"
+          ? "border-clay bg-clay text-background shadow-sm hover:border-clay hover:bg-clay"
           : "border-border/80 hover:border-clay hover:bg-secondary hover:text-clay",
       )}
       onClick={onClick}
@@ -96,6 +90,20 @@ function VoiceRoleButton({
     >
       <Icon className="h-4 w-4" strokeWidth={1.5} />
     </button>
+  );
+}
+
+function VoiceRoleActionStack({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("absolute right-4 top-4 z-10 flex flex-col items-end gap-1.5", className)}>
+      {children}
+    </div>
   );
 }
 
@@ -146,6 +154,10 @@ function VoicesPage() {
   const recordingStartedAtRef = useRef<number | null>(null);
   const discardRecordingOnStopRef = useRef(false);
   const maxRecordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    document.title = `${t("voices.title")} - CookTalk`;
+  }, [t, activeI18n.language]);
 
   const audioBlob = recordedAudio ?? uploadedAudio;
   const isRecordedAudioLongEnough =
@@ -563,14 +575,14 @@ function VoicesPage() {
       <SiteHeader />
 
       <section className="page-hero">
-        <div className="page-hero-container flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="page-hero-container flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <span className="page-kicker">{t("voices.subtitle")}</span>
             <h1 className="page-title">{t("voices.title")}</h1>
             <p className="page-description">{t("voices.description")}</p>
           </div>
           <button
-            className="inline-flex items-center gap-2 self-start rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:px-5"
+            className="inline-flex items-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:px-5"
             onClick={openCloneDialog}
           >
             <Plus className="h-4 w-4" strokeWidth={1.75} /> {t("voices.cloneNew")}
@@ -591,111 +603,108 @@ function VoicesPage() {
 
           <div className="mt-6 grid justify-start gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,260px))]">
             {clonedVoices.map((v, i) => {
-                const previewKey = getClonedPreviewKey(v);
-                const isLoadingPreview = loadingPreviewKey === previewKey;
-                const isPlayingPreview = activePreviewKey === previewKey;
-                const isPausedPreview = pausedPreviewKey === previewKey;
+              const previewKey = getClonedPreviewKey(v);
+              const isLoadingPreview = loadingPreviewKey === previewKey;
+              const isPlayingPreview = activePreviewKey === previewKey;
+              const isPausedPreview = pausedPreviewKey === previewKey;
 
-                return (
-                  <article
-                    key={v.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={
-                      isPlayingPreview
-                        ? t("cook.pause")
-                        : isPausedPreview
-                          ? t("cook.resume")
-                          : t("voices.preview")
-                    }
-                    title={t("voices.preview")}
-                    onClick={() => void handlePreviewVoice(v)}
-                    onKeyDown={(event) => handleCardKeyDown(event, () => void handlePreviewVoice(v))}
-                    className="group/voice-card relative cursor-pointer rounded-3xl border border-border bg-card p-5 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                      <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
+              return (
+                <article
+                  key={v.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={
+                    isPlayingPreview
+                      ? t("cook.pause")
+                      : isPausedPreview
+                        ? t("cook.resume")
+                        : t("voices.preview")
+                  }
+                  title={t("voices.preview")}
+                  onClick={() => void handlePreviewVoice(v)}
+                  onKeyDown={(event) => handleCardKeyDown(event, () => void handlePreviewVoice(v))}
+                  className="group/voice-card relative cursor-pointer rounded-3xl border border-border bg-card p-5 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
+                  <VoiceRoleActionStack>
+                    <VoiceRoleButton
+                      isSelected={conversationVoiceId === v.elevenLabsVoiceId}
+                      disabled={!v.elevenLabsVoiceId}
+                      Icon={MessageCircle}
+                      label={
+                        conversationVoiceId === v.elevenLabsVoiceId
+                          ? t("voices.clearConversationVoice")
+                          : t("voices.setConversationVoice")
+                      }
+                      onClick={(event) => {
+                        stopCardPreview(event);
+                        if (v.elevenLabsVoiceId) {
+                          handleSetConversationVoice(v.elevenLabsVoiceId, v.name);
+                        }
+                      }}
+                    />
+                    <VoiceRoleButton
+                      isSelected={cookingVoiceId === v.elevenLabsVoiceId}
+                      disabled={!v.elevenLabsVoiceId}
+                      Icon={ChefHat}
+                      label={
+                        cookingVoiceId === v.elevenLabsVoiceId
+                          ? t("voices.clearCookingVoice")
+                          : t("voices.setCookingVoice")
+                      }
+                      onClick={(event) => {
+                        stopCardPreview(event);
+                        if (v.elevenLabsVoiceId) {
+                          handleSetCookingVoice(v.elevenLabsVoiceId, v.name);
+                        }
+                      }}
+                    />
+                  </VoiceRoleActionStack>
 
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
-                          {isLoadingPreview ? (
-                            <Loader2
-                              className="h-5 w-5 animate-spin text-clay"
-                              strokeWidth={1.5}
-                            />
-                          ) : isPlayingPreview ? (
-                            <Pause className="h-5 w-5 text-clay" strokeWidth={1.5} />
-                          ) : (
-                            <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
-                          )}
-                        </div>
-                        <div className="flex shrink-0 items-center justify-end gap-1.5">
-                          <VoiceRoleButton
-                            isSelected={conversationVoiceId === v.elevenLabsVoiceId}
-                            disabled={!v.elevenLabsVoiceId}
-                            Icon={MessageCircle}
-                            label={
-                              conversationVoiceId === v.elevenLabsVoiceId
-                                ? t("voices.clearConversationVoice")
-                                : t("voices.setConversationVoice")
-                            }
-                            onClick={(event) => {
-                              stopCardPreview(event);
-                              if (v.elevenLabsVoiceId) {
-                                handleSetConversationVoice(v.elevenLabsVoiceId, v.name);
-                              }
-                            }}
-                          />
-                          <VoiceRoleButton
-                            isSelected={cookingVoiceId === v.elevenLabsVoiceId}
-                            disabled={!v.elevenLabsVoiceId}
-                            Icon={ChefHat}
-                            label={
-                              cookingVoiceId === v.elevenLabsVoiceId
-                                ? t("voices.clearCookingVoice")
-                                : t("voices.setCookingVoice")
-                            }
-                            onClick={(event) => {
-                              stopCardPreview(event);
-                              if (v.elevenLabsVoiceId) {
-                                handleSetCookingVoice(v.elevenLabsVoiceId, v.name);
-                              }
-                            }}
-                          />
-                        </div>
-                      </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
+                      {isLoadingPreview ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-clay" strokeWidth={1.5} />
+                      ) : isPlayingPreview ? (
+                        <Pause className="h-5 w-5 text-clay" strokeWidth={1.5} />
+                      ) : (
+                        <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
+                      )}
+                    </div>
+                  </div>
 
-                      <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
-                      {/* Waveform */}
-                      <div className="mt-4 flex h-10 items-center gap-1">
-                        {Array.from({ length: 40 }).map((_, k) => (
-                          <span
-                            key={k}
-                            className={`flex-1 rounded-full bg-clay/40 ${
-                              isPlayingPreview ? "voice-preview-wave-bar" : ""
-                            }`}
-                            style={{
-                              height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
-                              animationDelay: `${k * 34}ms`,
-                              animationDuration: `${760 + (k % 7) * 54}ms`,
-                            }}
-                          />
-                        ))}
-                      </div>
+                  <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
+                  {/* Waveform */}
+                  <div className="mt-4 flex h-10 items-center gap-1">
+                    {Array.from({ length: 40 }).map((_, k) => (
+                      <span
+                        key={k}
+                        className={`flex-1 rounded-full bg-clay/40 ${
+                          isPlayingPreview ? "voice-preview-wave-bar" : ""
+                        }`}
+                        style={{
+                          height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
+                          animationDelay: `${k * 34}ms`,
+                          animationDuration: `${760 + (k % 7) * 54}ms`,
+                        }}
+                      />
+                    ))}
+                  </div>
 
-                      <div className="mt-4 flex justify-end">
-                        <button
-                          className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border"
-                          onClick={(event) => {
-                            stopCardPreview(event);
-                            void handleDelete(v.id, v.name);
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                        </button>
-                      </div>
-                  </article>
-                );
-              })}
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border"
+                      onClick={(event) => {
+                        stopCardPreview(event);
+                        void handleDelete(v.id, v.name);
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
 
             {/* New voice slot */}
             <button
@@ -797,26 +806,14 @@ function VoicesPage() {
                     title={t("voices.preview")}
                     onClick={() => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
                     onKeyDown={(event) =>
-                      handleCardKeyDown(event, () =>
-                        void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl),
+                      handleCardKeyDown(
+                        event,
+                        () => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl),
                       )
                     }
-                    className="group/voice-card flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-5 py-4 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between"
+                    className="group/voice-card relative flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-5 py-4 pr-24 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <VoiceBadge n={i + 1} />
-                      <div className="min-w-0">
-                        <div className="truncate font-display text-base" title={displayLabel}>
-                          {voice.name}
-                        </div>
-                        <div className="mt-1">
-                          <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                            {gender}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                    <VoiceRoleActionStack className="top-1/2 flex-row -translate-y-1/2">
                       <VoiceRoleButton
                         isSelected={conversationVoiceId === voice.voice_id}
                         Icon={MessageCircle}
@@ -843,6 +840,21 @@ function VoicesPage() {
                           handleSetCookingVoice(voice.voice_id, voice.name);
                         }}
                       />
+                    </VoiceRoleActionStack>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <VoiceBadge n={i + 1} />
+                      <div className="min-w-0">
+                        <div className="truncate font-display text-base" title={displayLabel}>
+                          {voice.name}
+                        </div>
+                        <div className="mt-1">
+                          <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            {gender}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
                       {isLoadingPreview ? (
                         <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
                       ) : isPlayingPreview ? (
@@ -890,7 +902,9 @@ function VoicesPage() {
                   </details>
                 </div>
                 <div className="hidden rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:block">
-                  <p className="mb-1 font-medium text-foreground">{t("voices.samplePromptTitle")}</p>
+                  <p className="mb-1 font-medium text-foreground">
+                    {t("voices.samplePromptTitle")}
+                  </p>
                   <p className="break-words">{t("voices.samplePrompt")}</p>
                 </div>
               </div>

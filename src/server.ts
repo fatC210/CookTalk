@@ -95,8 +95,10 @@ async function proxyOpenAICompatibleRequest(request: Request): Promise<Response>
       body: requestBody,
       redirect: "follow",
     });
-  } catch {
-    return new Response("Upstream request failed", { status: 502 });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown error";
+    console.warn(`OpenAI-compatible proxy failed for ${targetUrl.origin}: ${detail}`);
+    return new Response(`Upstream request failed: ${detail}`, { status: 502 });
   }
 
   return new Response(response.body, {
@@ -135,8 +137,7 @@ async function fetchDuckDuckGoResults(query: string): Promise<WebRecipeSearchRes
   try {
     const response = await fetch(searchUrl, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CookTalk/1.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CookTalk/1.0",
         Accept: "text/html,application/xhtml+xml",
       },
       signal: controller.signal,
@@ -187,8 +188,7 @@ async function fetchBingResults(query: string): Promise<WebRecipeSearchResult[]>
   try {
     const response = await fetch(searchUrl, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CookTalk/1.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CookTalk/1.0",
         Accept: "text/html,application/xhtml+xml",
       },
       signal: controller.signal,

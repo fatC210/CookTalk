@@ -2,6 +2,7 @@ import { getApiKey } from "@/lib/crypto";
 import { type Recipe } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { getConfiguredLLMService } from "@/lib/llm";
+import i18n from "@/lib/i18n";
 import { claimVoicePlayback } from "@/lib/voice-playback";
 
 export type VoiceStatus =
@@ -126,7 +127,7 @@ export function stripWakeWords(text: string, wakeWords: string[]): string {
   }
   cleaned = cleaned
     .replace(
-      /^\s*(?:hey|hi|嘿|嗨)\s*(?:cook\s*talk|cooktalk|cook\s*top|cool\s*talk|could\s*talk|库克\s*(?:托克|talk)?|酷\s*talk|厨语)\s*/i,
+      /^\s*(?:hey|hi|he|嘿|嗨)\s*(?:cook\s*talk|cooktalk|cook\s*top|cool\s*talk|could\s*talk|库克\s*(?:托克|talk)?|酷\s*talk|厨语)\s*/i,
       "",
     )
     .replace(/^\s*(?:嘿|嗨)?\s*厨语\s*/i, "");
@@ -172,24 +173,38 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
   return { type: "qa" };
 }
 
-export async function transcribeWithElevenLabs(audioBlob: Blob): Promise<string> {
+type AppLanguage = "en" | "zh";
+
+function voiceText(language: AppLanguage, key: string, options?: Record<string, unknown>): string {
+  return i18n.t(key, { lng: language, ...options });
+}
+
+export async function transcribeWithElevenLabs(
+  audioBlob: Blob,
+  language: AppLanguage = "zh",
+): Promise<string> {
   const apiKey = await getApiKey("elevenlabs");
-  if (!apiKey) throw new Error("请先在设置里配置 ElevenLabs API Key");
+  if (!apiKey) throw new Error(voiceText(language, "voice.elevenLabsKeyRequiredShort"));
   return new ElevenLabsService(apiKey).speechToText(audioBlob);
 }
 
-export async function speakWithElevenLabs(text: string, voiceId?: string | null): Promise<void> {
-  const blob = await synthesizeWithElevenLabs(text, voiceId);
-  await playAudioBlob(blob);
+export async function speakWithElevenLabs(
+  text: string,
+  voiceId?: string | null,
+  language: AppLanguage = "zh",
+): Promise<void> {
+  const blob = await synthesizeWithElevenLabs(text, voiceId, language);
+  await playAudioBlob(blob, language);
 }
 
 export async function synthesizeWithElevenLabs(
   text: string,
   voiceId?: string | null,
+  language: AppLanguage = "zh",
 ): Promise<Blob> {
   const apiKey = await getApiKey("elevenlabs");
-  if (!apiKey) throw new Error("请先在设置里配置 ElevenLabs API Key");
-  if (!voiceId) throw new Error("请先在设置里选择音色");
+  if (!apiKey) throw new Error(voiceText(language, "voice.elevenLabsKeyRequiredShort"));
+  if (!voiceId) throw new Error(voiceText(language, "voice.voiceSelectRequired"));
 
   return new ElevenLabsService(apiKey).textToSpeech(text, voiceId);
 }
@@ -208,7 +223,10 @@ export async function answerCookingQuestion({
   const activeStep = recipe.steps[currentStep];
   const context = recipe.steps
     .map(
-      (step, index) => `${index + 1}. ${step.description}${step.tips ? ` 提示：${step.tips}` : ""}`,
+      (step, index) =>
+        `${index + 1}. ${step.description}${
+          step.tips ? (language === "zh" ? ` 提示：${step.tips}` : ` Tip: ${step.tips}`) : ""
+        }`,
     )
     .join("\n");
 
@@ -217,13 +235,20 @@ export async function answerCookingQuestion({
       {
         role: "system",
         content:
-          "你是 CookTalk 烹饪语音助手。用中文简短回答，优先结合当前菜谱、当前步骤、食材和计时信息。不要输出 Markdown。",
+          language === "zh"
+            ? "你是 CookTalk 烹饪语音助手。用中文简短回答，优先结合当前菜谱、当前步骤、食材和计时信息。不要输出 Markdown。"
+            : "You are CookTalk's cooking voice assistant. Answer briefly in English, prioritizing the current recipe, current step, ingredients, and timers. Do not output Markdown.",
       },
       {
         role: "user",
-        content: `菜谱：${recipe.title}\n当前步骤：第 ${currentStep + 1} 步，${activeStep?.description ?? ""}\n食材：${recipe.ingredients
-          .map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
-          .join("、")}\n全部步骤：\n${context}\n\n用户问题：${question}`,
+        content:
+          language === "zh"
+            ? `菜谱：${recipe.title}\n当前步骤：第 ${currentStep + 1} 步，${activeStep?.description ?? ""}\n食材：${recipe.ingredients
+                .map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
+                .join("、")}\n全部步骤：\n${context}\n\n用户问题：${question}`
+            : `Recipe: ${recipe.title}\nCurrent step: step ${currentStep + 1}, ${activeStep?.description ?? ""}\nIngredients: ${recipe.ingredients
+                .map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
+                .join(", ")}\nAll steps:\n${context}\n\nUser question: ${question}`,
       },
     ]);
   } catch {
@@ -295,7 +320,7 @@ function parseTimerLabel(text: string): string {
       "",
     )
     .trim();
-  return cleaned || "烹饪计时";
+  return cleaned;
 }
 
 function buildLocalCookingAnswer(
@@ -336,7 +361,7 @@ function buildLocalCookingAnswer(
       : "I will keep helping with the current recipe.";
 }
 
-function playAudioBlob(blob: Blob): Promise<void> {
+function playAudioBlob(blob: Blob, language: AppLanguage): Promise<void> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
@@ -360,11 +385,17 @@ function playAudioBlob(blob: Blob): Promise<void> {
     };
     audio.onerror = () => {
       playback?.release();
-      settle(() => reject(new Error("语音播放失败")));
+      settle(() => reject(new Error(voiceText(language, "voice.playbackFailed"))));
     };
     audio.play().catch((error: unknown) => {
       playback?.release();
-      settle(() => reject(error instanceof Error ? error : new Error("语音播放失败")));
+      settle(() =>
+        reject(
+          error instanceof Error
+            ? error
+            : new Error(voiceText(language, "voice.playbackFailed")),
+        ),
+      );
     });
   });
 }

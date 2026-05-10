@@ -24,6 +24,7 @@ import {
 import { db, deleteRecipe, type Recipe } from "@/lib/db";
 import { getApiKey } from "@/lib/crypto";
 import { DEFAULT_IMAGE_MODEL, ImageGenService, getConfiguredLLMService } from "@/lib/llm";
+import appI18n from "@/lib/i18n";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,8 +64,8 @@ export const Route = createFileRoute("/recipe-detail")({
   }),
   head: () => ({
     meta: [
-      { title: "Recipe Detail — CookTalk" },
-      { name: "description", content: "Recipe detail page." },
+      { title: appI18n.t("recipeDetail.metaTitle") },
+      { name: "description", content: appI18n.t("recipeDetail.metaDescription") },
     ],
   }),
   component: DetailPage,
@@ -147,6 +148,10 @@ function DetailPage() {
   const [editSteps, setEditSteps] = useState<EditStep[]>([createEmptyStep()]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+
+  useEffect(() => {
+    document.title = recipe?.title ? `${recipe.title} - CookTalk` : t("recipeDetail.metaTitle");
+  }, [recipe?.title, t, i18n.language]);
 
   const voiceOptions = useMemo<RecipeVoiceOption[]>(() => {
     const clonedVoices = liveClonedVoices ?? [];

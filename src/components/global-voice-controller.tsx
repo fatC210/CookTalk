@@ -1,10 +1,11 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useVoiceSession } from "@/hooks/use-voice-session";
-import { hasWakeWord, normalizeSpeechText } from "@/lib/voice-pipeline";
-import { useAppStore } from "@/stores/app-store";
+import { executeVoiceAction } from "@/lib/voice-actions";
+import { hasWakeWord, normalizeSpeechText, stripWakeWords } from "@/lib/voice-pipeline";
+import { getActiveWakeWords, useAppStore } from "@/stores/app-store";
 
 type NavigablePath = "/" | "/recipes" | "/import" | "/voices" | "/settings" | "/onboarding";
 
@@ -27,9 +28,15 @@ export function GlobalVoiceController() {
   const queueHomeAwake = useAppStore((s) => s.queueHomeAwake);
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const setListenMode = useAppStore((s) => s.setListenMode);
+  const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
 
   const enabled = pathname !== "/cook";
-  const activeListenMode = listenMode === "always" ? "always" : "wake-word";
+  const activeListenMode =
+    pathname === "/" && homeConversationActive
+      ? "always"
+      : listenMode === "always"
+        ? "always"
+        : "wake-word";
 
   const handleTranscript = useCallback(
     async (transcript: string) => {
@@ -60,11 +67,12 @@ export function GlobalVoiceController() {
         return;
       }
 
-      if (pathname !== "/" && hasWakeWord(transcript, wakeWords)) {
+      if (pathname !== "/" && hasWakeWord(transcript, activeWakeWords)) {
+        const commandText = stripWakeWords(transcript, activeWakeWords);
         queueHomeAwake({
           phrase: transcript,
           source: "wake-word",
-          transcript: text,
+          transcript: normalizeSpeechText(commandText),
         });
         void navigate({ to: "/" });
         return;
@@ -74,6 +82,12 @@ export function GlobalVoiceController() {
       if (intent) {
         await navigate({ to: intent.path });
         toast.success(`${t("voice.opened")} ${intent.label}`);
+        return;
+      }
+
+      const action = executeVoiceAction(transcript);
+      if (action.handled) {
+        toast.success(`${t("voice.opened")} ${action.label}`);
         return;
       }
 
@@ -88,21 +102,42 @@ export function GlobalVoiceController() {
 
       toast.info(t("voice.unhandled"));
     },
-    [navigate, pathname, pendingHomeAwake, queueHomeAwake, setListenMode, t, toggleVoiceBadges, wakeWords],
+    [
+      navigate,
+      pathname,
+      pendingHomeAwake,
+      queueHomeAwake,
+      setListenMode,
+      t,
+      toggleVoiceBadges,
+      activeWakeWords,
+    ],
   );
 
   const voiceSession = useVoiceSession({
     enabled,
-    wakeWords,
+    wakeWords: activeWakeWords,
     language,
     listenMode: activeListenMode,
     manualWakeActive,
     awakeResetKey: pathname,
-    preserveWakeWordsInTranscript: pathname === "/" && homeConversationActive,
-    suppressPureWakeWordTranscript: !(pathname === "/" && homeConversationActive),
     onWake: (event) => {
       clearManualWake();
       if (event.source === "always-listen") return;
+      if (event.source === "manual") {
+        if (pathname === "/") {
+          window.dispatchEvent(
+            new CustomEvent("cooktalk:home-awake", {
+              detail: {
+                phrase: event.phrase,
+                source: event.source,
+                transcript: event.transcript ?? "",
+              },
+            }),
+          );
+        }
+        return;
+      }
 
       if (pathname !== "/") {
         queueHomeAwake({
@@ -113,6 +148,8 @@ export function GlobalVoiceController() {
         void navigate({ to: "/" });
         return;
       }
+
+      if (event.transcript?.trim()) return;
 
       window.dispatchEvent(
         new CustomEvent("cooktalk:home-awake", {

@@ -24,10 +24,11 @@ import {
   type VoiceStatus,
 } from "@/lib/voice-pipeline";
 import { db, type Recipe } from "@/lib/db";
+import i18n from "@/lib/i18n";
 import { stopActiveVoicePlayback } from "@/lib/voice-playback";
 import { useVoiceSession } from "@/hooks/use-voice-session";
 import { useTimers, type TimerInfo } from "@/hooks/use-timers";
-import { useAppStore } from "@/stores/app-store";
+import { getActiveWakeWords, useAppStore } from "@/stores/app-store";
 import { useCookingStore } from "@/stores/cooking-store";
 
 export const Route = createFileRoute("/cook")({
@@ -37,8 +38,8 @@ export const Route = createFileRoute("/cook")({
   }),
   head: () => ({
     meta: [
-      { title: "Cooking - CookTalk" },
-      { name: "description", content: "Full-screen, hands-free cooking mode." },
+      { title: i18n.t("cook.metaTitle") },
+      { name: "description", content: i18n.t("cook.metaDescription") },
     ],
   }),
   component: CookPage,
@@ -108,6 +109,11 @@ function CookPage() {
   const stepNumber = safeStep + 1;
   const stepCount = recipeStepCount;
   const resolvedVoiceId = recipe?.voiceId ?? cookingVoiceId ?? undefined;
+  const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
+
+  useEffect(() => {
+    document.title = t("cook.metaTitle");
+  }, [t, language]);
 
   const handleClose = useCallback(() => {
     stopActiveVoicePlayback();
@@ -132,7 +138,7 @@ function CookPage() {
       setIsSpeaking(true);
       setVoiceError(null);
       try {
-        await speakWithElevenLabs(text, resolvedVoiceId);
+        await speakWithElevenLabs(text, resolvedVoiceId, language);
       } catch (error) {
         const message = error instanceof Error ? error.message : t("cook.speechFailed");
         setVoiceError(message);
@@ -141,7 +147,7 @@ function CookPage() {
         setIsSpeaking(false);
       }
     },
-    [hasElevenLabsKey, resolvedVoiceId, t],
+    [hasElevenLabsKey, language, resolvedVoiceId, t],
   );
 
   const announceCurrentStep = useCallback(
@@ -323,7 +329,7 @@ function CookPage() {
 
   const voiceSession = useVoiceSession({
     enabled: recipe !== null && recipe !== undefined,
-    wakeWords,
+    wakeWords: activeWakeWords,
     language,
     listenMode,
     manualWakeActive,
@@ -620,7 +626,7 @@ function CookPage() {
                         }}
                         className="mt-1 rounded-full border border-border px-3 py-1 text-xs hover:bg-foreground hover:text-background"
                       >
-                        Cancel
+                        {t("cook.cancel").replaceAll('"', "")}
                       </button>
                     </div>
                   </div>

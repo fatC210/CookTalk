@@ -79,7 +79,7 @@ export function SiteHeader() {
             className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent bg-transparent transition-colors hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border md:hidden"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-expanded={mobileOpen}
-            aria-label={mobileOpen ? "收起菜单" : "展开菜单"}
+            aria-label={mobileOpen ? t("nav.closeMenu") : t("nav.openMenu")}
           >
             {mobileOpen ? (
               <X className="h-4 w-4" strokeWidth={1.75} />

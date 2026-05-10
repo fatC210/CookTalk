@@ -37,7 +37,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { storeApiKey, getApiKey, removeApiKey } from "@/lib/crypto";
-import { useAppStore } from "@/stores/app-store";
+import { isBuiltInWakeWord, useAppStore } from "@/stores/app-store";
 import { db } from "@/lib/db";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "react-i18next";
@@ -51,15 +51,15 @@ import {
   validateOpenAIModelConfig,
 } from "@/lib/llm";
 import { ElevenLabsService } from "@/lib/elevenlabs";
-import { useElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
+import { getSupportedElevenLabsVoices, useElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings - CookTalk" },
+      { title: `${i18n.t("settings.title")} - CookTalk` },
       {
         name: "description",
-        content: "Configure API keys, voice wake-words, language, theme, and data - all by voice.",
+        content: i18n.t("settings.metaDescription"),
       },
     ],
   }),
@@ -384,6 +384,10 @@ function SettingsPage() {
     setCookingVoiceId,
   } = useAppStore();
 
+  useEffect(() => {
+    document.title = `${t("settings.title")} - CookTalk`;
+  }, [t, language]);
+
   const [elevenLabsVoiceRefreshKey, setElevenLabsVoiceRefreshKey] = useState(0);
   const {
     options: elevenLabsVoiceOptions,
@@ -466,7 +470,7 @@ function SettingsPage() {
         imageModel: im ?? "",
       };
       lastSavedApiValuesRef.current = initialApiValues;
-      lastValidatedApiValuesRef.current = initialApiValues;
+      lastValidatedApiValuesRef.current = null;
       setHasElevenLabsKey(!!el);
       setHasLlmKey(!!lk);
       setHasImageGenKey(!!ik);
@@ -662,15 +666,22 @@ function SettingsPage() {
           };
 
           if (group === "elevenlabs") {
-            const isValid = await new ElevenLabsService(currentValues.elevenLabsKey).validateKey();
+            const elevenLabs = new ElevenLabsService(currentValues.elevenLabsKey);
+            const isValid = await elevenLabs.validateKey();
             if (!isValid) {
               toast.error(t("settings.apiKeys.elevenlabsValidationFailed"));
               return;
             }
 
+            const defaultVoice = getSupportedElevenLabsVoices(
+              await elevenLabs.listVoices({ showLegacy: true }),
+            )[0];
+
             await persistApiGroupValues(group, currentValues);
             nextValidatedValues.elevenLabsKey = currentValues.elevenLabsKey;
             setHasElevenLabsKey(true);
+            setConversationVoiceId(defaultVoice?.voice_id ?? null);
+            setCookingVoiceId(defaultVoice?.voice_id ?? null);
             setElevenLabsVoiceRefreshKey((key) => key + 1);
           }
 
@@ -741,6 +752,8 @@ function SettingsPage() {
       llmModel,
       markApiGroupNeedsValidation,
       persistApiGroupValues,
+      setConversationVoiceId,
+      setCookingVoiceId,
       setHasElevenLabsKey,
       setHasImageGenKey,
       setHasLlmKey,
@@ -763,6 +776,7 @@ function SettingsPage() {
 
   // 鈹€鈹€ Wake word input 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const [newWakeWord, setNewWakeWord] = useState("");
+  const visibleWakeWords = wakeWords.filter((word) => !isBuiltInWakeWord(word));
 
   const handleAddWakeWord = () => {
     const word = newWakeWord.trim();
@@ -1002,7 +1016,7 @@ function SettingsPage() {
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {wakeWords.map((w) => (
+                          {visibleWakeWords.map((w) => (
                             <span
                               key={w}
                               className="inline-flex items-center gap-1 rounded-full bg-foreground px-3 py-1.5 text-xs text-background"

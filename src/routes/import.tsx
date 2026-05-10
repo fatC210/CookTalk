@@ -23,11 +23,13 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
+import type { TFunction } from "i18next";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { DEFAULT_IMAGE_MODEL, ImageGenService, getConfiguredLLMService } from "@/lib/llm";
 import { getApiKey } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import type { Recipe } from "@/lib/db";
+import i18n from "@/lib/i18n";
 import { speakWithElevenLabs, transcribeWithElevenLabs } from "@/lib/voice-pipeline";
 import {
   Select,
@@ -52,11 +54,10 @@ import { useAppStore } from "@/stores/app-store";
 export const Route = createFileRoute("/import")({
   head: () => ({
     meta: [
-      { title: "Import - CookTalk" },
+      { title: i18n.t("import.metaTitle") },
       {
         name: "description",
-        content:
-          "Import a cooking video or type a recipe manually, then save it into your recipe library.",
+        content: i18n.t("import.metaDescription"),
       },
     ],
   }),
@@ -174,6 +175,21 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatImportError(err: unknown, fallback: string, t: TFunction): string {
+  const rawMessage = err instanceof Error ? err.message.trim() : "";
+  if (!rawMessage) return fallback;
+
+  if (/LLM request timed out/i.test(rawMessage)) {
+    return t("import.llmTimeout");
+  }
+
+  if (/LLM failed:\s*502|Upstream request failed|fetch failed/i.test(rawMessage)) {
+    return t("import.llmConnectionFailed", { detail: rawMessage });
+  }
+
+  return rawMessage;
+}
+
 function parsePositiveInt(value: string): number | undefined {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
@@ -239,6 +255,11 @@ function ImportPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const conversationVoiceId = useAppStore((s) => s.conversationVoiceId);
+  const language = useAppStore((s) => s.language);
+
+  useEffect(() => {
+    document.title = t("import.metaTitle");
+  }, [t, language]);
 
   const [mode, setMode] = useState<ImportMode>("video");
   const [isDragging, setIsDragging] = useState(false);
@@ -347,14 +368,13 @@ function ImportPage() {
 
   const removeEditIngredient = (index: number) => {
     setEditIngredients((current) =>
-      current.length > 1 ? current.filter((_, itemIndex) => itemIndex !== index) : [createEmptyIngredient()],
+      current.length > 1
+        ? current.filter((_, itemIndex) => itemIndex !== index)
+        : [createEmptyIngredient()],
     );
   };
 
-  const updateEditStep = (
-    index: number,
-    patch: Partial<StructuredRecipe["steps"][number]>,
-  ) => {
+  const updateEditStep = (index: number, patch: Partial<StructuredRecipe["steps"][number]>) => {
     setEditSteps((current) =>
       current.map((item, itemIndex) =>
         itemIndex === index ? { ...item, ...patch, order: itemIndex + 1 } : item,
@@ -532,7 +552,7 @@ function ImportPage() {
     setFollowUpStatus("speaking");
 
     try {
-      await speakWithElevenLabs(question.question, conversationVoiceId);
+      await speakWithElevenLabs(question.question, conversationVoiceId, language);
     } catch (err) {
       console.warn("Follow-up voice prompt failed:", err);
       toast.warning(t("import.followUpVoiceWarning"));
@@ -594,12 +614,11 @@ function ImportPage() {
 
         setFollowUpStatus("transcribing");
         try {
-          const answer = (await transcribeWithElevenLabs(audioBlob)).trim();
+          const answer = (await transcribeWithElevenLabs(audioBlob, language)).trim();
           setFollowUpInput(answer);
           toast.success(t("import.followUpTranscriptReady"));
         } catch (err) {
-          const message =
-            err instanceof Error ? err.message : t("import.followUpTranscribeFailed");
+          const message = err instanceof Error ? err.message : t("import.followUpTranscribeFailed");
           setFollowUpError(message);
           toast.error(message);
         } finally {
@@ -630,7 +649,10 @@ function ImportPage() {
     try {
       const llmService = await getConfiguredLLMService();
       const nextRecipe = llmService
-        ? ((await llmService.refineRecipeWithAnswers(structuredRecipe, answers)) as StructuredRecipe)
+        ? ((await llmService.refineRecipeWithAnswers(
+            structuredRecipe,
+            answers,
+          )) as StructuredRecipe)
         : buildFallbackRefinedRecipe(structuredRecipe, answers);
 
       syncRecipeEditor(nextRecipe);
@@ -752,7 +774,7 @@ function ImportPage() {
 
       setStage("preview");
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("import.pipelineFailed");
+      const message = formatImportError(err, t("import.pipelineFailed"), t);
       setError(message);
       setStage("error");
       toast.error(message);
@@ -923,7 +945,7 @@ function ImportPage() {
       setManualTextImportStatus("idle");
       toast.success(t("import.manualTextStructured"));
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("import.manualTextStructureFailed");
+      const message = formatImportError(err, t("import.manualTextStructureFailed"), t);
       setManualTextImportStatus("idle");
       setManualTextImportError(message);
       toast.error(message);
@@ -1061,12 +1083,7 @@ function ImportPage() {
     void askFollowUpQuestion(0);
   }, [stage, structuredRecipe, followUpStarted]);
 
-  const isRunning = [
-    "transcribing",
-    "structuring",
-    "generating-cover",
-    "saving",
-  ].includes(stage);
+  const isRunning = ["transcribing", "structuring", "generating-cover", "saving"].includes(stage);
   const activeIdx = stageToIndex[stage];
   const previewRecipe = structuredRecipe
     ? {
@@ -1084,9 +1101,7 @@ function ImportPage() {
   const guidedStepIndex =
     stage === "idle"
       ? 0
-      : stage === "transcribing" ||
-          stage === "structuring" ||
-          stage === "error"
+      : stage === "transcribing" || stage === "structuring" || stage === "error"
         ? 1
         : !previewRecipe || !followUpCompleted
           ? 2
@@ -1230,7 +1245,9 @@ function ImportPage() {
                 <>
                   <div
                     className={`relative rounded-[2rem] border-2 border-dashed p-6 text-center transition-colors sm:p-14 ${
-                      isDragging ? "border-clay bg-clay/5" : "border-border bg-card hover:border-clay/60"
+                      isDragging
+                        ? "border-clay bg-clay/5"
+                        : "border-border bg-card hover:border-clay/60"
                     }`}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
@@ -1272,7 +1289,9 @@ function ImportPage() {
                         <p className="mt-6 text-sm font-medium leading-tight text-foreground sm:text-base">
                           {t("import.dropMedia")}
                         </p>
-                        <p className="mt-2 text-sm text-muted-foreground">{t("import.orClickBrowse")}</p>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {t("import.orClickBrowse")}
+                        </p>
                         <button
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
                           onClick={(e) => {
@@ -1289,40 +1308,40 @@ function ImportPage() {
                       <VoiceHint>{t("import.orSaySelect")}</VoiceHint>
                     </div>
                   </div>
-
                 </>
               )}
 
-              {mode === "video" &&
-                (stage === "transcribing" || stage === "structuring") && (
-                  <div className="rounded-[2rem] border border-border bg-card p-8 text-center sm:p-12">
-                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-foreground/30 bg-background">
-                      <Loader2 className="h-9 w-9 animate-spin" strokeWidth={1.25} />
-                    </div>
-                    <span className="mt-6 inline-block text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                      {t("import.guided.step2Label")}
-                    </span>
-                    <h3 className="mt-2 font-display text-2xl sm:text-3xl">
-                      {stageLabelKeys[stage] ? t(stageLabelKeys[stage]) : ""}
-                    </h3>
-                    <p className="mt-2 text-sm text-muted-foreground">{selectedMediaFile?.name}</p>
-                    <div className="mt-8 flex justify-center gap-2">
-                      {[0, 1, 2].map((i) => (
-                        <div
-                          key={i}
-                          className={`h-2 w-16 rounded-full ${i <= activeIdx ? "bg-clay" : "bg-border"}`}
-                        />
-                      ))}
-                    </div>
+              {mode === "video" && (stage === "transcribing" || stage === "structuring") && (
+                <div className="rounded-[2rem] border border-border bg-card p-8 text-center sm:p-12">
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-foreground/30 bg-background">
+                    <Loader2 className="h-9 w-9 animate-spin" strokeWidth={1.25} />
                   </div>
-                )}
+                  <span className="mt-6 inline-block text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                    {t("import.guided.step2Label")}
+                  </span>
+                  <h3 className="mt-2 font-display text-2xl sm:text-3xl">
+                    {stageLabelKeys[stage] ? t(stageLabelKeys[stage]) : ""}
+                  </h3>
+                  <p className="mt-2 text-sm text-muted-foreground">{selectedMediaFile?.name}</p>
+                  <div className="mt-8 flex justify-center gap-2">
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        className={`h-2 w-16 rounded-full ${i <= activeIdx ? "bg-clay" : "bg-border"}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {mode === "video" && stage === "error" && (
                 <div className="rounded-[2rem] border border-destructive/40 bg-destructive/5 p-8 text-center sm:p-12">
                   <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-destructive/30">
                     <XCircle className="h-9 w-9 text-destructive" strokeWidth={1.25} />
                   </div>
-                  <h3 className="mt-6 font-display text-2xl text-destructive sm:text-3xl">{t("import.failed")}</h3>
+                  <h3 className="mt-6 font-display text-2xl text-destructive sm:text-3xl">
+                    {t("import.failed")}
+                  </h3>
                   <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">{error}</p>
                   <button
                     className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
@@ -1340,7 +1359,9 @@ function ImportPage() {
                       <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
                         {t("import.guided.step3Label")}
                       </span>
-                      <h3 className="mt-2 font-display text-2xl sm:text-3xl">{t("import.guided.step3Title")}</h3>
+                      <h3 className="mt-2 font-display text-2xl sm:text-3xl">
+                        {t("import.guided.step3Title")}
+                      </h3>
                     </div>
                     <span className="inline-flex items-center gap-2 rounded-full border border-clay/25 bg-clay/10 px-4 py-2 text-xs text-clay">
                       <MessageCircleMore className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -1349,179 +1370,219 @@ function ImportPage() {
                   </div>
 
                   <div className="mt-8 rounded-[1.75rem] border border-border bg-background/70 p-5 sm:p-6">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                            {t("import.transcriptionPreview")}
-                          </div>
-                          <h4 className="mt-2 break-words font-display text-2xl sm:text-3xl">{previewRecipe.title}</h4>
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                          {t("import.transcriptionPreview")}
                         </div>
-                        <span className="inline-flex items-center gap-1.5 rounded-full border border-clay/25 bg-clay/10 px-3 py-1.5 text-xs text-clay">
-                          <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
-                          {t("import.followUpPending")}
+                        <h4 className="mt-2 break-words font-display text-2xl sm:text-3xl">
+                          {previewRecipe.title}
+                        </h4>
+                      </div>
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-clay/25 bg-clay/10 px-3 py-1.5 text-xs text-clay">
+                        <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        {t("import.followUpPending")}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {previewRecipe.tags.cuisine && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {previewRecipe.tags.cuisine}
+                        </span>
+                      )}
+                      {previewRecipe.tags.difficulty && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {t(`recipes.difficulty.${previewRecipe.tags.difficulty}`)}
+                        </span>
+                      )}
+                      {previewRecipe.tags.totalTimeMin && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {t("recipes.minutes", { count: previewRecipe.tags.totalTimeMin })}
+                        </span>
+                      )}
+                      {previewRecipe.tags.servings && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {t("recipeDetail.serves", { count: previewRecipe.tags.servings })}
+                        </span>
+                      )}
+                      {previewRecipe.tags.spiceLevel && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {previewRecipe.tags.spiceLevel}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-5 grid gap-4 md:grid-cols-2">
+                      <label className="space-y-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t("import.manualDifficulty")}
+                        </span>
+                        <Select
+                          value={editDifficulty || EMPTY_MANUAL_DIFFICULTY_VALUE}
+                          onValueChange={(value) =>
+                            setEditDifficulty(
+                              value === EMPTY_MANUAL_DIFFICULTY_VALUE
+                                ? ""
+                                : (value as ManualDifficulty),
+                            )
+                          }
+                        >
+                          <SelectTrigger className="h-11 rounded-2xl border-border bg-background text-sm">
+                            <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={EMPTY_MANUAL_DIFFICULTY_VALUE}>
+                              {t("import.manualDifficultyPlaceholder")}
+                            </SelectItem>
+                            <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
+                            <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
+                            <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <label className="space-y-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t("import.manualTotalTime")}
+                        </span>
+                        <input
+                          className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
+                          value={editTotalTime}
+                          onChange={(e) => setEditTotalTime(e.target.value)}
+                          placeholder={t("import.manualTotalTimePlaceholder")}
+                          inputMode="numeric"
+                        />
+                      </label>
+                    </div>
+
+                    {previewRecipe.tags.notes && (
+                      <div className="mt-6 rounded-2xl border border-clay/20 bg-clay/8 p-4">
+                        <div className="text-xs uppercase tracking-[0.18em] text-clay">
+                          {t("import.followUp.notesLabel")}
+                        </div>
+                        <p className="mt-2 text-sm text-foreground/85">
+                          {previewRecipe.tags.notes}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="mt-8">
+                      <div className="flex items-center justify-between gap-3">
+                        <h5 className="text-sm font-medium">{t("import.manualIngredients")}</h5>
+                        <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                          {previewRecipe.ingredients.length}
                         </span>
                       </div>
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {previewRecipe.tags.cuisine && <span className="rounded-full border border-border px-3 py-1 text-xs">{previewRecipe.tags.cuisine}</span>}
-                        {previewRecipe.tags.difficulty && <span className="rounded-full border border-border px-3 py-1 text-xs">{t(`recipes.difficulty.${previewRecipe.tags.difficulty}`)}</span>}
-                        {previewRecipe.tags.totalTimeMin && <span className="rounded-full border border-border px-3 py-1 text-xs">{t("recipes.minutes", { count: previewRecipe.tags.totalTimeMin })}</span>}
-                        {previewRecipe.tags.servings && <span className="rounded-full border border-border px-3 py-1 text-xs">{t("recipeDetail.serves", { count: previewRecipe.tags.servings })}</span>}
-                        {previewRecipe.tags.spiceLevel && <span className="rounded-full border border-border px-3 py-1 text-xs">{previewRecipe.tags.spiceLevel}</span>}
-                      </div>
-
-                      <div className="mt-5 grid gap-4 md:grid-cols-2">
-                        <label className="space-y-2">
-                          <span className="text-xs font-medium text-muted-foreground">{t("import.manualDifficulty")}</span>
-                          <Select
-                            value={editDifficulty || EMPTY_MANUAL_DIFFICULTY_VALUE}
-                            onValueChange={(value) =>
-                              setEditDifficulty(
-                                value === EMPTY_MANUAL_DIFFICULTY_VALUE
-                                  ? ""
-                                  : (value as ManualDifficulty),
-                              )
-                            }
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
+                        {previewRecipe.ingredients.map((ingredient, index) => (
+                          <div
+                            key={`${ingredient.name}-${index}`}
+                            className="rounded-2xl border border-border bg-background px-3 py-3"
                           >
-                            <SelectTrigger className="h-11 rounded-2xl border-border bg-background text-sm">
-                              <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={EMPTY_MANUAL_DIFFICULTY_VALUE}>
-                                {t("import.manualDifficultyPlaceholder")}
-                              </SelectItem>
-                              <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
-                              <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
-                              <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </label>
-
-                        <label className="space-y-2">
-                          <span className="text-xs font-medium text-muted-foreground">{t("import.manualTotalTime")}</span>
-                          <input
-                            className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
-                            value={editTotalTime}
-                            onChange={(e) => setEditTotalTime(e.target.value)}
-                            placeholder={t("import.manualTotalTimePlaceholder")}
-                            inputMode="numeric"
-                          />
-                        </label>
-                      </div>
-
-                      {previewRecipe.tags.notes && (
-                        <div className="mt-6 rounded-2xl border border-clay/20 bg-clay/8 p-4">
-                          <div className="text-xs uppercase tracking-[0.18em] text-clay">{t("import.followUp.notesLabel")}</div>
-                          <p className="mt-2 text-sm text-foreground/85">{previewRecipe.tags.notes}</p>
-                        </div>
-                      )}
-
-                      <div className="mt-8">
-                        <div className="flex items-center justify-between gap-3">
-                          <h5 className="text-sm font-medium">{t("import.manualIngredients")}</h5>
-                          <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
-                            {previewRecipe.ingredients.length}
-                          </span>
-                        </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
-                          {previewRecipe.ingredients.map((ingredient, index) => (
-                            <div
-                              key={`${ingredient.name}-${index}`}
-                              className="rounded-2xl border border-border bg-background px-3 py-3"
-                            >
-                              <div className="grid gap-2">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                                    {t("import.manualIngredients")}
-                                  </span>
-                                  <button
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
-                                    onClick={() => removeEditIngredient(index)}
-                                    type="button"
-                                  >
-                                    <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                                  </button>
-                                </div>
-                                <input
-                                  className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
-                                  value={editIngredients[index]?.name ?? ""}
-                                  onChange={(e) => updateEditIngredient(index, { name: e.target.value })}
-                                  placeholder={t("import.manualIngredientName")}
-                                />
-                                <input
-                                  className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
-                                  value={editIngredients[index]?.amount ?? ""}
-                                  onChange={(e) => updateEditIngredient(index, { amount: e.target.value })}
-                                  placeholder={t("import.manualIngredientAmount")}
-                                />
+                            <div className="grid gap-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                                  {t("import.manualIngredients")}
+                                </span>
+                                <button
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
+                                  onClick={() => removeEditIngredient(index)}
+                                  type="button"
+                                >
+                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                </button>
                               </div>
+                              <input
+                                className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
+                                value={editIngredients[index]?.name ?? ""}
+                                onChange={(e) =>
+                                  updateEditIngredient(index, { name: e.target.value })
+                                }
+                                placeholder={t("import.manualIngredientName")}
+                              />
+                              <input
+                                className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
+                                value={editIngredients[index]?.amount ?? ""}
+                                onChange={(e) =>
+                                  updateEditIngredient(index, { amount: e.target.value })
+                                }
+                                placeholder={t("import.manualIngredientAmount")}
+                              />
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        className="mt-3 inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
+                        onClick={addEditIngredient}
+                        type="button"
+                      >
+                        <Plus className="h-4 w-4" strokeWidth={1.75} />
+                        {t("import.manualAddIngredient")}
+                      </button>
+                    </div>
+
+                    <div className="mt-8">
+                      <div className="flex items-center justify-between gap-3">
+                        <h5 className="text-sm font-medium">{t("import.manualSteps")}</h5>
                         <button
-                          className="mt-3 inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
-                          onClick={addEditIngredient}
+                          className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
+                          onClick={addEditStep}
                           type="button"
                         >
                           <Plus className="h-4 w-4" strokeWidth={1.75} />
-                          {t("import.manualAddIngredient")}
+                          {t("import.manualAddStep")}
                         </button>
                       </div>
-
-                      <div className="mt-8">
-                        <div className="flex items-center justify-between gap-3">
-                          <h5 className="text-sm font-medium">{t("import.manualSteps")}</h5>
-                          <button
-                            className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
-                            onClick={addEditStep}
-                            type="button"
+                      <div className="mt-3 space-y-2">
+                        {previewRecipe.steps.map((step, index) => (
+                          <div
+                            key={index}
+                            className="flex items-start gap-3 rounded-2xl border border-border bg-background p-4"
                           >
-                            <Plus className="h-4 w-4" strokeWidth={1.75} />
-                            {t("import.manualAddStep")}
-                          </button>
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          {previewRecipe.steps.map((step, index) => (
-                            <div key={index} className="flex items-start gap-3 rounded-2xl border border-border bg-background p-4">
-                              <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-foreground/40 font-display text-xs">
-                                {index + 1}
-                              </span>
-                              <div className="flex-1 space-y-3">
-                                <div className="flex justify-end">
-                                  <button
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
-                                    onClick={() => removeEditStep(index)}
-                                    type="button"
-                                  >
-                                    <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                                  </button>
-                                </div>
-                                <textarea
-                                  className="min-h-[88px] w-full resize-none rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus:border-clay"
-                                  value={editSteps[index]?.description ?? ""}
-                                  rows={3}
-                                  onChange={(e) =>
-                                    updateEditStep(index, { description: e.target.value })
-                                  }
-                                  placeholder={t("import.manualStepDescription")}
-                                />
-                                <input
-                                  className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
-                                  value={editSteps[index]?.tips ?? ""}
-                                  onChange={(e) => updateEditStep(index, { tips: e.target.value })}
-                                  placeholder={t("import.manualStepTips")}
-                                />
+                            <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-foreground/40 font-display text-xs">
+                              {index + 1}
+                            </span>
+                            <div className="flex-1 space-y-3">
+                              <div className="flex justify-end">
+                                <button
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
+                                  onClick={() => removeEditStep(index)}
+                                  type="button"
+                                >
+                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                </button>
                               </div>
+                              <textarea
+                                className="min-h-[88px] w-full resize-none rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus:border-clay"
+                                value={editSteps[index]?.description ?? ""}
+                                rows={3}
+                                onChange={(e) =>
+                                  updateEditStep(index, { description: e.target.value })
+                                }
+                                placeholder={t("import.manualStepDescription")}
+                              />
+                              <input
+                                className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
+                                value={editSteps[index]?.tips ?? ""}
+                                onChange={(e) => updateEditStep(index, { tips: e.target.value })}
+                                placeholder={t("import.manualStepTips")}
+                              />
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        ))}
                       </div>
+                    </div>
 
-                      <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                        <button className="w-full rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto" onClick={resetVideoDraft}>
-                          {t("import.startOver")}
-                        </button>
-                      </div>
+                    <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                      <button
+                        className="w-full rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
+                        onClick={resetVideoDraft}
+                      >
+                        {t("import.startOver")}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1534,8 +1595,12 @@ function ImportPage() {
                         <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
                           {t("import.guided.step4Label")}
                         </span>
-                        <h3 className="mt-2 font-display text-2xl sm:text-3xl">{t("import.readyToSave")}</h3>
-                        <p className="mt-2 text-sm text-muted-foreground">{t("import.step4Helper")}</p>
+                        <h3 className="mt-2 font-display text-2xl sm:text-3xl">
+                          {t("import.readyToSave")}
+                        </h3>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {t("import.step4Helper")}
+                        </p>
                       </div>
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-clay/25 bg-clay/10 px-3 py-1.5 text-xs text-clay">
                         <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -1550,17 +1615,41 @@ function ImportPage() {
                     />
 
                     <div className="mt-4 flex flex-wrap gap-2">
-                      {previewRecipe.tags.cuisine && <span className="rounded-full border border-border px-3 py-1 text-xs">{previewRecipe.tags.cuisine}</span>}
-                      {previewRecipe.tags.difficulty && <span className="rounded-full border border-border px-3 py-1 text-xs">{t(`recipes.difficulty.${previewRecipe.tags.difficulty}`)}</span>}
-                      {previewRecipe.tags.totalTimeMin && <span className="rounded-full border border-border px-3 py-1 text-xs">{t("recipes.minutes", { count: previewRecipe.tags.totalTimeMin })}</span>}
-                      {previewRecipe.tags.servings && <span className="rounded-full border border-border px-3 py-1 text-xs">{t("recipeDetail.serves", { count: previewRecipe.tags.servings })}</span>}
-                      {previewRecipe.tags.spiceLevel && <span className="rounded-full border border-border px-3 py-1 text-xs">{previewRecipe.tags.spiceLevel}</span>}
+                      {previewRecipe.tags.cuisine && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {previewRecipe.tags.cuisine}
+                        </span>
+                      )}
+                      {previewRecipe.tags.difficulty && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {t(`recipes.difficulty.${previewRecipe.tags.difficulty}`)}
+                        </span>
+                      )}
+                      {previewRecipe.tags.totalTimeMin && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {t("recipes.minutes", { count: previewRecipe.tags.totalTimeMin })}
+                        </span>
+                      )}
+                      {previewRecipe.tags.servings && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {t("recipeDetail.serves", { count: previewRecipe.tags.servings })}
+                        </span>
+                      )}
+                      {previewRecipe.tags.spiceLevel && (
+                        <span className="rounded-full border border-border px-3 py-1 text-xs">
+                          {previewRecipe.tags.spiceLevel}
+                        </span>
+                      )}
                     </div>
 
                     {previewRecipe.tags.notes && (
                       <div className="mt-6 rounded-2xl border border-clay/20 bg-clay/8 p-4">
-                        <div className="text-xs uppercase tracking-[0.18em] text-clay">{t("import.followUp.notesLabel")}</div>
-                        <p className="mt-2 text-sm text-foreground/85">{previewRecipe.tags.notes}</p>
+                        <div className="text-xs uppercase tracking-[0.18em] text-clay">
+                          {t("import.followUp.notesLabel")}
+                        </div>
+                        <p className="mt-2 text-sm text-foreground/85">
+                          {previewRecipe.tags.notes}
+                        </p>
                       </div>
                     )}
 
@@ -1573,18 +1662,25 @@ function ImportPage() {
                       </div>
                       <div className="mt-3 space-y-2">
                         {previewRecipe.ingredients.map((ingredient, index) => (
-                          <div key={`${ingredient.name}-${index}`} className="rounded-2xl border border-border bg-background p-3">
+                          <div
+                            key={`${ingredient.name}-${index}`}
+                            className="rounded-2xl border border-border bg-background p-3"
+                          >
                             <div className="grid gap-2 sm:grid-cols-[1fr_180px_auto]">
                               <input
                                 className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.name ?? ""}
-                                onChange={(e) => updateEditIngredient(index, { name: e.target.value })}
+                                onChange={(e) =>
+                                  updateEditIngredient(index, { name: e.target.value })
+                                }
                                 placeholder={t("import.manualIngredientName")}
                               />
                               <input
                                 className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.amount ?? ""}
-                                onChange={(e) => updateEditIngredient(index, { amount: e.target.value })}
+                                onChange={(e) =>
+                                  updateEditIngredient(index, { amount: e.target.value })
+                                }
                                 placeholder={t("import.manualIngredientAmount")}
                               />
                               <button
@@ -1604,7 +1700,10 @@ function ImportPage() {
                       <h5 className="text-sm font-medium">{t("import.manualSteps")}</h5>
                       <div className="mt-3 space-y-2">
                         {previewRecipe.steps.map((step, index) => (
-                          <div key={index} className="flex items-start gap-3 rounded-2xl border border-border bg-background p-4">
+                          <div
+                            key={index}
+                            className="flex items-start gap-3 rounded-2xl border border-border bg-background p-4"
+                          >
                             <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-foreground/40 font-display text-xs">
                               {index + 1}
                             </span>
@@ -1613,7 +1712,9 @@ function ImportPage() {
                                 className="min-h-[88px] w-full resize-none rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus:border-clay"
                                 value={editSteps[index]?.description ?? ""}
                                 rows={3}
-                                onChange={(e) => updateEditStep(index, { description: e.target.value })}
+                                onChange={(e) =>
+                                  updateEditStep(index, { description: e.target.value })
+                                }
                               />
                               <div className="flex gap-3">
                                 <input
@@ -1637,101 +1738,115 @@ function ImportPage() {
                     </div>
 
                     <div className="mt-8 flex flex-wrap gap-3">
-                      <button className="rounded-full border border-border px-5 py-3 text-sm hover:border-foreground" onClick={resetVideoDraft}>
+                      <button
+                        className="rounded-full border border-border px-5 py-3 text-sm hover:border-foreground"
+                        onClick={resetVideoDraft}
+                      >
                         {t("import.startOver")}
                       </button>
                     </div>
                   </div>
 
                   <div className="rounded-[2rem] border border-border bg-card p-6 sm:p-8">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                            {t("import.guided.step4Label")}
-                          </span>
-                          <h3 className="mt-2 font-display text-2xl sm:text-3xl">{t("import.coverStepTitle")}</h3>
-                          <p className="mt-2 text-sm text-muted-foreground">{t("import.coverStepBody")}</p>
-                        </div>
-                        <input
-                          ref={coverInputRef}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={handleCoverInputChange}
-                        />
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                          {t("import.guided.step4Label")}
+                        </span>
+                        <h3 className="mt-2 font-display text-2xl sm:text-3xl">
+                          {t("import.coverStepTitle")}
+                        </h3>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {t("import.coverStepBody")}
+                        </p>
+                      </div>
+                      <input
+                        ref={coverInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleCoverInputChange}
+                      />
+                    </div>
+
+                    <div className="mt-8 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+                      <div className="overflow-hidden rounded-[1.75rem] border border-border bg-background aspect-[4/3]">
+                        {coverPreviewUrl ? (
+                          <img
+                            src={coverPreviewUrl}
+                            alt={previewRecipe.title}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-muted-foreground">
+                            <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
+                          </div>
+                        )}
                       </div>
 
-                      <div className="mt-8 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-                        <div className="overflow-hidden rounded-[1.75rem] border border-border bg-background aspect-[4/3]">
-                          {coverPreviewUrl ? (
-                            <img src={coverPreviewUrl} alt={previewRecipe.title} className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="flex h-full items-center justify-center text-muted-foreground">
-                              <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
-                            </div>
-                          )}
+                      <div className="space-y-4">
+                        <div className="rounded-2xl border border-border bg-background p-4">
+                          <div className="text-sm font-medium">{t("import.coverCurrentState")}</div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {coverImage ? t("import.coverReady") : t("import.coverMissing")}
+                          </p>
                         </div>
 
-                        <div className="space-y-4">
-                          <div className="rounded-2xl border border-border bg-background p-4">
-                            <div className="text-sm font-medium">{t("import.coverCurrentState")}</div>
-                            <p className="mt-2 text-sm text-muted-foreground">
-                              {coverImage ? t("import.coverReady") : t("import.coverMissing")}
-                            </p>
-                          </div>
-
-                          <div className="flex flex-wrap gap-3">
-                            <button
-                              className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground"
-                              onClick={() => coverInputRef.current?.click()}
-                            >
-                              <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
-                              {t("import.uploadCover")}
-                            </button>
-                            <button
-                              className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground disabled:opacity-50"
-                              onClick={() => void handleRegenerateCover()}
-                              disabled={isGeneratingCover || stage === "saving"}
-                            >
-                              {isGeneratingCover ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  {t("import.generatingCover")}
-                                </>
-                              ) : (
-                                <>
-                                  <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                                  {t("import.regenerateCover")}
-                                </>
-                              )}
-                            </button>
-                          </div>
-
-                          <VoiceHint>{t("import.coverVoiceHint")}</VoiceHint>
-
+                        <div className="flex flex-wrap gap-3">
                           <button
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
-                            onClick={() => void handleSaveVideo()}
-                            disabled={stage === "saving" || stage === "done"}
+                            className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground"
+                            onClick={() => coverInputRef.current?.click()}
                           >
-                            {stage === "saving" ? (
+                            <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
+                            {t("import.uploadCover")}
+                          </button>
+                          <button
+                            className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground disabled:opacity-50"
+                            onClick={() => void handleRegenerateCover()}
+                            disabled={isGeneratingCover || stage === "saving"}
+                          >
+                            {isGeneratingCover ? (
                               <>
-                                <Loader2 className="h-4 w-4 animate-spin" /> {t("import.saving")}
-                              </>
-                            ) : stage === "done" ? (
-                              <>
-                                <CheckCircle2 className="h-4 w-4" /> {t("import.saved")}
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                {t("import.generatingCover")}
                               </>
                             ) : (
                               <>
-                                <VoiceBadge className="!border-background/40 !bg-transparent !text-background !opacity-100" n={2} />
-                                {t("import.saveToRecipes")}
+                                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                                {t("import.regenerateCover")}
                               </>
                             )}
                           </button>
                         </div>
+
+                        <VoiceHint>{t("import.coverVoiceHint")}</VoiceHint>
+
+                        <button
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
+                          onClick={() => void handleSaveVideo()}
+                          disabled={stage === "saving" || stage === "done"}
+                        >
+                          {stage === "saving" ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" /> {t("import.saving")}
+                            </>
+                          ) : stage === "done" ? (
+                            <>
+                              <CheckCircle2 className="h-4 w-4" /> {t("import.saved")}
+                            </>
+                          ) : (
+                            <>
+                              <VoiceBadge
+                                className="!border-background/40 !bg-transparent !text-background !opacity-100"
+                                n={2}
+                              />
+                              {t("import.saveToRecipes")}
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
+                  </div>
                 </>
               )}
 
@@ -1965,9 +2080,7 @@ function ImportPage() {
                               onChange={(e) =>
                                 setManualIngredients((current) =>
                                   current.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, name: e.target.value }
-                                      : item,
+                                    itemIndex === index ? { ...item, name: e.target.value } : item,
                                   ),
                                 )
                               }
@@ -2139,365 +2252,377 @@ function ImportPage() {
             </div>
             {(mode === "manual" || showVideoSidebar) && (
               <div className={`min-w-0 ${showVideoSidebar ? "lg:col-span-5" : "lg:col-span-4"}`}>
-              {mode === "video" ? (
-                <div className="space-y-4 lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
-                  {showGuidedFollowUp ? (
-                    <>
-                      <div className="rounded-[2rem] border border-border bg-card p-6">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-background">
-                              <img
-                                src="/logo.png"
-                                alt={`${t("app.name")} logo`}
-                                className="h-7 w-7 rounded-full object-contain dark:hidden"
-                              />
-                              <img
-                                src="/logo-dark.png"
-                                alt={`${t("app.name")} logo`}
-                                className="hidden h-7 w-7 rounded-full object-contain dark:block"
-                              />
-                            </div>
-                            <div>
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                                {t("import.followUpStepTag")}
+                {mode === "video" ? (
+                  <div className="space-y-4 lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
+                    {showGuidedFollowUp ? (
+                      <>
+                        <div className="rounded-[2rem] border border-border bg-card p-6">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-background">
+                                <img
+                                  src="/logo.png"
+                                  alt={`${t("app.name")} logo`}
+                                  className="h-7 w-7 rounded-full object-contain dark:hidden"
+                                />
+                                <img
+                                  src="/logo-dark.png"
+                                  alt={`${t("app.name")} logo`}
+                                  className="hidden h-7 w-7 rounded-full object-contain dark:block"
+                                />
                               </div>
-                              <h4 className="font-display text-2xl">{t("import.followUpPanelTitle")}</h4>
+                              <div>
+                                <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                                  {t("import.followUpStepTag")}
+                                </div>
+                                <h4 className="font-display text-2xl">
+                                  {t("import.followUpPanelTitle")}
+                                </h4>
+                              </div>
                             </div>
+                            <span className="inline-flex items-center gap-2 rounded-full border border-clay/25 bg-clay/10 px-4 py-2 text-xs text-clay">
+                              <MessageCircleMore className="h-3.5 w-3.5" strokeWidth={1.75} />
+                              {answeredFollowUpCount}/{followUpQuestions.length}
+                            </span>
                           </div>
-                          <span className="inline-flex items-center gap-2 rounded-full border border-clay/25 bg-clay/10 px-4 py-2 text-xs text-clay">
-                            <MessageCircleMore className="h-3.5 w-3.5" strokeWidth={1.75} />
-                            {answeredFollowUpCount}/{followUpQuestions.length}
-                          </span>
-                        </div>
-                        <div className="mt-5 space-y-4 rounded-[1.5rem] border border-border bg-background p-4">
-                          <div className="flex items-start gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
-                              <AudioLines className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                            </div>
-                            <div className="max-w-full rounded-[1.35rem] rounded-tl-sm border border-border bg-card px-4 py-3 sm:max-w-[88%]">
-                              <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                                {followUpStatus === "speaking"
-                                  ? t("import.followUpSpeaking")
-                                  : t("import.followUpPromptTitle")}
+                          <div className="mt-5 space-y-4 rounded-[1.5rem] border border-border bg-background p-4">
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
+                                <AudioLines className="h-4 w-4 text-clay" strokeWidth={1.75} />
                               </div>
-                              <p className="mt-2 text-sm leading-6 text-foreground">
-                                {currentFollowUp?.question || t("import.followUpWaiting")}
-                              </p>
-                            </div>
-                          </div>
-
-                          {!!followUpInput.trim() && (
-                            <div className="flex justify-end">
-                              <div className="max-w-full rounded-[1.35rem] rounded-br-sm bg-clay px-4 py-3 text-sm leading-6 text-background shadow-sm sm:max-w-[88%]">
-                                {followUpInput.trim()}
+                              <div className="max-w-full rounded-[1.35rem] rounded-tl-sm border border-border bg-card px-4 py-3 sm:max-w-[88%]">
+                                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                                  {followUpStatus === "speaking"
+                                    ? t("import.followUpSpeaking")
+                                    : t("import.followUpPromptTitle")}
+                                </div>
+                                <p className="mt-2 text-sm leading-6 text-foreground">
+                                  {currentFollowUp?.question || t("import.followUpWaiting")}
+                                </p>
                               </div>
                             </div>
-                          )}
 
-                          {!!followUpAnswers[currentFollowUp?.field ?? "servings"]?.trim() &&
-                            !followUpInput.trim() && (
+                            {!!followUpInput.trim() && (
                               <div className="flex justify-end">
                                 <div className="max-w-full rounded-[1.35rem] rounded-br-sm bg-clay px-4 py-3 text-sm leading-6 text-background shadow-sm sm:max-w-[88%]">
-                                  {followUpAnswers[currentFollowUp?.field ?? "servings"]}
+                                  {followUpInput.trim()}
                                 </div>
                               </div>
                             )}
 
-                          {followUpError && (
-                            <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                              {followUpError}
+                            {!!followUpAnswers[currentFollowUp?.field ?? "servings"]?.trim() &&
+                              !followUpInput.trim() && (
+                                <div className="flex justify-end">
+                                  <div className="max-w-full rounded-[1.35rem] rounded-br-sm bg-clay px-4 py-3 text-sm leading-6 text-background shadow-sm sm:max-w-[88%]">
+                                    {followUpAnswers[currentFollowUp?.field ?? "servings"]}
+                                  </div>
+                                </div>
+                              )}
+
+                            {followUpError && (
+                              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                                {followUpError}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {followUpQuestions.map((item, index) => {
+                            const state = followUpProgress[item.field];
+                            const answered = state === "answered";
+                            const skipped = state === "skipped";
+                            const isCurrent = index === followUpIndex;
+                            return (
+                              <button
+                                key={item.field}
+                                type="button"
+                                onClick={() => selectFollowUpQuestion(index)}
+                                className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
+                                  isCurrent
+                                    ? "border-clay bg-clay/5"
+                                    : answered
+                                      ? "border-border bg-card"
+                                      : "border-border bg-background/70"
+                                } w-full text-left transition-colors hover:border-clay/40`}
+                              >
+                                <div className="min-w-0 pr-3">
+                                  <div className="text-sm font-medium">{item.label}</div>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {answered
+                                      ? followUpAnswers[item.field]
+                                      : skipped
+                                        ? t("import.followUpSkipped")
+                                        : item.question}
+                                  </div>
+                                </div>
+                                <div
+                                  className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs ${
+                                    answered
+                                      ? "border-clay/30 text-clay"
+                                      : skipped
+                                        ? "border-border bg-secondary text-muted-foreground"
+                                        : isCurrent
+                                          ? "border-clay bg-clay text-background"
+                                          : "border-border text-muted-foreground"
+                                  }`}
+                                >
+                                  {answered ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                  ) : skipped ? (
+                                    "-"
+                                  ) : (
+                                    index + 1
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {currentFollowUp && (
+                          <div className="rounded-[1.75rem] border border-border bg-card p-5">
+                            <div className="text-sm font-medium">{currentFollowUp.label}</div>
+                            <textarea
+                              className="mt-4 min-h-[140px] w-full resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
+                              value={followUpInput}
+                              onChange={(e) => setFollowUpInput(e.target.value)}
+                              placeholder={currentFollowUp.placeholder}
+                            />
+                            <div className="mt-6 flex flex-wrap gap-3">
+                              <button
+                                className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
+                                onClick={() =>
+                                  followUpStatus === "listening"
+                                    ? stopAnswerRecording()
+                                    : void startAnswerRecording()
+                                }
+                                disabled={
+                                  followUpStatus === "speaking" || followUpStatus === "refining"
+                                }
+                              >
+                                {followUpStatus === "listening" ? (
+                                  <>
+                                    <StopCircle className="h-4 w-4" strokeWidth={1.75} />
+                                    {t("import.followUpStopRecording")}
+                                  </>
+                                ) : followUpStatus === "transcribing" ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    {t("import.followUpTranscribing")}
+                                  </>
+                                ) : (
+                                  <>
+                                    <Mic className="h-4 w-4" strokeWidth={1.75} />
+                                    {t("import.followUpRecordAnswer")}
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
+                                onClick={() => void askFollowUpQuestion(followUpIndex)}
+                                disabled={followUpStatus !== "idle" && followUpStatus !== "done"}
+                              >
+                                <AudioLines className="h-4 w-4" strokeWidth={1.75} />
+                                {t("import.followUpReplay")}
+                              </button>
+                              <button
+                                className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
+                                onClick={() => void handleFollowUpSkip()}
+                                disabled={followUpBusy}
+                                type="button"
+                              >
+                                {t("import.followUpSkipQuestion")}
+                              </button>
+                              <button
+                                className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
+                                onClick={() => void handleFollowUpSubmit()}
+                                disabled={followUpBusy || !followUpInput.trim()}
+                              >
+                                {followUpStatus === "refining" ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    {t("import.followUpApplying")}
+                                  </>
+                                ) : followUpIndex < followUpQuestions.length - 1 ? (
+                                  <>
+                                    {t("import.followUpNext")}
+                                    <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                                    {t("import.followUpApplyAdjustment")}
+                                  </>
+                                )}
+                              </button>
                             </div>
+                          </div>
+                        )}
+
+                        <button
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3.5 text-sm text-background hover:bg-clay disabled:opacity-50"
+                          onClick={() => void handleFollowUpContinue()}
+                          disabled={
+                            followUpBusy || answeredFollowUpCount < followUpQuestions.length
+                          }
+                          type="button"
+                        >
+                          {followUpStatus === "refining" ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              {t("import.followUpApplying")}
+                            </>
+                          ) : (
+                            <>
+                              {t("import.followUpContinueNext")}
+                              <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                            </>
                           )}
+                        </button>
+                      </>
+                    ) : showGuidedCover ? (
+                      <div className="rounded-[2rem] border border-border bg-card p-6">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                              {t("import.guided.step4Label")}
+                            </div>
+                            <h4 className="font-display text-2xl">{t("import.coverStepTitle")}</h4>
+                          </div>
                         </div>
                       </div>
+                    ) : null}
 
-                      <div className="space-y-2">
-                        {followUpQuestions.map((item, index) => {
-                          const state = followUpProgress[item.field];
-                          const answered = state === "answered";
-                          const skipped = state === "skipped";
-                          const isCurrent = index === followUpIndex;
-                          return (
-                            <button
-                              key={item.field}
-                              type="button"
-                              onClick={() => selectFollowUpQuestion(index)}
-                              className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
-                                isCurrent
-                                  ? "border-clay bg-clay/5"
-                                  : answered
-                                    ? "border-border bg-card"
-                                    : "border-border bg-background/70"
-                              } w-full text-left transition-colors hover:border-clay/40`}
-                            >
-                              <div className="min-w-0 pr-3">
-                                <div className="text-sm font-medium">{item.label}</div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {answered
-                                    ? followUpAnswers[item.field]
-                                    : skipped
-                                      ? "已跳过"
-                                      : item.question}
-                                </div>
-                              </div>
-                              <div
-                                className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs ${
-                                  answered
-                                    ? "border-clay/30 text-clay"
-                                    : skipped
-                                      ? "border-border bg-secondary text-muted-foreground"
-                                    : isCurrent
-                                      ? "border-clay bg-clay text-background"
-                                      : "border-border text-muted-foreground"
-                                }`}
-                              >
-                                {answered ? (
-                                  <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                                ) : skipped ? (
-                                  "-"
-                                ) : (
-                                  index + 1
-                                )}
-                              </div>
-                            </button>
-                          );
-                        })}
+                    <button
+                      onClick={() => navigate({ to: "/recipes" })}
+                      className="inline-flex text-sm text-clay hover:underline"
+                    >
+                      {t("import.viewRecipes")} {">"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-border bg-card p-5">
+                      <div className="flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                        <span className="text-sm font-medium">{t("import.manualCoverTitle")}</span>
                       </div>
 
-                      {currentFollowUp && (
-                        <div className="rounded-[1.75rem] border border-border bg-card p-5">
-                          <div className="text-sm font-medium">{currentFollowUp.label}</div>
-                          <textarea
-                            className="mt-4 min-h-[140px] w-full resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
-                            value={followUpInput}
-                            onChange={(e) => setFollowUpInput(e.target.value)}
-                            placeholder={currentFollowUp.placeholder}
-                          />
-                          <div className="mt-6 flex flex-wrap gap-3">
+                      <div
+                        className={`group relative mt-4 flex aspect-[4/3] w-full overflow-hidden rounded-2xl border border-border bg-background transition-colors ${
+                          isManualSaving
+                            ? "cursor-not-allowed opacity-60"
+                            : "cursor-pointer hover:border-foreground"
+                        }`}
+                        role="button"
+                        tabIndex={isManualSaving ? -1 : 0}
+                        aria-disabled={isManualSaving}
+                        aria-label={t("import.uploadCover")}
+                        onClick={() => {
+                          if (!isManualSaving) manualCoverInputRef.current?.click();
+                        }}
+                        onKeyDown={(event) => {
+                          if (isManualSaving) return;
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            manualCoverInputRef.current?.click();
+                          }
+                        }}
+                      >
+                        {manualCoverPreviewUrl ? (
+                          <>
+                            <img
+                              src={manualCoverPreviewUrl}
+                              alt={manualTitle.trim() || t("import.untitledRecipe")}
+                              className="h-full w-full object-cover"
+                            />
+                            <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/45 via-black/10 to-transparent p-4 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                              <span className="rounded-full bg-white/90 px-3 py-1 text-xs text-foreground">
+                                {t("import.manualCoverChangePlaceholder")}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
+                            <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
+                            <span className="text-sm">
+                              {t("import.manualCoverUploadPlaceholder")}
+                            </span>
                             <button
-                              className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
-                              onClick={() => (followUpStatus === "listening" ? stopAnswerRecording() : void startAnswerRecording())}
-                              disabled={followUpStatus === "speaking" || followUpStatus === "refining"}
-                            >
-                              {followUpStatus === "listening" ? (
-                                <>
-                                  <StopCircle className="h-4 w-4" strokeWidth={1.75} />
-                                  {t("import.followUpStopRecording")}
-                                </>
-                              ) : followUpStatus === "transcribing" ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  {t("import.followUpTranscribing")}
-                                </>
-                              ) : (
-                                <>
-                                  <Mic className="h-4 w-4" strokeWidth={1.75} />
-                                  {t("import.followUpRecordAnswer")}
-                                </>
-                              )}
-                            </button>
-                            <button
-                              className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
-                              onClick={() => void askFollowUpQuestion(followUpIndex)}
-                              disabled={followUpStatus !== "idle" && followUpStatus !== "done"}
-                            >
-                              <AudioLines className="h-4 w-4" strokeWidth={1.75} />
-                              {t("import.followUpReplay")}
-                            </button>
-                            <button
-                              className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
-                              onClick={() => void handleFollowUpSkip()}
-                              disabled={followUpBusy}
+                              className="inline-flex min-h-10 items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors hover:border-foreground disabled:opacity-50"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleRegenerateManualCover();
+                              }}
+                              onKeyDown={(event) => event.stopPropagation()}
+                              disabled={isManualGeneratingCover || isManualSaving}
                               type="button"
                             >
-                              跳过问题
-                            </button>
-                            <button
-                              className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
-                              onClick={() => void handleFollowUpSubmit()}
-                              disabled={followUpBusy || !followUpInput.trim()}
-                            >
-                              {followUpStatus === "refining" ? (
+                              {isManualGeneratingCover ? (
                                 <>
                                   <Loader2 className="h-4 w-4 animate-spin" />
-                                  {t("import.followUpApplying")}
-                                </>
-                              ) : followUpIndex < followUpQuestions.length - 1 ? (
-                                <>
-                                  {t("import.followUpNext")}
-                                  <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                                  {t("import.generatingCover")}
                                 </>
                               ) : (
                                 <>
                                   <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                                  应用这次调整
+                                  {t("import.manualCoverAiPlaceholder")}
                                 </>
                               )}
                             </button>
                           </div>
-                        </div>
-                      )}
-
-                      <button
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3.5 text-sm text-background hover:bg-clay disabled:opacity-50"
-                        onClick={() => void handleFollowUpContinue()}
-                        disabled={followUpBusy || answeredFollowUpCount < followUpQuestions.length}
-                        type="button"
-                      >
-                        {followUpStatus === "refining" ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            {t("import.followUpApplying")}
-                          </>
-                        ) : (
-                          <>
-                            直接进入下一步
-                            <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
-                          </>
                         )}
-                      </button>
-                    </>
-                  ) : showGuidedCover ? (
-                    <div className="rounded-[2rem] border border-border bg-card p-6">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                        <div>
-                          <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                            {t("import.guided.step4Label")}
-                          </div>
-                          <h4 className="font-display text-2xl">{t("import.coverStepTitle")}</h4>
-                        </div>
                       </div>
                     </div>
-                  ) : null}
 
-                  <button
-                    onClick={() => navigate({ to: "/recipes" })}
-                    className="inline-flex text-sm text-clay hover:underline"
-                  >
-                    {t("import.viewRecipes")} {">"}
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-center gap-2">
-                      <ImageIcon className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                      <span className="text-sm font-medium">{t("import.manualCoverTitle")}</span>
+                    <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      {t("import.manualSidebarTitle")}
+                    </h4>
+                    <div className="rounded-2xl border border-border bg-card p-5">
+                      <div className="flex items-center gap-2">
+                        <Pencil className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                        <span className="text-sm font-medium">
+                          {t("import.manualSidebarHeading")}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {t("import.manualSidebarBody")}
+                      </p>
                     </div>
-
-                    <div
-                      className={`group relative mt-4 flex aspect-[4/3] w-full overflow-hidden rounded-2xl border border-border bg-background transition-colors ${
-                        isManualSaving
-                          ? "cursor-not-allowed opacity-60"
-                          : "cursor-pointer hover:border-foreground"
-                      }`}
-                      role="button"
-                      tabIndex={isManualSaving ? -1 : 0}
-                      aria-disabled={isManualSaving}
-                      aria-label={t("import.uploadCover")}
-                      onClick={() => {
-                        if (!isManualSaving) manualCoverInputRef.current?.click();
-                      }}
-                      onKeyDown={(event) => {
-                        if (isManualSaving) return;
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          manualCoverInputRef.current?.click();
-                        }
-                      }}
+                    <div className="rounded-2xl border border-border bg-card p-5">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                        <span className="text-sm font-medium">
+                          {t("import.manualSidebarStepsTitle")}
+                        </span>
+                      </div>
+                      <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
+                        <li>{t("import.manualSidebarStep1")}</li>
+                        <li>{t("import.manualSidebarStep2")}</li>
+                        <li>{t("import.manualSidebarStep3")}</li>
+                      </ol>
+                    </div>
+                    <div className="rounded-2xl border border-border bg-card p-5">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                        <span className="text-sm font-medium">
+                          {t("import.manualTextSidebarTitle")}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {t("import.manualTextSidebarBody")}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => navigate({ to: "/recipes" })}
+                      className="inline-flex text-sm text-clay hover:underline"
                     >
-                      {manualCoverPreviewUrl ? (
-                        <>
-                          <img
-                            src={manualCoverPreviewUrl}
-                            alt={manualTitle.trim() || t("import.untitledRecipe")}
-                            className="h-full w-full object-cover"
-                          />
-                          <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/45 via-black/10 to-transparent p-4 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                            <span className="rounded-full bg-white/90 px-3 py-1 text-xs text-foreground">
-                              {t("import.manualCoverChangePlaceholder")}
-                            </span>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
-                          <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
-                          <span className="text-sm">{t("import.manualCoverUploadPlaceholder")}</span>
-                          <button
-                            className="inline-flex min-h-10 items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors hover:border-foreground disabled:opacity-50"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleRegenerateManualCover();
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
-                            disabled={isManualGeneratingCover || isManualSaving}
-                            type="button"
-                          >
-                            {isManualGeneratingCover ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                {t("import.generatingCover")}
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                                {t("import.manualCoverAiPlaceholder")}
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                      {t("import.viewRecipes")} {">"}
+                    </button>
                   </div>
-
-                  <h4 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    {t("import.manualSidebarTitle")}
-                  </h4>
-                  <div className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-center gap-2">
-                      <Pencil className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                      <span className="text-sm font-medium">
-                        {t("import.manualSidebarHeading")}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {t("import.manualSidebarBody")}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                      <span className="text-sm font-medium">
-                        {t("import.manualSidebarStepsTitle")}
-                      </span>
-                    </div>
-                    <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
-                      <li>{t("import.manualSidebarStep1")}</li>
-                      <li>{t("import.manualSidebarStep2")}</li>
-                      <li>{t("import.manualSidebarStep3")}</li>
-                    </ol>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-card p-5">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                      <span className="text-sm font-medium">
-                        {t("import.manualTextSidebarTitle")}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {t("import.manualTextSidebarBody")}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => navigate({ to: "/recipes" })}
-                    className="inline-flex text-sm text-clay hover:underline"
-                  >
-                    {t("import.viewRecipes")} {">"}
-                  </button>
-                </div>
-              )}
+                )}
               </div>
             )}
           </div>

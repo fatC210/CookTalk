@@ -3,6 +3,20 @@ import { persist } from "zustand/middleware";
 import i18n from "@/lib/i18n";
 import { LANGUAGE_COOKIE_NAME } from "@/lib/language";
 
+export const BUILT_IN_WAKE_WORD = "Hey CookTalk";
+
+function normalizeWakeWord(word: string): string {
+  return word.toLowerCase().replace(/[\s\-_'’]+/g, "");
+}
+
+export function isBuiltInWakeWord(word: string): boolean {
+  return normalizeWakeWord(word) === "heycooktalk";
+}
+
+export function getActiveWakeWords(wakeWords: string[]): string[] {
+  return [BUILT_IN_WAKE_WORD, ...wakeWords.filter((word) => !isBuiltInWakeWord(word))];
+}
+
 export type HomeAwakeDetail = {
   phrase: string;
   source: "manual" | "wake-word";
@@ -102,12 +116,28 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ voiceBadgesVisible: state !== undefined ? state : !s.voiceBadgesVisible })),
 
       // Wake words
-      wakeWords: ["Hey CookTalk", "嗨厨语"],
+      wakeWords: ["嗨厨语"],
       addWakeWord: (word) =>
-        set((s) => ({
-          wakeWords: s.wakeWords.includes(word) ? s.wakeWords : [...s.wakeWords, word],
-        })),
-      removeWakeWord: (word) => set((s) => ({ wakeWords: s.wakeWords.filter((w) => w !== word) })),
+        set((s) => {
+          const nextWord = word.trim();
+          if (
+            !nextWord ||
+            isBuiltInWakeWord(nextWord) ||
+            s.wakeWords.some(
+              (existingWord) => normalizeWakeWord(existingWord) === normalizeWakeWord(nextWord),
+            )
+          ) {
+            return {};
+          }
+
+          return { wakeWords: [...s.wakeWords, nextWord] };
+        }),
+      removeWakeWord: (word) =>
+        set((s) =>
+          isBuiltInWakeWord(word)
+            ? {}
+            : { wakeWords: s.wakeWords.filter((existingWord) => existingWord !== word) },
+        ),
 
       // Sensitivity
       sensitivity: "medium",

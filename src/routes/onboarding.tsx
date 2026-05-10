@@ -1,18 +1,21 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SiteHeader } from "@/components/site-header";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import { Mic, Volume2, ChefHat, Sparkles, ArrowRight, Check, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { storeApiKey } from "@/lib/crypto";
+import { ElevenLabsService } from "@/lib/elevenlabs";
+import i18n from "@/lib/i18n";
+import { getSupportedElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
 import { useAppStore } from "@/stores/app-store";
 import { useTranslation } from "react-i18next";
 
 export const Route = createFileRoute("/onboarding")({
   head: () => ({
     meta: [
-      { title: "Welcome — CookTalk" },
-      { name: "description", content: "A 4-step voice-guided setup." },
+      { title: i18n.t("onboarding.metaTitle") },
+      { name: "description", content: i18n.t("onboarding.metaDescription") },
     ],
   }),
   component: OnboardingPage,
@@ -27,11 +30,15 @@ const DEFAULT_VOICES = [
 ];
 
 function OnboardingPage() {
-  const { t } = useTranslation();
+  const { t, i18n: activeI18n } = useTranslation();
   const navigate = useNavigate();
 
   const { setOnboardingCompleted, setHasElevenLabsKey, setConversationVoiceId, setCookingVoiceId } =
     useAppStore();
+
+  useEffect(() => {
+    document.title = t("onboarding.metaTitle");
+  }, [t, activeI18n.language]);
 
   // Which steps are completed
   const [stepDone, setStepDoneState] = useState<boolean[]>([false, false, false, false]);
@@ -69,8 +76,15 @@ function OnboardingPage() {
     }
     setSavingKey(true);
     try {
-      await storeApiKey("elevenlabs", apiKey.trim());
+      const trimmedApiKey = apiKey.trim();
+      const defaultVoice = getSupportedElevenLabsVoices(
+        await new ElevenLabsService(trimmedApiKey).listVoices({ showLegacy: true }),
+      )[0];
+
+      await storeApiKey("elevenlabs", trimmedApiKey);
       setHasElevenLabsKey(true);
+      setConversationVoiceId(defaultVoice?.voice_id ?? null);
+      setCookingVoiceId(defaultVoice?.voice_id ?? null);
       setStepDone(1, true);
       toast.success(t("onboarding.keySaved"));
     } catch {

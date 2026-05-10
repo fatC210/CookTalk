@@ -120,15 +120,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "CookTalk — Voice-first AI kitchen assistant" },
+      { title: i18n.t("root.metaTitle") },
       {
         name: "description",
-        content:
-          "A 100% voice-controlled AI kitchen assistant. Hands-free cooking with voice commands.",
+        content: i18n.t("root.metaDescription"),
       },
       { name: "author", content: "CookTalk" },
-      { property: "og:title", content: "CookTalk — Voice-first AI kitchen" },
-      { property: "og:description", content: "100% voice-controlled cooking companion." },
+      { property: "og:title", content: i18n.t("root.ogTitle") },
+      { property: "og:description", content: i18n.t("root.ogDescription") },
       { property: "og:type", content: "website" },
     ],
     links: [

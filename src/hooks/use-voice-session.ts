@@ -6,6 +6,7 @@ import {
   transcribeWithElevenLabs,
   type VoiceStatus,
 } from "@/lib/voice-pipeline";
+import i18n from "@/lib/i18n";
 import { useAppStore } from "@/stores/app-store";
 
 interface UseVoiceSessionOptions {
@@ -16,7 +17,6 @@ interface UseVoiceSessionOptions {
   manualWakeActive: boolean;
   awakeResetKey?: string | number | boolean;
   commandDurationMs?: number;
-  preserveWakeWordsInTranscript?: boolean;
   suppressPureWakeWordTranscript?: boolean;
   onWake?: (event: VoiceWakeEvent) => void;
   onTranscript: (transcript: string) => Promise<void> | void;
@@ -67,7 +67,6 @@ export function useVoiceSession({
   manualWakeActive,
   awakeResetKey,
   commandDurationMs = 5000,
-  preserveWakeWordsInTranscript = false,
   suppressPureWakeWordTranscript = true,
   onWake,
   onTranscript,
@@ -83,6 +82,7 @@ export function useVoiceSession({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assistantResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCapturingRef = useRef(false);
   const shouldListenRef = useRef(false);
   const isAwakeRef = useRef(false);
@@ -95,12 +95,18 @@ export function useVoiceSession({
     !!getSpeechRecognitionConstructor() &&
     !!navigator.mediaDevices?.getUserMedia;
 
+  const voiceT = useCallback(
+    (key: string, options?: Record<string, unknown>) =>
+      i18n.t(key, { lng: language, ...options }),
+    [language],
+  );
+
   const notifyMissingElevenLabsKey = useCallback(() => {
-    const message = "请先在设置里配置 ElevenLabs API Key，才能使用对话。";
+    const message = voiceT("voice.elevenLabsKeyRequired");
     setError(message);
     setStatus("error");
     onErrorRef.current?.(message);
-  }, []);
+  }, [voiceT]);
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
@@ -115,15 +121,11 @@ export function useVoiceSession({
     }
   }, [awakeResetKey, enabled, isMuted, listenMode]);
 
-  useEffect(() => {
-    const handleAssistantSpeaking = (event: Event) => {
-      isAssistantSpeakingRef.current = Boolean(
-        (event as CustomEvent<{ active: boolean }>).detail.active,
-      );
-    };
-
-    window.addEventListener("cooktalk:assistant-speaking", handleAssistantSpeaking);
-    return () => window.removeEventListener("cooktalk:assistant-speaking", handleAssistantSpeaking);
+  const clearAssistantResumeTimer = useCallback(() => {
+    if (assistantResumeTimerRef.current) {
+      clearTimeout(assistantResumeTimerRef.current);
+      assistantResumeTimerRef.current = null;
+    }
   }, []);
 
   const stopRecognition = useCallback(() => {
@@ -139,7 +141,14 @@ export function useVoiceSession({
   }, []);
 
   const restartRecognition = useCallback(() => {
-    if (!shouldListenRef.current || isCapturingRef.current || isMuted) return;
+    if (
+      !shouldListenRef.current ||
+      isCapturingRef.current ||
+      isMuted ||
+      isAssistantSpeakingRef.current
+    ) {
+      return;
+    }
     try {
       recognitionRef.current?.start();
       setStatus(isAwakeRef.current ? "awake" : "listening");
@@ -147,6 +156,30 @@ export function useVoiceSession({
       restartTimerRef.current = setTimeout(restartRecognition, 600);
     }
   }, [isMuted]);
+
+  useEffect(() => {
+    const handleAssistantSpeaking = (event: Event) => {
+      const active = Boolean((event as CustomEvent<{ active: boolean }>).detail.active);
+      isAssistantSpeakingRef.current = active;
+      clearAssistantResumeTimer();
+
+      if (active) {
+        stopRecognition();
+        if (!isCapturingRef.current) setStatus("speaking");
+        return;
+      }
+
+      if (shouldListenRef.current && !isCapturingRef.current && !isMuted) {
+        assistantResumeTimerRef.current = setTimeout(restartRecognition, 250);
+      }
+    };
+
+    window.addEventListener("cooktalk:assistant-speaking", handleAssistantSpeaking);
+    return () => {
+      window.removeEventListener("cooktalk:assistant-speaking", handleAssistantSpeaking);
+      clearAssistantResumeTimer();
+    };
+  }, [clearAssistantResumeTimer, isMuted, restartRecognition, stopRecognition]);
 
   const captureCommand = useCallback(
     async (options?: { force?: boolean }) => {
@@ -159,7 +192,7 @@ export function useVoiceSession({
       if (isMuted && options?.force) setMuted(false);
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
         setStatus("unsupported");
-        setError("当前浏览器不支持麦克风录音。");
+        setError(voiceT("voice.micUnsupported"));
         return;
       }
 
@@ -184,7 +217,7 @@ export function useVoiceSession({
           recorder.ondataavailable = (event) => {
             if (event.data.size > 0) chunks.push(event.data);
           };
-          recorder.onerror = () => reject(new Error("录音失败，请检查麦克风权限。"));
+          recorder.onerror = () => reject(new Error(voiceT("voice.recordingFailed")));
           recorder.onstop = () => {
             const type = recorder.mimeType || mimeType || "audio/webm";
             resolve(new Blob(chunks, { type }));
@@ -200,18 +233,18 @@ export function useVoiceSession({
         streamRef.current = null;
 
         if (!hasEnoughVoiceActivity(voiceActivity.getStats(), audioBlob)) {
-          throw new Error("没有检测到清晰语音，请靠近麦克风后再说一次。");
+          throw new Error(voiceT("voice.noClearSpeech"));
         }
 
         setStatus("transcribing");
 
-        const transcript = (await transcribeWithElevenLabs(audioBlob)).trim();
-        if (!isMeaningfulSpeechPhrase(transcript)) throw new Error("没有听清指令，请再说一次。");
+        const transcript = (await transcribeWithElevenLabs(audioBlob, language)).trim();
+        if (!isMeaningfulSpeechPhrase(transcript)) throw new Error(voiceT("voice.noCommandHeard"));
         setLastTranscript(transcript);
         setStatus("thinking");
         await onTranscriptRef.current(transcript);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "语音识别失败，请稍后重试。";
+        const message = err instanceof Error ? err.message : voiceT("voice.recognitionFailed");
         setError(message);
         setStatus("error");
         onErrorRef.current?.(message);
@@ -229,9 +262,11 @@ export function useVoiceSession({
       commandDurationMs,
       hasElevenLabsKey,
       isMuted,
+      language,
       notifyMissingElevenLabsKey,
       restartRecognition,
       stopRecognition,
+      voiceT,
     ],
   );
 
@@ -285,37 +320,21 @@ export function useVoiceSession({
 
       setLastTranscript(phrase);
       if (listenMode === "always") {
-        if (!hasElevenLabsKey) {
-          notifyMissingElevenLabsKey();
-          return;
-        }
-        onWakeRef.current?.({ phrase, source: "always-listen", transcript: phrase });
-        const transcript = preserveWakeWordsInTranscript
-          ? phrase
-          : stripWakeWords(phrase, wakeWords) || phrase;
-        void onTranscriptRef.current(transcript);
+        const transcript = getCommandTranscript(phrase, wakeWords);
+        onWakeRef.current?.({ phrase, source: "always-listen", transcript });
+        if (transcript) void onTranscriptRef.current(transcript);
         return;
       }
 
       if (isAwakeRef.current) {
-        if (!hasElevenLabsKey) {
-          notifyMissingElevenLabsKey();
-          return;
-        }
         setStatus("awake");
-        const transcript = preserveWakeWordsInTranscript
-          ? phrase
-          : stripWakeWords(phrase, wakeWords) || phrase;
-        void onTranscriptRef.current(transcript);
+        const transcript = getCommandTranscript(phrase, wakeWords);
+        if (transcript) void onTranscriptRef.current(transcript);
         return;
       }
 
       if (hasWakeWord(phrase, wakeWords)) {
-        if (!hasElevenLabsKey) {
-          notifyMissingElevenLabsKey();
-          return;
-        }
-        const transcript = preserveWakeWordsInTranscript ? phrase : stripWakeWords(phrase, wakeWords);
+        const transcript = getCommandTranscript(phrase, wakeWords);
         isAwakeRef.current = true;
         onWakeRef.current?.({ phrase, source: "wake-word", transcript });
         setStatus("awake");
@@ -332,13 +351,20 @@ export function useVoiceSession({
     recognition.onerror = (event) => {
       if (["no-speech", "aborted"].includes(event.error)) return;
       const message =
-        event.error === "not-allowed" ? "麦克风权限被拒绝。" : `语音监听异常：${event.error}`;
+        event.error === "not-allowed"
+          ? voiceT("voice.micDenied")
+          : voiceT("voice.listeningError", { error: event.error });
       setError(message);
       onErrorRef.current?.(message);
     };
 
     recognition.onend = () => {
-      if (shouldListenRef.current && !isCapturingRef.current && !isMuted) {
+      if (
+        shouldListenRef.current &&
+        !isCapturingRef.current &&
+        !isMuted &&
+        !isAssistantSpeakingRef.current
+      ) {
         restartTimerRef.current = setTimeout(restartRecognition, 500);
       }
     };
@@ -356,12 +382,9 @@ export function useVoiceSession({
     };
   }, [
     enabled,
-    hasElevenLabsKey,
     isMuted,
     language,
     listenMode,
-    notifyMissingElevenLabsKey,
-    preserveWakeWordsInTranscript,
     restartRecognition,
     stopRecognition,
     suppressPureWakeWordTranscript,
@@ -377,6 +400,12 @@ export function useVoiceSession({
     setMuted,
     captureCommand,
   };
+}
+
+function getCommandTranscript(phrase: string, wakeWords: string[]): string {
+  const transcript = stripWakeWords(phrase, wakeWords);
+  if (transcript) return transcript;
+  return hasWakeWord(phrase, wakeWords) ? "" : phrase;
 }
 
 function getSupportedAudioMimeType(): string | undefined {

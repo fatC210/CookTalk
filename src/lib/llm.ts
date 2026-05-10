@@ -21,6 +21,13 @@ type ChatStreamOptions = {
   onChunk?: (chunk: string) => void;
 };
 
+type ChatOptions = {
+  maxTokens?: number;
+  responseFormat?: "json_object";
+  temperature?: number;
+  timeoutMs?: number;
+};
+
 interface LLMConfig {
   apiKey: string;
   baseUrl?: string;
@@ -48,7 +55,9 @@ export const DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_LLM_MODEL = "gpt-4o-mini";
 export const DEFAULT_IMAGE_MODEL = "gpt-image-1.5";
 const API_VALIDATION_TIMEOUT_MS = 10_000;
+const CHAT_TIMEOUT_MS = 45_000;
 const OPENAI_COMPATIBLE_PROXY_PATH = "/api/openai-compatible";
+const MAX_RECIPE_SOURCE_CHARS = 8_000;
 
 export function normalizeOpenAIBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
@@ -113,6 +122,38 @@ async function fetchOpenAICompatible(
   return await fetch(input, init);
 }
 
+async function fetchOpenAICompatibleWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = CHAT_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetchOpenAICompatible(input, { ...init, signal: controller.signal });
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
+async function createLLMError(response: Response): Promise<Error> {
+  const body = await response.text().catch(() => "");
+  const detail = body.trim().slice(0, 240);
+  return new Error(
+    detail ? `LLM failed: ${response.status} - ${detail}` : `LLM failed: ${response.status}`,
+  );
+}
+
+function trimRecipeSourceText(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= MAX_RECIPE_SOURCE_CHARS) return trimmed;
+
+  const head = trimmed.slice(0, Math.floor(MAX_RECIPE_SOURCE_CHARS * 0.7));
+  const tail = trimmed.slice(-Math.floor(MAX_RECIPE_SOURCE_CHARS * 0.3));
+  return `${head}\n\n[...content trimmed for faster recipe extraction...]\n\n${tail}`;
+}
+
 export async function validateOpenAIChatConfig(config: Required<LLMConfig>): Promise<boolean> {
   try {
     const baseUrl = normalizeOpenAIBaseUrl(config.baseUrl);
@@ -170,21 +211,57 @@ export class LLMService {
     this.config.baseUrl = normalizeOpenAIBaseUrl(this.config.baseUrl);
   }
 
-  async chat(messages: ChatMessage[]): Promise<string> {
-    const response = await fetchOpenAICompatible(`${this.config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        messages,
-        temperature: 0.7,
-      }),
-    });
+  private buildChatRequestBody(messages: ChatMessage[], options: ChatOptions = {}) {
+    const body: Record<string, unknown> = {
+      model: this.config.model,
+      messages,
+      temperature: options.temperature ?? 0.7,
+    };
 
-    if (!response.ok) throw new Error(`LLM failed: ${response.status}`);
+    if (options.maxTokens) body.max_tokens = options.maxTokens;
+    if (options.responseFormat) body.response_format = { type: options.responseFormat };
+
+    return body;
+  }
+
+  private async postChatCompletion(
+    messages: ChatMessage[],
+    options: ChatOptions = {},
+  ): Promise<Response> {
+    try {
+      return await fetchOpenAICompatibleWithTimeout(
+        `${this.config.baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.config.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(this.buildChatRequestBody(messages, options)),
+        },
+        options.timeoutMs,
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error(
+          `LLM request timed out after ${Math.round((options.timeoutMs ?? CHAT_TIMEOUT_MS) / 1000)}s`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
+    let response = await this.postChatCompletion(messages, options);
+
+    if (!response.ok && options.responseFormat && [400, 422].includes(response.status)) {
+      response = await this.postChatCompletion(messages, {
+        ...options,
+        responseFormat: undefined,
+      });
+    }
+
+    if (!response.ok) throw await createLLMError(response);
     const data = (await response.json()) as ChatCompletionResponse;
     return data.choices[0].message.content;
   }
@@ -204,7 +281,7 @@ export class LLMService {
       }),
     });
 
-    if (!response.ok) throw new Error(`LLM failed: ${response.status}`);
+    if (!response.ok) throw await createLLMError(response);
 
     const contentType = response.headers.get("content-type") ?? "";
     if (!response.body || !contentType.includes("text/event-stream")) {
@@ -232,9 +309,7 @@ export class LLMService {
         const payload = JSON.parse(line) as ChatCompletionStreamResponse;
         const delta = payload.choices?.[0]?.delta?.content;
         const chunk = Array.isArray(delta)
-          ? delta
-              .map((item) => (typeof item.text === "string" ? item.text : ""))
-              .join("")
+          ? delta.map((item) => (typeof item.text === "string" ? item.text : "")).join("")
           : typeof delta === "string"
             ? delta
             : "";
@@ -267,11 +342,24 @@ export class LLMService {
   }
 
   private parseRecipePayload(result: string, errorMessage: string): RecipePayload {
-    const cleaned = result.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const cleaned = result
+      .replace(/```json\n?/g, "")
+      .replace(/```\n?/g, "")
+      .trim();
 
     try {
       return JSON.parse(cleaned) as RecipePayload;
     } catch {
+      const jsonStart = cleaned.indexOf("{");
+      const jsonEnd = cleaned.lastIndexOf("}");
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        try {
+          return JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1)) as RecipePayload;
+        } catch {
+          throw new Error(errorMessage);
+        }
+      }
+
       throw new Error(errorMessage);
     }
   }
@@ -287,16 +375,19 @@ export class LLMService {
 规则：忽略口播废话/广告；从"煮3分钟"等表述提取时间；关键火候/手法提示放入 tips。务必返回有效 JSON。
 
 转录内容：
-${transcript}`;
+${trimRecipeSourceText(transcript)}`;
 
-    const result = await this.chat([
-      {
-        role: "system",
-        content:
-          "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
-      },
-      { role: "user", content: prompt },
-    ]);
+    const result = await this.chat(
+      [
+        {
+          role: "system",
+          content:
+            "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+      { maxTokens: 1400, responseFormat: "json_object", temperature: 0.1 },
+    );
 
     return this.parseRecipePayload(result, "Failed to parse recipe JSON from LLM response");
   }
@@ -327,17 +418,20 @@ ${transcript}`;
       "- Infer optional metadata only when reasonably supported by the text.",
       "- Omit unknown optional fields instead of inventing details.",
       "",
-      `Recipe text:\n${recipeText}`,
+      `Recipe text:\n${trimRecipeSourceText(recipeText)}`,
     ].join("\n");
 
-    const result = await this.chat([
-      {
-        role: "system",
-        content:
-          "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
-      },
-      { role: "user", content: prompt },
-    ]);
+    const result = await this.chat(
+      [
+        {
+          role: "system",
+          content:
+            "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+      { maxTokens: 1400, responseFormat: "json_object", temperature: 0.1 },
+    );
 
     return this.parseRecipePayload(
       result,
@@ -367,14 +461,17 @@ ${transcript}`;
       `User answers:\n${JSON.stringify(answers, null, 2)}`,
     ].join("\n");
 
-    const result = await this.chat([
-      {
-        role: "system",
-        content:
-          "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
-      },
-      { role: "user", content: prompt },
-    ]);
+    const result = await this.chat(
+      [
+        {
+          role: "system",
+          content:
+            "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+      { maxTokens: 1600, responseFormat: "json_object", temperature: 0.1 },
+    );
 
     return this.parseRecipePayload(result, "Failed to parse refined recipe JSON from LLM response");
   }

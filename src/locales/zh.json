@@ -13,9 +13,32 @@
     "recipes": "菜谱",
     "import": "导入",
     "voices": "声音库",
-    "settings": "设置"
+    "settings": "设置",
+    "openMenu": "展开菜单",
+    "closeMenu": "收起菜单"
   },
   "home": {
+    "chat": {
+      "metaTitle": "CookTalk - 对话工作台",
+      "metaDescription": "和 CookTalk 语音或文字对话，搜索菜谱、获取推荐，并跳转到详情、导入或烹饪模式。",
+      "metaOgDescription": "首页只承载对话：语音、文字、菜谱卡片和明确的功能跳转。",
+      "emptyPrompt": "说出唤醒词，或从底部输入开始",
+      "clearConversation": "清空对话",
+      "recipeSuggestion": "说“开始做第二个”或“看看第一个详情”",
+      "loadingReply": "AI 正在生成回复",
+      "localRecipe": "我的菜谱",
+      "webRecipe": "网页搜索",
+      "neutralFlavor": "适中",
+      "open": "查看",
+      "startCooking": "开始做",
+      "reading": "朗读中",
+      "mutedReading": "已静音播放中",
+      "muteReading": "静音 AI 朗读",
+      "unmuteReading": "取消静音 AI 朗读",
+      "webResultFlavor": "网页结果",
+      "webSourceDefault": "网页",
+      "fallbackSearchKeyword": "家常菜"
+    },
     "heroTitle1": "用你的",
     "heroTitle2": "声音",
     "heroTitle3": "告别",
@@ -24,6 +47,7 @@
     "browseRecipes": "浏览我的菜谱",
     "importVideo": "导入视频",
     "orSay": "或说",
+    "wakeTip": "说 {{wakeWord}} 唤醒我",
     "startSetup": "开始设置",
     "nowListening": "正在聆听",
     "features": {
@@ -116,6 +140,7 @@
   },
   "recipes": {
     "title": "我的菜谱",
+    "metaDescription": "你的个人语音控制菜谱库。",
     "personalKb": "个人知识库",
     "recipesCount": "{{count}} 个菜谱",
     "searchPlaceholder": "搜索菜谱…",
@@ -143,6 +168,8 @@
     }
   },
   "recipeDetail": {
+    "metaTitle": "菜谱详情 - CookTalk",
+    "metaDescription": "查看这道菜的食材、步骤、音色和免手烹饪控制。",
     "startCooking": "开始做菜 — 全程免手",
     "edit": "编辑",
     "export": "导出",
@@ -191,6 +218,8 @@
     "startFromStep": "从第 {{count}} 步开始烹饪"
   },
   "cook": {
+    "metaTitle": "Cooking - CookTalk",
+    "metaDescription": "全屏免手烹饪模式。",
     "nowNarrating": "正在朗读",
     "localVoiceMode": "本地语音模式",
     "alwaysListening": "持续聆听中",
@@ -224,6 +253,8 @@
     "voiceQaBody": "随时提问 — “可以用什么替代？”、“怎么判断熟了？”"
   },
   "import": {
+    "metaTitle": "导入 - CookTalk",
+    "metaDescription": "导入烹饪视频或手动录入菜谱，然后保存到你的菜谱库。",
     "title": "导入你的菜谱",
     "subtitle": "菜谱导入",
     "description": "\u652f\u6301\u4e0a\u4f20\u89c6\u9891\u6216\u97f3\u9891\uff0c\u8f6c\u5f55\u5e76\u6574\u7406\u540e\u4fdd\u5b58\u5230\u83dc\u8c31\u5e93\u3002",
@@ -306,6 +337,10 @@
     "followUpApplied": "已根据你的回答更新菜谱。",
     "followUpApplyFailed": "根据回答更新菜谱失败。",
     "followUpAnswerRequired": "请先输入或录下回答。",
+    "followUpSkipped": "已跳过",
+    "followUpSkipQuestion": "跳过问题",
+    "followUpApplyAdjustment": "应用这次调整",
+    "followUpContinueNext": "直接进入下一步",
     "followUpStopRecording": "停止录音",
     "followUpTranscribing": "转写中",
     "followUpRecordAnswer": "录下回答",
@@ -364,6 +399,8 @@
     "manualTextLlmRequired": "还没有配置 LLM API，暂时无法整理文字菜谱。",
     "manualTextStructured": "文字菜谱已整理并回填到表单。",
     "manualTextStructureFailed": "整理文字菜谱失败。",
+    "llmTimeout": "LLM 请求超过 45 秒，已自动停止。建议换用更快的模型，或检查当前 API 服务是否拥堵。",
+    "llmConnectionFailed": "无法连接到 LLM 服务。请检查 API 地址、模型名称或当前网络。详情：{{detail}}",
     "manualRecipeTitle": "菜谱名称",
     "manualRecipeTitlePlaceholder": "例如：番茄炒蛋",
     "manualCuisine": "菜系",
@@ -492,6 +529,7 @@
   },
   "settings": {
     "title": "设置",
+    "metaDescription": "配置 API 密钥、语音唤醒词、语言、主题和数据管理，全都支持语音控制。",
     "subtitle": "配置 · 全部可语音控制",
     "voiceHint": "试试说\"切换到深色模式\"、\"设置灵敏度为高\"或\"导出所有菜谱\"",
     "apiKeys": {
@@ -657,6 +695,8 @@
   },
   "onboarding": {
     "title": "欢迎使用 CookTalk。",
+    "metaTitle": "欢迎 - CookTalk",
+    "metaDescription": "四步完成语音引导设置。",
     "subtitle": "语音引导设置 · 约 90 秒",
     "description": "四个步骤，每一步都可以用语音完成。当然也可以点击，或者两者结合。随你怎么来。",
     "steps": {
@@ -731,7 +771,20 @@
     "or": "或",
     "continue": "继续",
     "done": "完成",
-    "unknown": "未知"
+    "unknown": "未知",
+    "more": "更多",
+    "previous": "上一页",
+    "next": "下一页",
+    "pagination": "分页",
+    "previousPage": "转到上一页",
+    "nextPage": "转到下一页",
+    "morePages": "更多页面",
+    "previousSlide": "上一张",
+    "nextSlide": "下一张",
+    "sidebar": "侧边栏",
+    "sidebarDescription": "显示移动端侧边栏。",
+    "toggleSidebar": "切换侧边栏",
+    "breadcrumb": "面包屑导航"
   },
   "footer": {
     "description": "免手烹饪，由你的声音驱动。每个按钮都有对应的语音命令 — 再也不用用沾满面粉的手触碰屏幕了。",
@@ -742,6 +795,10 @@
     "languageSwitch": "说\"切换到英文\""
   },
   "root": {
+    "metaTitle": "CookTalk - AI 语音厨房助手",
+    "metaDescription": "100% 语音控制的 AI 厨房助手，用语音命令完成免手烹饪。",
+    "ogTitle": "CookTalk - AI 语音厨房",
+    "ogDescription": "100% 语音控制的厨房助手。",
     "goHome": "回到首页",
     "notFound": {
       "title": "页面不存在",
@@ -758,6 +815,17 @@
     "badgesHidden": "已隐藏语音徽标",
     "alwaysListening": "已开启持续监听模式",
     "wakeWordMode": "已开启唤醒词模式",
-    "unhandled": "我听到了。可以试试说：打开菜谱、导入视频、设置，或声音库。"
+    "unhandled": "我听到了。可以试试说：打开菜谱、导入视频、设置，或声音库。",
+    "elevenLabsKeyRequired": "请先在设置里配置 ElevenLabs API Key，才能使用对话。",
+    "elevenLabsKeyRequiredShort": "请先在设置里配置 ElevenLabs API Key",
+    "voiceSelectRequired": "请先在设置里选择音色",
+    "playbackFailed": "语音播放失败",
+    "micUnsupported": "当前浏览器不支持麦克风录音。",
+    "recordingFailed": "录音失败，请检查麦克风权限。",
+    "noClearSpeech": "没有检测到清晰语音，请靠近麦克风后再说一次。",
+    "noCommandHeard": "没有听清指令，请再说一次。",
+    "recognitionFailed": "语音识别失败，请稍后重试。",
+    "micDenied": "麦克风权限被拒绝。",
+    "listeningError": "语音监听异常：{{error}}"
   }
 }

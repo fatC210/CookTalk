@@ -13,9 +13,32 @@
     "recipes": "Recipes",
     "import": "Import",
     "voices": "Voices",
-    "settings": "Settings"
+    "settings": "Settings",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
   },
   "home": {
+    "chat": {
+      "metaTitle": "CookTalk - Conversation workspace",
+      "metaDescription": "Talk or type with CookTalk to search recipes, get recommendations, and jump into details, import, or cooking mode.",
+      "metaOgDescription": "The home screen is a focused conversation workspace for voice, text, recipe cards, and clear feature jumps.",
+      "emptyPrompt": "Say the wake word, or type from the bottom to start",
+      "clearConversation": "Clear conversation",
+      "recipeSuggestion": "Say \"start the second one\" or \"show details for the first one\"",
+      "loadingReply": "AI is generating a reply",
+      "localRecipe": "My recipes",
+      "webRecipe": "Web search",
+      "neutralFlavor": "Balanced",
+      "open": "View",
+      "startCooking": "Start cooking",
+      "reading": "Reading aloud",
+      "mutedReading": "Reading muted",
+      "muteReading": "Mute AI reading",
+      "unmuteReading": "Unmute AI reading",
+      "webResultFlavor": "Web result",
+      "webSourceDefault": "Web",
+      "fallbackSearchKeyword": "home cooking"
+    },
     "heroTitle1": "Cook with your",
     "heroTitle2": "voice",
     "heroTitle3": "Never with your",
@@ -24,6 +47,7 @@
     "browseRecipes": "Browse my recipes",
     "importVideo": "Import a video",
     "orSay": "Or say",
+    "wakeTip": "Say {{wakeWord}} to wake me",
     "startSetup": "start setup",
     "nowListening": "Now listening for",
     "features": {
@@ -116,6 +140,7 @@
   },
   "recipes": {
     "title": "My recipes",
+    "metaDescription": "Your personal voice-controlled recipe library.",
     "personalKb": "Personal knowledge base",
     "recipesCount": "{{count}} recipes",
     "searchPlaceholder": "Search recipes…",
@@ -143,6 +168,8 @@
     }
   },
   "recipeDetail": {
+    "metaTitle": "Recipe Detail - CookTalk",
+    "metaDescription": "View ingredients, steps, voice options, and hands-free cooking controls for this recipe.",
     "startCooking": "Start cooking — hands free",
     "edit": "Edit",
     "export": "Export",
@@ -191,6 +218,8 @@
     "startFromStep": "Start cooking from step {{count}}"
   },
   "cook": {
+    "metaTitle": "Cooking - CookTalk",
+    "metaDescription": "Full-screen, hands-free cooking mode.",
     "nowNarrating": "Now narrating",
     "localVoiceMode": "Local voice mode",
     "alwaysListening": "Always listening",
@@ -224,6 +253,8 @@
     "voiceQaBody": "Ask anything — \"what can I substitute?\", \"how do I know it's done?\""
   },
   "import": {
+    "metaTitle": "Import - CookTalk",
+    "metaDescription": "Import a cooking video or type a recipe manually, then save it into your recipe library.",
     "title": "Turn any video or audio into a recipe.",
     "subtitle": "Recipe ingestion",
     "description": "Drop a cooking video or audio file, yours, downloaded, anything. CookTalk transcribes it, structures the steps, and adds it to your private library.",
@@ -308,6 +339,10 @@
     "followUpApplied": "Recipe updated with your answers.",
     "followUpApplyFailed": "Could not update the recipe.",
     "followUpAnswerRequired": "Please type or record an answer first.",
+    "followUpSkipped": "Skipped",
+    "followUpSkipQuestion": "Skip question",
+    "followUpApplyAdjustment": "Apply this adjustment",
+    "followUpContinueNext": "Continue to next step",
     "followUpStopRecording": "Stop recording",
     "followUpTranscribing": "Transcribing",
     "followUpRecordAnswer": "Record answer",
@@ -369,6 +404,8 @@
     "manualTextLlmRequired": "An LLM API is required before text recipes can be organized.",
     "manualTextStructured": "Recipe text was organized and filled into the form.",
     "manualTextStructureFailed": "Could not organize the recipe text.",
+    "llmTimeout": "The LLM request took longer than 45 seconds and was stopped. Try a faster model, or check whether the API service is overloaded.",
+    "llmConnectionFailed": "Could not connect to the LLM service. Check the API endpoint, model name, or network. Details: {{detail}}",
     "manualRecipeTitle": "Recipe title",
     "manualRecipeTitlePlaceholder": "e.g. Tomato scrambled eggs",
     "manualCuisine": "Cuisine",
@@ -492,6 +529,7 @@
   },
   "settings": {
     "title": "Settings",
+    "metaDescription": "Configure API keys, voice wake-words, language, theme, and data - all by voice.",
     "subtitle": "Configuration · all voice-controllable",
     "voiceHint": "Try \"switch to dark mode\", \"set sensitivity to high\", or \"export all recipes\"",
     "apiKeys": {
@@ -657,6 +695,8 @@
   },
   "onboarding": {
     "title": "Welcome to CookTalk.",
+    "metaTitle": "Welcome - CookTalk",
+    "metaDescription": "A 4-step voice-guided setup.",
     "subtitle": "Voice-guided setup · ~ 90 seconds",
     "description": "Four steps. You can complete every single one with your voice. Or click. Or both. Your hands, your call.",
     "steps": {
@@ -731,7 +771,20 @@
     "or": "or",
     "continue": "Continue",
     "done": "Done",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "more": "More",
+    "previous": "Previous",
+    "next": "Next",
+    "pagination": "Pagination",
+    "previousPage": "Go to previous page",
+    "nextPage": "Go to next page",
+    "morePages": "More pages",
+    "previousSlide": "Previous slide",
+    "nextSlide": "Next slide",
+    "sidebar": "Sidebar",
+    "sidebarDescription": "Displays the mobile sidebar.",
+    "toggleSidebar": "Toggle sidebar",
+    "breadcrumb": "Breadcrumb"
   },
   "footer": {
     "description": "Hands-free cooking, powered by your voice. Every button has an equivalent voice command — never touch the screen with sticky fingers again.",
@@ -742,6 +795,10 @@
     "languageSwitch": "Say \"switch to Chinese\""
   },
   "root": {
+    "metaTitle": "CookTalk - Voice-first AI kitchen assistant",
+    "metaDescription": "A 100% voice-controlled AI kitchen assistant. Hands-free cooking with voice commands.",
+    "ogTitle": "CookTalk - Voice-first AI kitchen",
+    "ogDescription": "100% voice-controlled cooking companion.",
     "goHome": "Go home",
     "notFound": {
       "title": "Page not found",
@@ -758,6 +815,17 @@
     "badgesHidden": "Voice badges hidden",
     "alwaysListening": "Always listening mode enabled",
     "wakeWordMode": "Wake-word mode enabled",
-    "unhandled": "I heard you. Try saying: open recipes, import video, settings, or voice library."
+    "unhandled": "I heard you. Try saying: open recipes, import video, settings, or voice library.",
+    "elevenLabsKeyRequired": "Configure an ElevenLabs API key in Settings before using voice conversation.",
+    "elevenLabsKeyRequiredShort": "Configure an ElevenLabs API key in Settings first.",
+    "voiceSelectRequired": "Choose a voice in Settings first.",
+    "playbackFailed": "Voice playback failed",
+    "micUnsupported": "This browser does not support microphone recording.",
+    "recordingFailed": "Recording failed. Check microphone permission.",
+    "noClearSpeech": "No clear speech was detected. Move closer to the microphone and try again.",
+    "noCommandHeard": "I didn't catch that command. Please try again.",
+    "recognitionFailed": "Speech recognition failed. Please try again later.",
+    "micDenied": "Microphone permission was denied.",
+    "listeningError": "Voice listening error: {{error}}"
   }
 }
