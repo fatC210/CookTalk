@@ -43,6 +43,7 @@ import {
 import { AppTooltip } from "@/components/ui/tooltip";
 import { useTranslation } from "react-i18next";
 import { claimVoicePlayback, type VoicePlaybackHandle } from "@/lib/voice-playback";
+import { normalizeSpeechText } from "@/lib/voice-pipeline";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +69,7 @@ type VoiceRoleButtonProps = {
   isSelected: boolean;
   label: string;
   Icon: typeof MessageCircle;
+  voiceAliases?: string;
   disabled?: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 };
@@ -76,6 +78,7 @@ function VoiceRoleButton({
   isSelected,
   label,
   Icon,
+  voiceAliases,
   disabled = false,
   onClick,
 }: VoiceRoleButtonProps) {
@@ -94,6 +97,8 @@ function VoiceRoleButton({
         )}
         onClick={onClick}
         aria-label={label}
+        data-voice-label={label}
+        data-voice-aliases={voiceAliases}
       >
         <Icon className="h-4 w-4" strokeWidth={1.5} />
       </button>
@@ -120,6 +125,10 @@ function formatRecordingDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function isVoiceCommandMatch(text: string, pattern: RegExp) {
+  return pattern.test(normalizeSpeechText(text));
 }
 
 function VoicesPage() {
@@ -578,6 +587,231 @@ function VoicesPage() {
     toast.success(t("voices.cookingVoiceSuccess", { name }));
   };
 
+  const getVisibleVoiceTargets = useCallback(() => {
+    const clonedTargets = clonedVoices
+      .filter((voice) => voice.elevenLabsVoiceId)
+      .map((voice, index) => ({
+        kind: "cloned" as const,
+        voiceId: voice.elevenLabsVoiceId!,
+        name: voice.name,
+        index,
+        preview: () => void handlePreviewVoice(voice),
+      }));
+
+    const presetTargets = elevenLabsVoices.map((voice, index) => ({
+      kind: "preset" as const,
+      voiceId: voice.voice_id,
+      name: voice.name,
+      index,
+      preview: () =>
+        void handlePreviewElevenLabsVoice(voice.voice_id, getElevenLabsVoicePreviewUrl(voice)),
+    }));
+
+    return [...clonedTargets, ...presetTargets];
+  }, [clonedVoices, elevenLabsVoices, handlePreviewElevenLabsVoice, handlePreviewVoice]);
+
+  const findVoiceTarget = useCallback(
+    (text: string) => {
+      const normalized = normalizeSpeechText(text);
+      const allTargets = getVisibleVoiceTargets();
+      const numberMatch =
+        normalized.match(/(?:第\s*)?([0-9]+)\s*(?:个|号|项|条|张)?/) ??
+        normalized.match(/(?:number|voice)\s*([0-9]+)/i);
+      if (numberMatch?.[1]) {
+        const index = Number(numberMatch[1]) - 1;
+        return allTargets[index] ?? null;
+      }
+
+      const compactText = normalized.replace(/\s+/g, "").toLowerCase();
+      return (
+        allTargets.find((target) => {
+          const compactName = target.name.replace(/\s+/g, "").toLowerCase();
+          return compactName.length > 0 && compactText.includes(compactName);
+        }) ?? null
+      );
+    },
+    [getVisibleVoiceTargets],
+  );
+
+  const handlePageVoiceCommand = useCallback(
+    (event: Event) => {
+      const customEvent = event as CustomEvent<{ transcript?: string; action?: string }>;
+      const transcript = customEvent.detail?.transcript ?? "";
+      const text = normalizeSpeechText(transcript);
+      const pageAction = customEvent.detail?.action;
+
+      if (
+        pageAction === "clone-voice" ||
+        isVoiceCommandMatch(
+          text,
+          /(添加|新增|克隆).*(声音|音色|voice)|clone.*voice|add.*voice|new.*voice/i,
+        )
+      ) {
+        customEvent.preventDefault();
+        openCloneDialog();
+        return;
+      }
+
+      if (
+        isVoiceCommandMatch(
+          text,
+          /(暂停|停止|停一下|stop|pause).*(试听|播放|音频|声音|音色|preview|audio|voice)|^(暂停|停止|pause|stop)$/i,
+        )
+      ) {
+        customEvent.preventDefault();
+        stopAudio();
+        return;
+      }
+
+      if (showDialog) {
+        if (cloneStep === "record") {
+          if (isVoiceCommandMatch(text, /(开始|录制|录音|start|record)/i) && !isRecording) {
+            customEvent.preventDefault();
+            void startRecording();
+            return;
+          }
+
+          if (
+            isVoiceCommandMatch(
+              text,
+              /(停止|结束|完成).*(录制|录音)|stop.*record|finish.*record/i,
+            ) &&
+            isRecording
+          ) {
+            customEvent.preventDefault();
+            stopRecording();
+            return;
+          }
+
+          if (
+            isVoiceCommandMatch(
+              text,
+              /(上传|选择).*(音频|文件|audio|file)|upload.*audio|choose.*audio|select.*audio/i,
+            )
+          ) {
+            customEvent.preventDefault();
+            fileInputRef.current?.click();
+            return;
+          }
+
+          if (isVoiceCommandMatch(text, /(继续|下一步|continue|next)/i)) {
+            customEvent.preventDefault();
+            if (canContinueWithAudio) {
+              setCloneStep("name");
+            } else if (recordedAudio && !isRecordedAudioLongEnough) {
+              toast.error(t("voices.recordingTooShort"));
+            }
+            return;
+          }
+        }
+
+        if (cloneStep === "name") {
+          const nameMatch = text.match(
+            /(?:命名为|名字叫|叫做|名称为|name(?: it)?|call(?: it)?)\s*["'“”‘’]?(.+?)["'“”‘’]?$/i,
+          );
+          if (nameMatch?.[1]) {
+            customEvent.preventDefault();
+            setVoiceName(nameMatch[1].trim());
+            return;
+          }
+
+          if (isVoiceCommandMatch(text, /(返回|上一步|back)/i)) {
+            customEvent.preventDefault();
+            setCloneStep("record");
+            return;
+          }
+
+          if (
+            isVoiceCommandMatch(text, /(继续|下一步|确认|continue|next|confirm)/i) &&
+            voiceName.trim()
+          ) {
+            customEvent.preventDefault();
+            setCloneStep("confirm");
+            return;
+          }
+        }
+
+        if (cloneStep === "confirm") {
+          if (isVoiceCommandMatch(text, /(返回|上一步|back)/i)) {
+            customEvent.preventDefault();
+            setCloneStep("name");
+            return;
+          }
+
+          if (isVoiceCommandMatch(text, /(同意|确认|授权|开始克隆|克隆|agree|confirm|clone)/i)) {
+            customEvent.preventDefault();
+            void handleCloneVoice();
+            return;
+          }
+        }
+
+        if (cloneStep === "done" && isVoiceCommandMatch(text, /(完成|关闭|done|close)/i)) {
+          customEvent.preventDefault();
+          closeCloneDialog();
+          return;
+        }
+      }
+
+      const target = findVoiceTarget(text);
+      if (!target) return;
+
+      if (
+        isVoiceCommandMatch(
+          text,
+          /(设为|设置为|用作|切换为|选择).*(对话|聊天|conversation)/i,
+        )
+      ) {
+        customEvent.preventDefault();
+        handleSetConversationVoice(target.voiceId, target.name);
+        return;
+      }
+
+      if (
+        isVoiceCommandMatch(
+          text,
+          /(设为|设置为|用作|切换为|选择).*(烹饪|做菜|朗读|cooking|cook)/i,
+        )
+      ) {
+        customEvent.preventDefault();
+        handleSetCookingVoice(target.voiceId, target.name);
+        return;
+      }
+
+      if (isVoiceCommandMatch(text, /(播放|预览|试听|打开|play|preview)/i)) {
+        customEvent.preventDefault();
+        target.preview();
+      }
+    },
+    [
+      canContinueWithAudio,
+      cloneStep,
+      closeCloneDialog,
+      findVoiceTarget,
+      handleCloneVoice,
+      handleSetConversationVoice,
+      handleSetCookingVoice,
+      isRecordedAudioLongEnough,
+      isRecording,
+      openCloneDialog,
+      recordedAudio,
+      showDialog,
+      startRecording,
+      stopAudio,
+      stopRecording,
+      t,
+      voiceName,
+    ],
+  );
+
+  useEffect(() => {
+    window.addEventListener("cooktalk:voice-command", handlePageVoiceCommand);
+    window.addEventListener("cooktalk:voice-page-action", handlePageVoiceCommand);
+    return () => {
+      window.removeEventListener("cooktalk:voice-command", handlePageVoiceCommand);
+      window.removeEventListener("cooktalk:voice-page-action", handlePageVoiceCommand);
+    };
+  }, [handlePageVoiceCommand]);
+
   return (
     <div className="app-page-bg min-h-screen flex flex-col">
       <SiteHeader />
@@ -592,6 +826,9 @@ function VoicesPage() {
           <button
             className="inline-flex items-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:px-5"
             onClick={openCloneDialog}
+            type="button"
+            data-voice-label={t("voices.cloneNew")}
+            data-voice-aliases="添加新声音 新增声音 克隆声音 克隆新声音 add new voice clone new voice"
           >
             <Plus className="h-4 w-4" strokeWidth={1.75} /> {t("voices.cloneNew")}
           </button>
@@ -628,6 +865,8 @@ function VoicesPage() {
                           ? t("cook.resume")
                           : t("voices.preview")
                     }
+                    data-voice-label={`${t("voices.preview")} ${v.name}`}
+                    data-voice-aliases={`播放${v.name} 试听${v.name} 预览${v.name} 暂停${v.name} pause ${v.name} play ${v.name} preview ${v.name}`}
                     onClick={() => void handlePreviewVoice(v)}
                     onKeyDown={(event) =>
                       handleCardKeyDown(event, () => void handlePreviewVoice(v))
@@ -645,6 +884,7 @@ function VoicesPage() {
                             ? t("voices.clearConversationVoice")
                             : t("voices.setConversationVoice")
                         }
+                        voiceAliases={`设为对话音色 设置${v.name}为对话音色 用${v.name}对话 clear conversation voice set ${v.name} as conversation voice`}
                         onClick={(event) => {
                           stopCardPreview(event);
                           if (v.elevenLabsVoiceId) {
@@ -661,6 +901,7 @@ function VoicesPage() {
                             ? t("voices.clearCookingVoice")
                             : t("voices.setCookingVoice")
                         }
+                        voiceAliases={`设为烹饪音色 设置${v.name}为烹饪音色 用${v.name}做菜 用${v.name}朗读 set ${v.name} as cooking voice`}
                         onClick={(event) => {
                           stopCardPreview(event);
                           if (v.elevenLabsVoiceId) {
@@ -703,6 +944,9 @@ function VoicesPage() {
                     <div className="mt-4 flex justify-end">
                       <button
                         className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border"
+                        aria-label={t("common.delete")}
+                        data-voice-label={`${t("common.delete")} ${v.name}`}
+                        data-voice-aliases={`删除${v.name} delete ${v.name}`}
                         onClick={(event) => {
                           stopCardPreview(event);
                           void handleDelete(v.id, v.name);
@@ -720,6 +964,9 @@ function VoicesPage() {
             <button
               className="group flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-border bg-card transition-colors hover:border-clay"
               onClick={openCloneDialog}
+              type="button"
+              data-voice-label={t("voices.addNewVoice")}
+              data-voice-aliases="添加新声音 新增声音 克隆声音 克隆新声音 add new voice clone new voice"
             >
               <div className="flex h-14 w-14 items-center justify-center rounded-full border border-foreground/30 group-hover:border-clay">
                 <Mic className="h-6 w-6" strokeWidth={1.5} />
@@ -749,6 +996,8 @@ function VoicesPage() {
               <button
                 type="button"
                 onClick={() => void reloadElevenLabsVoices()}
+                data-voice-label={t("common.retry")}
+                data-voice-aliases="重试 重新加载音色 刷新音色 retry reload voices refresh voices"
                 className="text-sm text-clay hover:underline inline-flex items-center gap-1"
               >
                 <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("common.retry")}
@@ -756,6 +1005,8 @@ function VoicesPage() {
             ) : (
               <Link
                 to="/settings"
+                data-voice-label={t("voices.configureKey")}
+                data-voice-aliases="配置密钥 设置密钥 ElevenLabs 密钥 configure key settings key"
                 className="text-sm text-clay hover:underline inline-flex items-center gap-1"
               >
                 <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("voices.configureKey")}
@@ -771,6 +1022,8 @@ function VoicesPage() {
               </p>
               <Link
                 to="/settings"
+                data-voice-label={t("voices.configureKey")}
+                data-voice-aliases="配置密钥 设置密钥 ElevenLabs 密钥 configure key settings key"
                 className="mt-5 inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay"
               >
                 <Sparkles className="h-4 w-4" strokeWidth={1.75} /> {t("voices.configureKey")}
@@ -813,6 +1066,8 @@ function VoicesPage() {
                             ? t("cook.resume")
                             : t("voices.preview")
                       }
+                      data-voice-label={`${t("voices.preview")} ${voice.name}`}
+                      data-voice-aliases={`播放${voice.name} 试听${voice.name} 预览${voice.name} 暂停${voice.name} pause ${voice.name} play ${voice.name} preview ${voice.name}`}
                       onClick={() => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
                       onKeyDown={(event) =>
                         handleCardKeyDown(
@@ -831,6 +1086,7 @@ function VoicesPage() {
                               ? t("voices.clearConversationVoice")
                               : t("voices.setConversationVoice")
                           }
+                          voiceAliases={`设为对话音色 设置${voice.name}为对话音色 用${voice.name}对话 clear conversation voice set ${voice.name} as conversation voice`}
                           onClick={(event) => {
                             stopCardPreview(event);
                             handleSetConversationVoice(voice.voice_id, voice.name);
@@ -844,6 +1100,7 @@ function VoicesPage() {
                               ? t("voices.clearCookingVoice")
                               : t("voices.setCookingVoice")
                           }
+                          voiceAliases={`设为烹饪音色 设置${voice.name}为烹饪音色 用${voice.name}做菜 用${voice.name}朗读 set ${voice.name} as cooking voice`}
                           onClick={(event) => {
                             stopCardPreview(event);
                             handleSetCookingVoice(voice.voice_id, voice.name);
@@ -951,6 +1208,8 @@ function VoicesPage() {
                           className="inline-flex items-center gap-2 rounded-full bg-destructive px-6 py-2.5 text-sm text-white hover:bg-destructive/80"
                           onClick={() => stopRecording()}
                           type="button"
+                          data-voice-label={t("voices.stopRecording")}
+                          data-voice-aliases="停止录音 完成录音 结束录音 stop recording finish recording"
                         >
                           <StopCircle className="h-4 w-4" /> {t("voices.stopRecording")}
                         </button>
@@ -983,6 +1242,8 @@ function VoicesPage() {
                             void startRecording();
                           }}
                           type="button"
+                          data-voice-label={t("voices.rerecord")}
+                          data-voice-aliases="重新录制 重新录音 重录 rerecord record again"
                         >
                           {t("voices.rerecord")}
                         </button>
@@ -996,6 +1257,8 @@ function VoicesPage() {
                           className="inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-2.5 text-sm text-background hover:bg-clay"
                           onClick={startRecording}
                           type="button"
+                          data-voice-label={t("voices.startRecording")}
+                          data-voice-aliases="开始录音 开始录制 录制声音 start recording record voice"
                         >
                           <Mic className="h-4 w-4" /> {t("voices.startRecording")}
                         </button>
@@ -1031,6 +1294,9 @@ function VoicesPage() {
                             if (fileInputRef.current) fileInputRef.current.value = "";
                           }}
                           type="button"
+                          aria-label={t("common.delete")}
+                          data-voice-label={t("common.delete")}
+                          data-voice-aliases="删除音频 移除音频 清除音频 remove audio clear audio"
                         >
                           <X className="h-4 w-4" />
                         </button>
@@ -1040,6 +1306,8 @@ function VoicesPage() {
                         className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border py-3 text-sm hover:border-foreground"
                         onClick={() => fileInputRef.current?.click()}
                         type="button"
+                        data-voice-label={t("voices.uploadAudio")}
+                        data-voice-aliases="上传音频 上传音频文件 选择音频 选择音频文件 upload audio choose audio"
                       >
                         <Upload className="h-4 w-4" /> {t("voices.uploadAudio")}
                       </button>
@@ -1059,6 +1327,8 @@ function VoicesPage() {
                       setCloneStep("name");
                     }}
                     type="button"
+                    data-voice-label={t("common.continue")}
+                    data-voice-aliases="继续 下一步 continue next"
                   >
                     {t("common.continue")}
                   </button>
@@ -1073,6 +1343,9 @@ function VoicesPage() {
                 <input
                   className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
                   placeholder={t("voices.namePlaceholder")}
+                  aria-label={t("voices.nameVoice")}
+                  data-voice-label={t("voices.nameVoice")}
+                  data-voice-aliases="声音名称 命名 声音名字 voice name name this voice"
                   value={voiceName}
                   onChange={(e) => setVoiceName(e.target.value)}
                   onKeyDown={(e) => {
@@ -1084,6 +1357,9 @@ function VoicesPage() {
                   <button
                     className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
                     onClick={() => setCloneStep("record")}
+                    type="button"
+                    data-voice-label={t("common.back")}
+                    data-voice-aliases="返回 上一步 back previous"
                   >
                     {t("common.back")}
                   </button>
@@ -1091,6 +1367,9 @@ function VoicesPage() {
                     className="flex-1 rounded-full bg-foreground py-2.5 text-sm text-background hover:bg-clay disabled:opacity-50"
                     disabled={!voiceName.trim()}
                     onClick={() => setCloneStep("confirm")}
+                    type="button"
+                    data-voice-label={t("common.continue")}
+                    data-voice-aliases="继续 下一步 确认 continue next confirm"
                   >
                     {t("common.continue")}
                   </button>
@@ -1117,12 +1396,18 @@ function VoicesPage() {
                   <button
                     className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
                     onClick={() => setCloneStep("name")}
+                    type="button"
+                    data-voice-label={t("common.back")}
+                    data-voice-aliases="返回 上一步 back previous"
                   >
                     {t("common.back")}
                   </button>
                   <button
                     className="flex-1 rounded-full bg-foreground py-2.5 text-sm text-background hover:bg-clay"
                     onClick={handleCloneVoice}
+                    type="button"
+                    data-voice-label={t("voices.agreeClone")}
+                    data-voice-aliases="我同意 我同意并克隆 确认授权 开始克隆 agree clone confirm authorization"
                   >
                     {t("voices.agreeClone")}
                   </button>
@@ -1150,6 +1435,9 @@ function VoicesPage() {
                 <button
                   className="w-full rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay"
                   onClick={closeCloneDialog}
+                  type="button"
+                  data-voice-label={t("common.done")}
+                  data-voice-aliases="完成 关闭 done close"
                 >
                   {t("common.done")}
                 </button>

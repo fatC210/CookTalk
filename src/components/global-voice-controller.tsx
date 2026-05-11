@@ -12,6 +12,7 @@ type NavigablePath = "/" | "/recipes" | "/import" | "/voices" | "/settings" | "/
 interface NavigationIntent {
   path: NavigablePath;
   label: string;
+  action?: "select-media" | "settings-data" | "settings-import" | "settings-export" | "clone-voice";
 }
 
 export function GlobalVoiceController() {
@@ -25,13 +26,18 @@ export function GlobalVoiceController() {
   const clearManualWake = useAppStore((s) => s.clearManualWake);
   const homeConversationActive = useAppStore((s) => s.homeConversationActive);
   const pendingHomeAwake = useAppStore((s) => s.pendingHomeAwake);
+  const queueHomeAwake = useAppStore((s) => s.queueHomeAwake);
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const setListenMode = useAppStore((s) => s.setListenMode);
   const setTheme = useAppStore((s) => s.setTheme);
   const setLanguage = useAppStore((s) => s.setLanguage);
+  const setSensitivity = useAppStore((s) => s.setSensitivity);
+  const setScreenWakeLock = useAppStore((s) => s.setScreenWakeLock);
+  const setSoundEffects = useAppStore((s) => s.setSoundEffects);
+  const setSpeechRate = useAppStore((s) => s.setSpeechRate);
+  const addWakeWord = useAppStore((s) => s.addWakeWord);
 
-  const enabled =
-    pathname !== "/cook" && (pathname !== "/" || homeConversationActive || manualWakeActive);
+  const enabled = pathname !== "/cook";
   const activeListenMode =
     pathname === "/" && homeConversationActive
       ? "always"
@@ -44,6 +50,49 @@ export function GlobalVoiceController() {
       if (pendingHomeAwake) return;
 
       const text = normalizeSpeechText(transcript);
+      const settingsIntent = parseGlobalSettingsIntent(transcript);
+      if (settingsIntent?.type === "theme") {
+        setTheme(settingsIntent.value);
+        toast.success(getThemeSuccessMessage(settingsIntent.value, t));
+        return;
+      }
+
+      if (settingsIntent?.type === "language") {
+        setLanguage(settingsIntent.value);
+        toast.success(getLanguageSuccessMessage(settingsIntent.value));
+        return;
+      }
+
+      if (settingsIntent?.type === "sensitivity") {
+        setSensitivity(settingsIntent.value);
+        toast.success(t(`settings.voice.${settingsIntent.value}`));
+        return;
+      }
+
+      if (settingsIntent?.type === "screenWakeLock") {
+        setScreenWakeLock(settingsIntent.value);
+        toast.success(t("settings.voice.wakeLock"));
+        return;
+      }
+
+      if (settingsIntent?.type === "soundEffects") {
+        setSoundEffects(settingsIntent.value);
+        toast.success(t("settings.voice.soundEffects"));
+        return;
+      }
+
+      if (settingsIntent?.type === "speechRate") {
+        setSpeechRate(settingsIntent.value);
+        toast.success(`${t("settings.speechRate")} ${settingsIntent.value}x`);
+        return;
+      }
+
+      if (settingsIntent?.type === "addWakeWord") {
+        addWakeWord(settingsIntent.value);
+        toast.success(`${t("settings.voice.wakeWords")}: ${settingsIntent.value}`);
+        return;
+      }
+
       if (/show.*badge|显示.*(语音|徽标|编号)/i.test(text)) {
         toggleVoiceBadges(true);
         toast.success(t("voice.badgesShown"));
@@ -68,23 +117,23 @@ export function GlobalVoiceController() {
         return;
       }
 
-      const settingsIntent = parseGlobalSettingsIntent(transcript);
-      if (settingsIntent?.type === "theme") {
-        setTheme(settingsIntent.value);
-        toast.success(getThemeSuccessMessage(settingsIntent.value, t));
-        return;
-      }
-
-      if (settingsIntent?.type === "language") {
-        setLanguage(settingsIntent.value);
-        toast.success(getLanguageSuccessMessage(settingsIntent.value));
-        return;
-      }
-
       const intent = parseGlobalNavigationIntent(transcript);
       if (intent) {
         await navigate({ to: intent.path });
+        if (intent.action) {
+          window.setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent("cooktalk:voice-page-action", {
+                detail: { action: intent.action, transcript },
+              }),
+            );
+          }, 300);
+        }
         toast.success(`${t("voice.opened")} ${intent.label}`);
+        return;
+      }
+
+      if (dispatchPageVoiceCommand(transcript)) {
         return;
       }
 
@@ -103,7 +152,7 @@ export function GlobalVoiceController() {
         return;
       }
 
-      toast.info(t("voice.unhandled"));
+      return;
     },
     [
       navigate,
@@ -111,11 +160,20 @@ export function GlobalVoiceController() {
       pendingHomeAwake,
       setListenMode,
       setLanguage,
+      setScreenWakeLock,
+      setSensitivity,
+      setSoundEffects,
+      setSpeechRate,
       setTheme,
       t,
       toggleVoiceBadges,
+      addWakeWord,
     ],
   );
+
+  const shouldHandleSleepingTranscript = useCallback((transcript: string) => {
+    return isDirectGlobalVoiceCommand(transcript);
+  }, []);
 
   const voiceSession = useVoiceSession({
     enabled,
@@ -124,6 +182,7 @@ export function GlobalVoiceController() {
     listenMode: activeListenMode,
     manualWakeActive,
     awakeResetKey: pathname,
+    shouldHandleSleepingTranscript,
     onWake: (event) => {
       clearManualWake();
       if (event.source === "always-listen") return;
@@ -142,7 +201,17 @@ export function GlobalVoiceController() {
         return;
       }
 
-      if (pathname !== "/") return;
+      if (pathname !== "/") {
+        if (!event.transcript?.trim() || !isDirectGlobalVoiceCommand(event.transcript)) {
+          queueHomeAwake({
+            phrase: event.phrase,
+            source: event.source,
+            transcript: event.transcript ?? "",
+          });
+        }
+        void navigate({ to: "/" });
+        return;
+      }
 
       if (event.transcript?.trim()) return;
 
@@ -187,19 +256,26 @@ export function GlobalVoiceController() {
 
 type GlobalSettingsIntent =
   | { type: "theme"; value: "light" | "dark" | "auto" }
-  | { type: "language"; value: "en" | "zh" };
+  | { type: "language"; value: "en" | "zh" }
+  | { type: "sensitivity"; value: "low" | "medium" | "high" }
+  | { type: "screenWakeLock"; value: boolean }
+  | { type: "soundEffects"; value: boolean }
+  | { type: "speechRate"; value: number }
+  | { type: "addWakeWord"; value: string };
 
 function parseGlobalSettingsIntent(transcript: string): GlobalSettingsIntent | null {
   const text = normalizeSpeechText(transcript);
 
   if (
-    /(切换到|换成|设为|设置为|打开).*(深色|暗色)|switch to dark|dark mode|turn on dark/i.test(text)
+    /(切换到|切换|换成|设为|设置为|打开).*(深色|暗色|深色主题|暗色主题|深色模式|暗色模式)|switch to dark|dark mode|turn on dark/i.test(
+      text,
+    )
   ) {
     return { type: "theme", value: "dark" };
   }
 
   if (
-    /(切换到|换成|设为|设置为|打开).*(浅色|亮色)|switch to light|light mode|turn on light/i.test(
+    /(切换到|切换|换成|设为|设置为|打开).*(浅色|亮色|浅色主题|亮色主题|浅色模式|亮色模式)|switch to light|light mode|turn on light/i.test(
       text,
     )
   ) {
@@ -216,6 +292,48 @@ function parseGlobalSettingsIntent(transcript: string): GlobalSettingsIntent | n
 
   if (/(切换到英文|改成英文|使用英文)|switch to english|use english/i.test(text)) {
     return { type: "language", value: "en" };
+  }
+
+  if (/(灵敏度|敏感度|sensitivity)/i.test(text)) {
+    if (/(高|最高|high)/i.test(text)) return { type: "sensitivity", value: "high" };
+    if (/(低|最低|low)/i.test(text)) return { type: "sensitivity", value: "low" };
+    if (/(中|默认|普通|medium|normal)/i.test(text)) return { type: "sensitivity", value: "medium" };
+  }
+
+  if (/(屏幕常亮|保持屏幕|不要熄屏|wake lock|screen on|keep screen)/i.test(text)) {
+    if (/(关闭|关掉|取消|不要|off|disable)/i.test(text)) {
+      return { type: "screenWakeLock", value: false };
+    }
+    if (/(打开|开启|保持|on|enable|keep)/i.test(text)) {
+      return { type: "screenWakeLock", value: true };
+    }
+  }
+
+  if (/(音效|声音效果|sound effect)/i.test(text)) {
+    if (/(关闭|关掉|取消|不要|off|disable)/i.test(text)) {
+      return { type: "soundEffects", value: false };
+    }
+    if (/(打开|开启|on|enable)/i.test(text)) {
+      return { type: "soundEffects", value: true };
+    }
+  }
+
+  if (/(语速|朗读速度|speech rate|speaking rate)/i.test(text)) {
+    const rateMatch =
+      text.match(/(0(?:\.\d+)?|1(?:\.\d+)?|2(?:\.0)?)(?:\s*)(?:倍|x)?/i) ??
+      text.match(/(?:to|at)\s*(0(?:\.\d+)?|1(?:\.\d+)?|2(?:\.0)?)/i);
+    if (rateMatch?.[1]) {
+      const rate = Math.min(2, Math.max(0.5, Number(rateMatch[1])));
+      return { type: "speechRate", value: rate };
+    }
+  }
+
+  const wakeWordMatch = text.match(
+    /(?:添加|新增|设置|设定).*(?:唤醒词|wake word)(?:为|叫|是|to|as)?\s*["'“”‘’]?(.+?)["'“”‘’]?$/i,
+  );
+  if (wakeWordMatch?.[1]) {
+    const value = wakeWordMatch[1].replace(/^(为|叫|是|to|as)\s*/i, "").trim();
+    if (value) return { type: "addWakeWord", value };
   }
 
   return null;
@@ -238,8 +356,28 @@ function parseGlobalNavigationIntent(transcript: string): NavigationIntent | nul
     return { path: "/recipes", label: "Recipes" };
   }
 
+  if (/(导出|下载|备份).*(全部|所有|全部菜谱|所有菜谱|菜谱)|export.*(all|recipes)|download.*recipes|backup.*recipes/i.test(text)) {
+    return { path: "/settings", label: "Data", action: "settings-export" };
+  }
+
+  if (/(导入|上传|恢复).*(菜谱文件|菜谱数据|json|备份)|import.*(recipe file|data|json)|upload.*(recipe file|json)|restore.*recipes/i.test(text)) {
+    return { path: "/settings", label: "Data", action: "settings-import" };
+  }
+
+  if (/(上传|选择|导入).*(视频|音频|媒体)|upload.*(video|audio|media)|select.*(video|audio|media)|choose.*(video|audio|media)/i.test(text)) {
+    return { path: "/import", label: "Import", action: "select-media" };
+  }
+
   if (/(导入|新增|添加).*(菜谱|视频)|import|add recipe|new recipe/i.test(text)) {
     return { path: "/import", label: "Import" };
+  }
+
+  if (/(数据管理|导入导出|备份数据|data management|import export)/i.test(text)) {
+    return { path: "/settings", label: "Data", action: "settings-data" };
+  }
+
+  if (/(添加|新增|克隆).*(声音|音色|voice)|clone.*voice|add.*voice|new.*voice/i.test(text)) {
+    return { path: "/voices", label: "Voices", action: "clone-voice" };
   }
 
   if (/(声音库|语音库|voice|voices|voice library)/i.test(text)) {
@@ -259,4 +397,37 @@ function parseGlobalNavigationIntent(transcript: string): NavigationIntent | nul
   }
 
   return null;
+}
+
+function isDirectGlobalVoiceCommand(transcript: string): boolean {
+  const text = normalizeSpeechText(transcript);
+  if (!text) return false;
+  if (parseGlobalSettingsIntent(text) || parseGlobalNavigationIntent(text)) return true;
+  if (/show.*badge|显示.*(语音|徽标|编号)/i.test(text)) return true;
+  if (/hide.*badge|隐藏.*(语音|徽标|编号)/i.test(text)) return true;
+  if (/always.*listen|一直.*(听|监听)|持续.*监听/i.test(text)) return true;
+  if (/wake.*word|唤醒词|待唤醒/i.test(text)) return true;
+  if (
+    /^(返回上一页|后退|go back|back|前进|go forward|forward|回到顶部|到顶部|滚到顶部|scroll to top|top|到底部|滚到底部|scroll to bottom|bottom)$/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (/(点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|删除)\s*.+/i.test(text)) {
+    return true;
+  }
+  if (/(click|tap|press|select|choose|open|show|play|preview|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|delete)\s+.+/i.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+function dispatchPageVoiceCommand(transcript: string): boolean {
+  const event = new CustomEvent("cooktalk:voice-command", {
+    cancelable: true,
+    detail: { transcript },
+  });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
 }

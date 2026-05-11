@@ -166,7 +166,7 @@ function executeBadgeAction(text: string): VoiceActionResult {
 
   const badges = getVisibleElements(".voice-badge");
   const badge = badges.find((item) => item.textContent?.trim() === String(number));
-  const target = badge?.closest(INTERACTIVE_SELECTOR) as InteractiveElement | null;
+  const target = findBadgeInteractiveTarget(badge);
   if (!target || !isUsableInteractive(target)) return { handled: false };
 
   activateElement(target);
@@ -234,11 +234,22 @@ function parseClickTarget(text: string): string | null {
     "关闭",
     "删除",
     "编辑",
+    "添加",
+    "新增",
+    "克隆",
     "播放",
     "预览",
     "开始",
     "暂停",
+    "停止",
     "重试",
+    "导出",
+    "下载",
+    "导入",
+    "上传",
+    "选择",
+    "生成",
+    "重新生成",
     "save",
     "submit",
     "confirm",
@@ -247,20 +258,32 @@ function parseClickTarget(text: string): string | null {
     "close",
     "delete",
     "edit",
+    "add",
+    "new",
+    "clone",
     "play",
     "preview",
     "start",
     "pause",
+    "stop",
     "retry",
+    "export",
+    "download",
+    "import",
+    "upload",
+    "select",
+    "choose",
+    "generate",
+    "regenerate",
   ];
 
   const direct = directCommands.find((command) => normalizedIncludes(trimmed, command));
   if (direct && normalizeForMatch(trimmed) === normalizeForMatch(direct)) return direct;
 
   const patterns = [
-    /^(?:点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|删除|关闭|取消)\s*(.+)$/i,
+    /^(?:点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|删除|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止)\s*(.+)$/i,
     /^(?:切换到|切到|切成|换成|设为|开启|勾选|取消勾选)\s*(.+)$/i,
-    /^(?:click|tap|press|select|choose|open|show|play|preview|delete|close|cancel)\s+(.+)$/i,
+    /^(?:click|tap|press|select|choose|open|show|play|preview|delete|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop)\s+(.+)$/i,
     /^(?:switch to|set to|turn on|turn off|check|uncheck)\s+(.+)$/i,
   ];
 
@@ -288,12 +311,12 @@ function parseFocusTarget(text: string): string | null {
 
 function parseOrdinalTarget(text: string): number | null {
   const arabic = text.match(/(?:第\s*)?([0-9]+)\s*(?:个|号|项|条|张|步|#|number)?/i);
-  if (arabic && /(第|个|号|项|条|张|编号|number|#|open|打开|选择|点击|点)/i.test(text)) {
+  if (arabic && /(第|个|号|项|条|张|编号|number|#|open|play|preview|打开|选择|点击|点|播放|预览|试听)/i.test(text)) {
     return Number(arabic[1]);
   }
 
   const cn = text.match(/第?\s*([一二两三四五六七八九十]+)\s*(?:个|号|项|条|张|步)?/);
-  if (cn && /(第|个|号|项|条|张|打开|选择|点击|点)/i.test(text)) {
+  if (cn && /(第|个|号|项|条|张|打开|选择|点击|点|播放|预览|试听)/i.test(text)) {
     return parseSpokenNumber(cn[1]);
   }
 
@@ -301,6 +324,23 @@ function parseOrdinalTarget(text: string): number | null {
     new RegExp(`\\b${word}\\b`, "i").test(text),
   );
   return english?.[1] ?? null;
+}
+
+function findBadgeInteractiveTarget(badge: HTMLElement | undefined): InteractiveElement | null {
+  if (!badge) return null;
+
+  const ownTarget = badge.closest(INTERACTIVE_SELECTOR) as InteractiveElement | null;
+  if (ownTarget) return ownTarget;
+
+  const parent = badge.parentElement;
+  const candidates = getInteractiveElements();
+  return (
+    candidates.find(
+      (element) => element !== badge && Boolean(parent) && element.contains(parent),
+    ) ??
+    candidates.find((element) => element.contains(badge)) ??
+    null
+  );
 }
 
 function findBestInteractiveElement(targetText: string): InteractiveElement | null {
@@ -432,6 +472,9 @@ function setEditableValue(element: InteractiveElement, value: string) {
 
 function getElementLabel(element: HTMLElement): string {
   const parts = [
+    element.dataset.voiceLabel,
+    element.dataset.voiceAliases,
+    element.dataset.voiceAction,
     element.getAttribute("aria-label"),
     element.getAttribute("title"),
     getAssociatedLabel(element),

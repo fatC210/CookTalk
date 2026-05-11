@@ -405,12 +405,14 @@ function buildFallbackRefinedRecipe(
   };
 }
 
-async function persistRecipe(recipe: Omit<Recipe, "id" | "createdAt">): Promise<void> {
+async function persistRecipe(recipe: Omit<Recipe, "id" | "createdAt">): Promise<string> {
+  const id = uuid();
   await db.recipes.add({
     ...recipe,
-    id: uuid(),
+    id,
     createdAt: Date.now(),
   });
+  return id;
 }
 
 function mergeFollowUpRefinedRecipe(
@@ -801,6 +803,18 @@ function ImportPage() {
     clearManualDraft();
     if (manualCoverInputRef.current) manualCoverInputRef.current.value = "";
   };
+
+  const openMediaPicker = useCallback(() => {
+    setMode("video");
+    window.setTimeout(() => {
+      if (hasVideoTaskCapacity) {
+        fileInputRef.current?.click();
+        return;
+      }
+
+      toast.error(t("import.videoTaskLimitReached"));
+    }, 120);
+  }, [hasVideoTaskCapacity, setMode, t]);
 
   const validateFile = (file: File): string | null => {
     const validExts = /\.(mp4|mov|webm|mp3|wav|m4a|flac|aac)$/i;
@@ -1199,7 +1213,7 @@ function ImportPage() {
 
       const totalTimeMin = cleaned.tags.totalTimeMin ?? parsePositiveInt(editTotalTime);
 
-      await persistRecipe({
+      const recipeId = await persistRecipe({
         title,
         ingredients,
         steps,
@@ -1216,7 +1230,7 @@ function ImportPage() {
       setStage("done");
       toast.success(t("import.recipeSaved"));
       window.setTimeout(() => {
-        void navigate({ to: "/recipes" });
+        void navigate({ to: "/recipe-detail", search: { id: recipeId } });
         void clearCurrentVideoTask();
       }, 900);
     } catch (err) {
@@ -1277,7 +1291,7 @@ function ImportPage() {
 
     setIsManualSaving(true);
     try {
-      await persistRecipe({
+      const recipeId = await persistRecipe({
         title: manualRecipe.title.trim() || title,
         ingredients,
         steps,
@@ -1293,7 +1307,7 @@ function ImportPage() {
 
       toast.success(t("import.manualSaved"));
       window.setTimeout(() => {
-        void navigate({ to: "/recipes" });
+        void navigate({ to: "/recipe-detail", search: { id: recipeId } });
         clearManualDraft();
       }, 900);
     } catch (err) {
@@ -1305,26 +1319,26 @@ function ImportPage() {
   };
 
   const applyStructuredRecipeToManualForm = (recipe: StructuredRecipe) => {
+    const tags = recipe.tags ?? {};
+    const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+    const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+
     setManualTitle(recipe.title?.trim() ?? "");
-    setManualCuisine(recipe.tags.cuisine?.trim() ?? "");
-    setManualDifficulty(recipe.tags.difficulty ?? "");
-    setManualTotalTime(
-      recipe.tags.totalTimeMin && recipe.tags.totalTimeMin > 0
-        ? String(recipe.tags.totalTimeMin)
-        : "",
-    );
-    setManualFlavors(recipe.tags.flavor?.join("、") ?? "");
+    setManualCuisine(tags.cuisine?.trim() ?? "");
+    setManualDifficulty(tags.difficulty ?? "");
+    setManualTotalTime(tags.totalTimeMin && tags.totalTimeMin > 0 ? String(tags.totalTimeMin) : "");
+    setManualFlavors(tags.flavor?.join("、") ?? "");
     setManualIngredients(
-      recipe.ingredients.length > 0
-        ? recipe.ingredients.map((item) => ({
+      ingredients.length > 0
+        ? ingredients.map((item) => ({
             name: item.name ?? "",
             amount: item.amount ?? "",
           }))
         : [createEmptyIngredient()],
     );
     setManualSteps(
-      recipe.steps.length > 0
-        ? recipe.steps.map((step) => ({
+      steps.length > 0
+        ? steps.map((step) => ({
             description: step.description ?? "",
             durationMin: formatDurationMinutesInput(step.durationSec),
             tips: step.tips ?? "",
@@ -1488,6 +1502,16 @@ function ImportPage() {
   }, [cleanupAnswerRecording, stopAnswerRecording]);
 
   useEffect(() => {
+    const handleVoicePageAction = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === "select-media") openMediaPicker();
+    };
+
+    window.addEventListener("cooktalk:voice-page-action", handleVoicePageAction);
+    return () => window.removeEventListener("cooktalk:voice-page-action", handleVoicePageAction);
+  }, [openMediaPicker]);
+
+  useEffect(() => {
     if (!coverImage) {
       setCoverPreviewUrl(null);
       return;
@@ -1606,6 +1630,91 @@ function ImportPage() {
   const canStructureWithLlm = hasLlmKey;
   const canGenerateAiCover = hasLlmKey && hasImageGenKey;
   const canCreateAnotherVideoTask = hasVideoTaskCapacity;
+  const videoTasksPanel = (
+    <div className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+            {t("import.videoTasksKicker")}
+          </div>
+          <h3 className="mt-2 font-display text-2xl">{t("import.videoTasksTitle")}</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t("import.videoTasksDescription", {
+              count: videoTasks.length,
+              max: MAX_VIDEO_IMPORT_TASKS,
+            })}
+          </p>
+        </div>
+        <span className="inline-flex items-center gap-2 rounded-full border border-clay/25 bg-clay/10 px-4 py-2 text-xs text-clay">
+          {videoTasks.length}/{MAX_VIDEO_IMPORT_TASKS}
+        </span>
+      </div>
+
+      {videoTasks.length > 0 ? (
+        <div className="mt-5 space-y-3">
+          {videoTasks.map((task) => {
+            const isActiveTask = task.id === currentTaskId;
+            const displayTitle = deriveTaskDisplayTitle(task.snapshot, task.fileName);
+
+            return (
+              <div
+                key={task.id}
+                className={`rounded-[1.5rem] border p-4 transition-colors ${
+                  isActiveTask ? "border-clay bg-clay/5" : "border-border bg-background/70"
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{displayTitle}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {task.fileName} · {formatBytes(task.fileSize)}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{task.progressPercent}%</span>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs hover:border-foreground"
+                      onClick={() => loadVideoTask(task.id)}
+                    >
+                      {isActiveTask ? t("import.videoTaskCurrent") : t("import.videoTaskResume")}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
+                      onClick={() => void handleDeleteVideoTask(task.id)}
+                      aria-label={t("import.videoTaskDelete")}
+                    >
+                      <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Progress value={task.progressPercent} className="h-2.5" />
+                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span>{t(task.progressLabelKey)}</span>
+                    {task.snapshot.error ? (
+                      <span className="truncate text-destructive">{task.snapshot.error}</span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-[1.5rem] border border-dashed border-border bg-background/50 p-5 text-sm text-muted-foreground">
+          {t("import.videoTasksEmpty")}
+        </div>
+      )}
+
+      {!canCreateAnotherVideoTask && (
+        <div className="mt-4 rounded-2xl border border-amber-300/40 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {t("import.videoTaskLimitReached")}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="app-page-bg min-h-screen flex flex-col">
@@ -1626,6 +1735,8 @@ function ImportPage() {
             <div className="inline-flex w-fit shrink-0 rounded-full border border-border bg-card p-1 lg:mt-6">
               <button
                 type="button"
+                data-voice-label={t("import.videoMode")}
+                data-voice-aliases="视频模式 导入视频 上传视频 选择视频 video mode import video upload video"
                 className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
                   mode === "video"
                     ? "bg-foreground text-background"
@@ -1638,6 +1749,8 @@ function ImportPage() {
               </button>
               <button
                 type="button"
+                data-voice-label={t("import.manualMode")}
+                data-voice-aliases="手动模式 手动录入 手动添加菜谱 manual mode add manually"
                 className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
                   mode === "manual"
                     ? "bg-foreground text-background"
@@ -1701,107 +1814,9 @@ function ImportPage() {
           <div className="grid gap-8 lg:grid-cols-12">
             <div
               className={`min-w-0 space-y-6 ${
-                mode === "video"
-                  ? showVideoSidebar
-                    ? "lg:col-span-7"
-                    : "lg:col-span-12 lg:mx-auto lg:max-w-4xl"
-                  : "lg:col-span-8"
+                mode === "video" ? "lg:col-span-8 xl:col-span-8" : "lg:col-span-8"
               }`}
             >
-              {mode === "video" && (
-                <div className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                        {t("import.videoTasksKicker")}
-                      </div>
-                      <h3 className="mt-2 font-display text-2xl">{t("import.videoTasksTitle")}</h3>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {t("import.videoTasksDescription", {
-                          count: videoTasks.length,
-                          max: MAX_VIDEO_IMPORT_TASKS,
-                        })}
-                      </p>
-                    </div>
-                    <span className="inline-flex items-center gap-2 rounded-full border border-clay/25 bg-clay/10 px-4 py-2 text-xs text-clay">
-                      {videoTasks.length}/{MAX_VIDEO_IMPORT_TASKS}
-                    </span>
-                  </div>
-
-                  {videoTasks.length > 0 ? (
-                    <div className="mt-5 space-y-3">
-                      {videoTasks.map((task) => {
-                        const isActiveTask = task.id === currentTaskId;
-                        const displayTitle = deriveTaskDisplayTitle(task.snapshot, task.fileName);
-
-                        return (
-                          <div
-                            key={task.id}
-                            className={`rounded-[1.5rem] border p-4 transition-colors ${
-                              isActiveTask
-                                ? "border-clay bg-clay/5"
-                                : "border-border bg-background/70"
-                            }`}
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-medium">{displayTitle}</div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {task.fileName} · {formatBytes(task.fileSize)}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">
-                                  {task.progressPercent}%
-                                </span>
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs hover:border-foreground"
-                                  onClick={() => loadVideoTask(task.id)}
-                                >
-                                  {isActiveTask
-                                    ? t("import.videoTaskCurrent")
-                                    : t("import.videoTaskResume")}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
-                                  onClick={() => void handleDeleteVideoTask(task.id)}
-                                  aria-label={t("import.videoTaskDelete")}
-                                >
-                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="mt-4">
-                              <Progress value={task.progressPercent} className="h-2.5" />
-                              <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                                <span>{t(task.progressLabelKey)}</span>
-                                {task.snapshot.error ? (
-                                  <span className="truncate text-destructive">
-                                    {task.snapshot.error}
-                                  </span>
-                                ) : null}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="mt-5 rounded-[1.5rem] border border-dashed border-border bg-background/50 p-5 text-sm text-muted-foreground">
-                      {t("import.videoTasksEmpty")}
-                    </div>
-                  )}
-
-                  {!canCreateAnotherVideoTask && (
-                    <div className="mt-4 rounded-2xl border border-amber-300/40 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                      {t("import.videoTaskLimitReached")}
-                    </div>
-                  )}
-                </div>
-              )}
-
               {mode === "video" && stage === "idle" && (
                 <>
                   <div
@@ -1813,9 +1828,19 @@ function ImportPage() {
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
-                    onClick={() => {
-                      if (canCreateAnotherVideoTask) fileInputRef.current?.click();
+                    onClick={openMediaPicker}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openMediaPicker();
+                      }
                     }}
+                    role="button"
+                    tabIndex={canCreateAnotherVideoTask ? 0 : -1}
+                    aria-disabled={!canCreateAnotherVideoTask}
+                    aria-label={t("import.chooseMedia")}
+                    data-voice-label={t("import.chooseMedia")}
+                    data-voice-aliases="选择媒体 选择视频 上传视频 导入视频 上传音频 选择音频 select media choose media upload video import video choose video"
                   >
                     <VoiceBadge n={1} className="absolute left-5 top-5" />
                     <input
@@ -1838,6 +1863,8 @@ function ImportPage() {
                         </p>
                         <button
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
+                          data-voice-label={t("import.startProcessing")}
+                          data-voice-aliases="开始处理 开始转菜谱 处理视频 提取菜谱 start processing process video extract recipe"
                           onClick={(e) => {
                             e.stopPropagation();
                             void startPipeline();
@@ -1860,9 +1887,11 @@ function ImportPage() {
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (canCreateAnotherVideoTask) fileInputRef.current?.click();
+                            openMediaPicker();
                           }}
                           disabled={!canCreateAnotherVideoTask}
+                          data-voice-label={t("import.chooseMedia")}
+                          data-voice-aliases="选择媒体 选择视频 上传视频 导入视频 上传音频 选择音频 select media choose media upload video import video choose video"
                         >
                           <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                           {t("import.chooseMedia")}
@@ -2050,6 +2079,8 @@ function ImportPage() {
                           className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
                           onClick={addEditIngredient}
                           type="button"
+                          data-voice-label={t("import.manualAddIngredient")}
+                          data-voice-aliases="添加食材 新增食材 add ingredient"
                         >
                           <Plus className="h-4 w-4" strokeWidth={1.75} />
                           {t("import.manualAddIngredient")}
@@ -2111,6 +2142,8 @@ function ImportPage() {
                           className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
                           onClick={addEditStep}
                           type="button"
+                          data-voice-label={t("import.manualAddStep")}
+                          data-voice-aliases="添加步骤 新增步骤 add step"
                         >
                           <Plus className="h-4 w-4" strokeWidth={1.75} />
                           {t("import.manualAddStep")}
@@ -2166,6 +2199,8 @@ function ImportPage() {
                       <button
                         className="w-full rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
                         onClick={resetVideoDraft}
+                        data-voice-label={t("import.startOver")}
+                        data-voice-aliases="重新开始 重置导入 start over reset import"
                       >
                         {t("import.startOver")}
                       </button>
@@ -2252,6 +2287,8 @@ function ImportPage() {
                           className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
                           onClick={addEditIngredient}
                           type="button"
+                          data-voice-label={t("import.manualAddIngredient")}
+                          data-voice-aliases="添加食材 新增食材 add ingredient"
                         >
                           <Plus className="h-4 w-4" strokeWidth={1.75} />
                           {t("import.manualAddIngredient")}
@@ -2308,6 +2345,8 @@ function ImportPage() {
                           className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
                           onClick={addEditStep}
                           type="button"
+                          data-voice-label={t("import.manualAddStep")}
+                          data-voice-aliases="添加步骤 新增步骤 add step"
                         >
                           <Plus className="h-4 w-4" strokeWidth={1.75} />
                           {t("import.manualAddStep")}
@@ -2365,6 +2404,8 @@ function ImportPage() {
                       <button
                         className="rounded-full border border-border px-5 py-3 text-sm hover:border-foreground"
                         onClick={resetVideoDraft}
+                        data-voice-label={t("import.startOver")}
+                        data-voice-aliases="重新开始 重置导入 start over reset import"
                       >
                         {t("import.startOver")}
                       </button>
@@ -2408,6 +2449,10 @@ function ImportPage() {
                         aria-label={
                           coverPreviewUrl ? t("import.coverPreviewOpen") : t("import.uploadCover")
                         }
+                        data-voice-label={
+                          coverPreviewUrl ? t("import.coverPreviewOpen") : t("import.uploadCover")
+                        }
+                        data-voice-aliases="上传封面 选择封面 换张封面 查看封面 放大封面 upload cover choose cover replace cover preview cover"
                         onClick={() => {
                           if (coverPreviewUrl) {
                             setExpandedCoverPreview({
@@ -2462,6 +2507,8 @@ function ImportPage() {
                               disabled={stage === "saving"}
                               type="button"
                               aria-label={t("import.uploadCover")}
+                              data-voice-label={t("import.uploadCover")}
+                              data-voice-aliases="上传封面 选择封面 换张封面 upload cover choose cover replace cover"
                             >
                               <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                             </button>
@@ -2484,6 +2531,8 @@ function ImportPage() {
                               }
                               type="button"
                               aria-label={t("import.aiGenerateCover")}
+                              data-voice-label={t("import.aiGenerateCover")}
+                              data-voice-aliases="重新生成封面 生成封面 AI生成封面 regenerate cover generate cover ai generate cover"
                             >
                               {isGeneratingCover ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -2509,6 +2558,8 @@ function ImportPage() {
                           className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
                           onClick={() => void handleSaveVideo()}
                           disabled={stage === "saving" || stage === "done"}
+                          data-voice-label={t("import.saveToRecipes")}
+                          data-voice-aliases="保存到我的菜谱 保存到菜谱 保存菜谱 save to recipes save recipe"
                         >
                           {stage === "saving" ? (
                             <>
@@ -2552,6 +2603,8 @@ function ImportPage() {
                         className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-50"
                         onClick={() => void handleSaveVideo()}
                         disabled={stage === "saving" || stage === "done"}
+                        data-voice-label={t("import.saveTranscript")}
+                        data-voice-aliases="保存转录 保存菜谱 保存到菜谱 save transcript save recipe"
                       >
                         {stage === "saving" ? (
                           <>
@@ -2568,6 +2621,8 @@ function ImportPage() {
                       <button
                         className="rounded-full border border-border px-5 py-2.5 text-sm hover:border-foreground"
                         onClick={resetVideoDraft}
+                        data-voice-label={t("import.startOver")}
+                        data-voice-aliases="重新开始 重置导入 start over reset import"
                       >
                         {t("import.startOver")}
                       </button>
@@ -2598,6 +2653,8 @@ function ImportPage() {
                           disabled={isManualSaving}
                           type="button"
                           aria-label={t("import.manualTextOpenDialog")}
+                          data-voice-label={t("import.manualTextOpenDialog")}
+                          data-voice-aliases="粘贴菜谱 从文字导入 AI整理菜谱 structure recipe from text paste recipe import text"
                         >
                           <Sparkles className="h-4 w-4" strokeWidth={1.75} />
                         </button>
@@ -2769,6 +2826,8 @@ function ImportPage() {
                           })
                         }
                         type="button"
+                        data-voice-label={t("import.manualAddIngredient")}
+                        data-voice-aliases="添加食材 新增食材 add ingredient"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
                         {t("import.manualAddIngredient")}
@@ -2857,6 +2916,8 @@ function ImportPage() {
                           })
                         }
                         type="button"
+                        data-voice-label={t("import.manualAddStep")}
+                        data-voice-aliases="添加步骤 新增步骤 add step"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
                         {t("import.manualAddStep")}
@@ -2939,6 +3000,8 @@ function ImportPage() {
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay disabled:opacity-50 sm:flex-1"
                       onClick={() => void handleSaveManual()}
                       disabled={isManualSaving}
+                      data-voice-label={t("import.manualSave")}
+                      data-voice-aliases="保存手动菜谱 保存到菜谱 保存菜谱 save manual recipe save recipe"
                     >
                       {isManualSaving ? (
                         <>
@@ -2955,6 +3018,8 @@ function ImportPage() {
                       className="w-full rounded-full border border-border px-6 py-3 text-sm hover:border-foreground sm:w-auto"
                       onClick={resetManualDraft}
                       disabled={isManualSaving}
+                      data-voice-label={t("import.manualReset")}
+                      data-voice-aliases="重置手动菜谱 清空表单 reset manual recipe reset form"
                     >
                       {t("import.manualReset")}
                     </button>
@@ -2973,10 +3038,11 @@ function ImportPage() {
                 </div>
               )}
             </div>
-            {(mode === "manual" || showVideoSidebar) && (
-              <div className={`min-w-0 ${showVideoSidebar ? "lg:col-span-5" : "lg:col-span-4"}`}>
+            {(mode === "video" || mode === "manual") && (
+              <div className="min-w-0 lg:col-span-4">
                 {mode === "video" ? (
-                  <div className="space-y-4">
+                  <div className="space-y-4 lg:sticky lg:top-24">
+                    {videoTasksPanel}
                     {showGuidedFollowUp ? (
                       <>
                         <div className="rounded-[2rem] border border-border bg-card p-6">
@@ -3198,6 +3264,12 @@ function ImportPage() {
                             ? t("import.coverPreviewOpen")
                             : t("import.uploadCover")
                         }
+                        data-voice-label={
+                          manualCoverPreviewUrl
+                            ? t("import.coverPreviewOpen")
+                            : t("import.uploadCover")
+                        }
+                        data-voice-aliases="上传封面 选择封面 换张封面 查看封面 放大封面 upload cover choose cover replace cover preview cover"
                         onClick={() => {
                           if (isManualSaving) return;
                           if (manualCoverPreviewUrl) {
@@ -3252,6 +3324,8 @@ function ImportPage() {
                               disabled={isManualSaving}
                               type="button"
                               aria-label={t("import.uploadCover")}
+                              data-voice-label={t("import.uploadCover")}
+                              data-voice-aliases="上传封面 选择封面 换张封面 upload cover choose cover replace cover"
                             >
                               <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                             </button>
@@ -3274,6 +3348,8 @@ function ImportPage() {
                               }
                               type="button"
                               aria-label={t("import.aiGenerateCover")}
+                              data-voice-label={t("import.aiGenerateCover")}
+                              data-voice-aliases="重新生成封面 生成封面 AI生成封面 regenerate cover generate cover ai generate cover"
                             >
                               {isManualGeneratingCover ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />

@@ -822,6 +822,26 @@ function SettingsPage() {
     toast.success(t("settings.data.clearSuccess"));
   };
 
+  useEffect(() => {
+    const handleVoicePageAction = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: string }>).detail?.action;
+      if (!action?.startsWith("settings-")) return;
+
+      setActiveTab("data");
+      if (action === "settings-export") {
+        void handleExport();
+        return;
+      }
+
+      if (action === "settings-import") {
+        window.setTimeout(() => importRef.current?.click(), 120);
+      }
+    };
+
+    window.addEventListener("cooktalk:voice-page-action", handleVoicePageAction);
+    return () => window.removeEventListener("cooktalk:voice-page-action", handleVoicePageAction);
+  }, [handleExport]);
+
   // 鈹€鈹€ Sidebar sections 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const sections: Array<{
     icon: typeof Key;
@@ -858,6 +878,8 @@ function SettingsPage() {
                     type="button"
                     onClick={() => setActiveTab(s.value)}
                     aria-current={activeTab === s.value ? "page" : undefined}
+                    data-voice-label={s.label}
+                    data-voice-aliases={`${s.label} 设置页签 ${s.label} tab ${s.value}`}
                     className={`flex min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors lg:w-full ${
                       activeTab === s.value
                         ? "bg-secondary text-foreground"
@@ -1187,6 +1209,8 @@ function SettingsPage() {
                       <button
                         type="button"
                         onClick={handleExport}
+                        data-voice-label={t("settings.data.export")}
+                        data-voice-aliases="导出所有菜谱 导出全部菜谱 导出菜谱 下载所有菜谱 export all recipes export recipes download recipes backup recipes"
                         className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-5 text-left hover:border-foreground"
                       >
                         <Download className="h-5 w-5" strokeWidth={1.5} />
@@ -1198,6 +1222,8 @@ function SettingsPage() {
                       <button
                         type="button"
                         onClick={() => importRef.current?.click()}
+                        data-voice-label={t("settings.data.import")}
+                        data-voice-aliases="导入菜谱 导入菜谱文件 上传菜谱 上传菜谱文件 恢复菜谱 import recipes import recipe file upload recipes restore recipes"
                         className="group flex flex-col items-start gap-2 rounded-2xl border border-border bg-card p-5 text-left hover:border-foreground"
                       >
                         <Upload className="h-5 w-5" strokeWidth={1.5} />
@@ -1217,6 +1243,8 @@ function SettingsPage() {
                         <AlertDialogTrigger asChild>
                           <button
                             type="button"
+                            data-voice-label={t("settings.data.clear")}
+                            data-voice-aliases="清空所有数据 清空菜谱 删除全部数据 clear all data clear recipes delete all data"
                             className="group flex flex-col items-start gap-2 rounded-2xl border border-destructive/30 bg-card p-5 text-left text-destructive hover:border-destructive"
                           >
                             <Trash2 className="h-5 w-5" strokeWidth={1.5} />

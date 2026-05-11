@@ -1773,9 +1773,7 @@ function HomePage() {
       const transcript = (event as CustomEvent<HomeAwakeDetail>).detail?.transcript?.trim() ?? "";
       if (transcript) {
         handleCommand(transcript);
-        return;
       }
-      handleAwakeReady();
     };
 
     const handleHomeTranscript = (event: Event) => {
@@ -1788,7 +1786,7 @@ function HomePage() {
       window.removeEventListener("cooktalk:home-awake", handleHomeAwake);
       window.removeEventListener("cooktalk:home-transcript", handleHomeTranscript);
     };
-  }, [handleAwakeReady, handleCommand]);
+  }, [handleCommand]);
 
   useEffect(() => {
     if (!pendingHomeAwake) return;

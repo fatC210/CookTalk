@@ -1650,6 +1650,133 @@ function normalizeRecipePayload(value: unknown): RecipePayload | null {
   return hasUsableRecipePayload(normalized) ? normalized : null;
 }
 
+function coerceRecipePayload(value: unknown): RecipePayload {
+  const normalized = normalizeRecipePayload(value);
+  if (normalized) return normalized;
+
+  const recipe = unwrapRecipeObject(value);
+  if (!recipe || isSchemaOnlyRecord(recipe)) {
+    return { title: "", ingredients: [], steps: [], tags: {} };
+  }
+
+  const tags = readFirstRecord(recipe, ["tags", "tag", "metadata", "meta", "labels", "标签"]) ?? {};
+  const flavor =
+    splitFlavor(readFirstValue(tags, ["flavor", "flavors", "taste", "口味", "风味"])) ??
+    splitFlavor(readFirstValue(recipe, ["recipeCategory", "keywords", "category", "标签", "口味"]));
+  const cuisine = omitSchemaPlaceholder(
+    cleanRecipeContentText(
+      readFirstString(tags, ["cuisine", "style", "recipeCuisine", "菜系", "菜式"]) ||
+        readFirstString(recipe, ["recipeCuisine", "cuisine", "style", "菜系", "菜式"]),
+    ),
+  );
+  const difficulty = normalizeDifficulty(
+    readFirstValue(tags, ["difficulty", "level", "难度"]) ??
+      readFirstValue(recipe, ["difficulty", "level", "难度"]),
+  );
+  const totalTimeMin =
+    parseDurationToMinutes(
+      readFirstValue(tags, ["totalTimeMin", "totalMinutes", "cookTimeMin", "总时间分钟"]),
+    ) ??
+    parseDurationToMinutes(
+      readFirstValue(recipe, [
+        "totalTimeMin",
+        "totalMinutes",
+        "cookTimeMin",
+        "prepTimeMin",
+        "总时间分钟",
+      ]),
+    ) ??
+    parseDurationToMinutes(
+      readFirstValue(tags, ["totalTime", "cookTime", "time", "总时间", "烹饪时间", "耗时"]),
+    ) ??
+    parseDurationToMinutes(
+      readFirstValue(recipe, [
+        "totalTime",
+        "cookTime",
+        "prepTime",
+        "time",
+        "总时间",
+        "烹饪时间",
+        "耗时",
+      ]),
+    );
+  const servings = parseServings(
+    readFirstValue(tags, ["servings", "serves", "portion", "份量", "人数"]) ??
+      readFirstValue(recipe, [
+        "recipeYield",
+        "yield",
+        "servings",
+        "serves",
+        "portion",
+        "份量",
+        "人数",
+      ]),
+  );
+  const spiceLevel = omitSchemaPlaceholder(
+    cleanRecipeContentText(readFirstString(tags, ["spiceLevel", "spicy", "辣度"])),
+  );
+  const notes = omitSchemaPlaceholder(
+    cleanRecipeContentText(readFirstString(tags, ["notes", "note", "备注"])),
+  );
+
+  return {
+    title: omitSchemaPlaceholder(
+      cleanRecipeContentText(
+        readFirstString(recipe, [
+          "title",
+          "name",
+          "dishName",
+          "recipeName",
+          "headline",
+          "菜名",
+          "名称",
+          "标题",
+        ]),
+      ),
+    ),
+    ingredients: sanitizeRecipeIngredients(
+      normalizeIngredients(
+        readFirstValue(recipe, [
+          "ingredients",
+          "ingredientList",
+          "recipeIngredient",
+          "recipeIngredients",
+          "materials",
+          "食材",
+          "原料",
+          "用料",
+          "配料",
+        ]),
+      ),
+    ),
+    steps: sanitizeRecipeSteps(
+      normalizeSteps(
+        readFirstValue(recipe, [
+          "steps",
+          "instructions",
+          "recipeInstructions",
+          "recipeInstruction",
+          "itemListElement",
+          "directions",
+          "method",
+          "做法",
+          "步骤",
+          "烹饪步骤",
+        ]),
+      ),
+    ),
+    tags: {
+      ...(flavor ? { flavor } : {}),
+      ...(difficulty ? { difficulty } : {}),
+      ...(cuisine ? { cuisine } : {}),
+      ...(totalTimeMin ? { totalTimeMin } : {}),
+      ...(servings ? { servings } : {}),
+      ...(spiceLevel ? { spiceLevel } : {}),
+      ...(notes ? { notes } : {}),
+    },
+  };
+}
+
 function parseLabeledRecipeText(text: string): RecipePayload | null {
   const rawTitle = text.match(/(?:菜名|标题|名称|title|name)\s*[：:]\s*([^\n]+)/i)?.[1] ?? "";
   const title = omitSchemaPlaceholder(
@@ -1917,11 +2044,11 @@ function localizeRecipePayload(recipe: RecipePayload, language: AppLanguage): Re
 }
 
 export function cleanStructuredRecipePayload(
-  recipe: RecipePayload,
+  recipe: unknown,
   language?: AppLanguage,
   fallbackText?: string,
 ): RecipePayload {
-  const cleaned = enrichRecipePayload(recipe, fallbackText);
+  const cleaned = enrichRecipePayload(coerceRecipePayload(recipe), fallbackText);
   const localized = localizeRecipePayload(cleaned, resolveRecipeLanguage(language));
   const heuristic = fallbackText ? buildHeuristicRecipePayload(fallbackText) : null;
 

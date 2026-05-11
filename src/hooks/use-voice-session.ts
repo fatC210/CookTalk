@@ -18,6 +18,7 @@ interface UseVoiceSessionOptions {
   awakeResetKey?: string | number | boolean;
   commandDurationMs?: number;
   suppressPureWakeWordTranscript?: boolean;
+  shouldHandleSleepingTranscript?: (transcript: string, phrase: string) => boolean;
   onWake?: (event: VoiceWakeEvent) => void;
   onTranscript: (transcript: string) => Promise<void> | void;
   onError?: (message: string) => void;
@@ -68,6 +69,7 @@ export function useVoiceSession({
   awakeResetKey,
   commandDurationMs = 5000,
   suppressPureWakeWordTranscript = true,
+  shouldHandleSleepingTranscript,
   onWake,
   onTranscript,
   onError,
@@ -90,6 +92,7 @@ export function useVoiceSession({
   const onTranscriptRef = useRef(onTranscript);
   const onWakeRef = useRef(onWake);
   const onErrorRef = useRef(onError);
+  const shouldHandleSleepingTranscriptRef = useRef(shouldHandleSleepingTranscript);
   const isSupported =
     typeof navigator !== "undefined" &&
     !!getSpeechRecognitionConstructor() &&
@@ -111,7 +114,8 @@ export function useVoiceSession({
     onTranscriptRef.current = onTranscript;
     onWakeRef.current = onWake;
     onErrorRef.current = onError;
-  }, [onTranscript, onWake, onError]);
+    shouldHandleSleepingTranscriptRef.current = shouldHandleSleepingTranscript;
+  }, [onTranscript, onWake, onError, shouldHandleSleepingTranscript]);
 
   useEffect(() => {
     isAwakeRef.current = false;
@@ -332,7 +336,16 @@ export function useVoiceSession({
         return;
       }
 
-      if (hasWakeWord(phrase, wakeWords)) {
+      const hasMatchedWakeWord = hasWakeWord(phrase, wakeWords);
+      if (!hasMatchedWakeWord) {
+        const transcript = getCommandTranscript(phrase, wakeWords);
+        if (shouldHandleSleepingTranscriptRef.current?.(transcript || phrase, phrase)) {
+          void onTranscriptRef.current(transcript || phrase);
+        }
+        return;
+      }
+
+      if (hasMatchedWakeWord) {
         const transcript = getCommandTranscript(phrase, wakeWords);
         isAwakeRef.current = true;
         onWakeRef.current?.({ phrase, source: "wake-word", transcript });
