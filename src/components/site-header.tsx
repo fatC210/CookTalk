@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Menu, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
   const { t } = useTranslation();
@@ -33,10 +32,7 @@ export function SiteHeader() {
   return (
     <header
       ref={headerRef}
-      className={cn(
-        "sticky top-0 z-40 border-b border-border/20",
-        mobileOpen ? "bg-background" : "bg-background/65 backdrop-blur-xl",
-      )}
+      className="sticky top-0 z-40 border-b border-border/20 bg-background md:bg-background/65 md:backdrop-blur-xl"
     >
       <div className="mx-auto grid h-14 max-w-7xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 sm:h-16 sm:gap-4 sm:px-6">
         <Link to="/" className="group flex min-w-0 items-center gap-2.5">

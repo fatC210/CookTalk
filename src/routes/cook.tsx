@@ -2,18 +2,8 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import {
-  MessageCircle,
-  Mic,
-  Pause,
-  Play,
-  SkipBack,
-  SkipForward,
-  Timer,
-  Volume2,
-  X,
-} from "lucide-react";
-import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
+import { MessageCircle, Timer, Volume2, X } from "lucide-react";
+import { VoiceHint } from "@/components/voice-badge";
 import {
   answerCookingQuestion,
   buildStepSpeech,
@@ -127,6 +117,8 @@ function CookPage() {
   });
   const setMutedRef = useRef<((muted: boolean) => void) | null>(null);
   const announcedStepKeyRef = useRef<string | null>(null);
+  const pendingInitialAnnounceStepRef = useRef<number | null>(null);
+  const isClosingRef = useRef(false);
 
   const recipeStepCount = recipe?.steps.length ?? 0;
   const safeStep =
@@ -168,6 +160,7 @@ function CookPage() {
   }, [t, language]);
 
   const handleClose = useCallback(() => {
+    isClosingRef.current = true;
     stopActiveVoicePlayback();
     endCooking();
     navigate({ to: id ? "/recipe-detail" : "/recipes", search: id ? { id } : {} });
@@ -404,42 +397,9 @@ function CookPage() {
     },
   });
 
-  const { captureCommand, error, isMuted, isSupported, setMuted, status } = voiceSession;
+  const { error, isMuted, setMuted, status } = voiceSession;
   setMutedRef.current = setMuted;
   const effectiveStatus: VoiceStatus = isSpeaking ? "speaking" : status;
-
-  const handleManualStepChange = useCallback(
-    (targetStep: number) => {
-      if (!recipe) return;
-      updateLatestState({ stepIndex: targetStep });
-    },
-    [recipe, updateLatestState],
-  );
-
-  const handleToggleMic = useCallback(() => {
-    if (!hasElevenLabsKey) {
-      toast.error(t("cook.voiceRequired"), {
-        action: {
-          label: t("cook.openSettings"),
-          onClick: () => void navigate({ to: "/settings" }),
-        },
-      });
-      return;
-    }
-
-    if (!isSupported) {
-      toast.error(t("cook.voiceUnsupported"));
-      return;
-    }
-
-    if (isMuted) {
-      setMuted(false);
-      void captureCommand({ force: true });
-      return;
-    }
-
-    void captureCommand();
-  }, [captureCommand, hasElevenLabsKey, isMuted, isSupported, navigate, setMuted, t]);
 
   useEffect(() => {
     if (!id) {
@@ -451,18 +411,21 @@ function CookPage() {
 
   useEffect(() => {
     if (!recipe || !id) return;
-    startCooking(id, recipe.steps.length);
-    if (initialStep > 0) {
-      jumpToStep(initialStep);
-    }
-  }, [id, initialStep, jumpToStep, recipe, startCooking]);
+    const targetStep =
+      recipe.steps.length > 0 ? Math.max(0, Math.min(initialStep, recipe.steps.length - 1)) : 0;
+    pendingInitialAnnounceStepRef.current = targetStep;
+    startCooking(id, recipe.steps.length, targetStep);
+  }, [id, initialStep, recipe, startCooking]);
 
   useEffect(() => {
     if (!recipe) return;
+    if (isClosingRef.current) return;
 
-    const stepKey = `${recipe.id}:${safeStep}:${language}`;
+    const targetStep = pendingInitialAnnounceStepRef.current ?? safeStep;
+    const stepKey = `${recipe.id}:${targetStep}:${language}`;
     if (announcedStepKeyRef.current === stepKey) return;
-    void announceCurrentStep(recipe, safeStep);
+    pendingInitialAnnounceStepRef.current = null;
+    void announceCurrentStep(recipe, targetStep);
   }, [announceCurrentStep, language, recipe, safeStep]);
 
   useEffect(() => {
@@ -476,6 +439,7 @@ function CookPage() {
 
   useEffect(() => {
     return () => {
+      isClosingRef.current = true;
       stopActiveVoicePlayback();
     };
   }, []);
@@ -551,14 +515,9 @@ function CookPage() {
 
   const description = step?.description ?? "";
   const { main: descMain, highlight: descHighlight } = getStepDescriptionParts(description);
-  const micButtonLabel = isMuted
-    ? t("cook.resumeMic")
-    : effectiveStatus === "recording"
-      ? t("cook.recording")
-      : t("cook.askNow");
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background">
+    <div className="flex h-dvh min-w-0 flex-col overflow-x-hidden overflow-y-hidden bg-background">
       <header className="shrink-0 border-b border-border/60">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
           <div className="flex items-center gap-3">
@@ -587,8 +546,8 @@ function CookPage() {
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col">
-        <div className="mx-auto flex h-full w-full max-w-5xl min-h-0 flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+        <div className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-5xl flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
           <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               {t("cook.stepOf", { current: stepNumber, total: stepCount })}
@@ -686,26 +645,26 @@ function CookPage() {
             </div>
           )}
 
-          <div className="mt-3 min-h-0 shrink-0 rounded-[2rem] border border-border bg-card p-4 sm:p-5">
+          <div className="mt-3 min-h-0 min-w-0 shrink-0 rounded-[2rem] border border-border bg-card p-4 sm:p-5">
             <div className="flex items-center gap-2">
               <MessageCircle className="h-4 w-4 text-clay" strokeWidth={1.75} />
               <div className="text-sm font-medium">{t("cook.voiceQa")}</div>
             </div>
-            <div className="mt-4 flex max-h-[18rem] flex-col gap-3 overflow-y-auto pr-1">
+            <div className="mt-4 flex min-w-0 max-h-[18rem] flex-col gap-3 overflow-x-hidden overflow-y-auto pr-1">
               {qaMessages.map((message) => {
                 const isAssistant = message.speaker === "assistant";
                 return (
                   <div
                     key={message.id}
-                    className="rounded-[1.75rem] border-2 border-foreground/85 bg-background px-4 py-3 sm:px-5"
+                    className="min-w-0 overflow-hidden rounded-[1.75rem] border-2 border-foreground/85 bg-background px-4 py-3 sm:px-5"
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
                       <span className="mt-0.5 h-7 w-7 shrink-0 rounded-full border-2 border-foreground/85 bg-background" />
                       <div className="min-w-0 flex-1">
                         <div className="text-base font-semibold leading-none">
                           {isAssistant ? "cooktalk" : t("cook.youLabel")}
                         </div>
-                        <p className="mt-3 whitespace-pre-wrap text-sm text-foreground/90 sm:text-base">
+                        <p className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm text-foreground/90 sm:text-base">
                           {message.text}
                         </p>
                       </div>
@@ -724,66 +683,18 @@ function CookPage() {
         </div>
 
         <div className="shrink-0 border-t border-border/60 bg-card/50">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-3 px-4 py-4 sm:px-6 sm:py-6">
-            <button
-              onClick={() => {
-                const target = Math.max(safeStep - 1, 0);
-                if (target === safeStep) return;
-                prevStep();
-                handleManualStepChange(target);
-              }}
-              disabled={safeStep === 0}
-              className="relative inline-flex h-14 w-14 items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:text-clay focus-visible:border-border disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <VoiceBadge n={1} className="absolute -right-1 -top-1" />
-              <SkipBack className="h-5 w-5" strokeWidth={1.5} />
-            </button>
-            <button
-              onClick={() => {
-                if (isPaused) {
-                  resumeCooking();
-                  updateLatestState({ isPaused: false });
-                  if (recipe) void announceCurrentStep(recipe, safeStep);
-                } else {
-                  pauseCooking();
-                  updateLatestState({ isPaused: true });
-                  void speak(language === "zh" ? "已暂停。" : "Paused.");
-                }
-              }}
-              className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-foreground text-background hover:bg-clay"
-            >
-              {isPaused ? (
-                <Play className="h-6 w-6" strokeWidth={1.5} />
-              ) : (
-                <Pause className="h-6 w-6" strokeWidth={1.5} />
-              )}
-            </button>
+          <div className="mx-auto flex max-w-5xl items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
             <button
               onClick={() => {
                 const target = Math.min(safeStep + 1, Math.max(stepCount - 1, 0));
                 if (target === safeStep) return;
                 nextStep();
-                handleManualStepChange(target);
+                updateLatestState({ stepIndex: target });
               }}
               disabled={safeStep === stepCount - 1}
-              className="relative inline-flex h-14 w-14 items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:text-clay focus-visible:border-border disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex min-w-[12rem] items-center justify-center rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-colors hover:bg-clay disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
             >
-              <VoiceBadge n={2} className="absolute -right-1 -top-1" />
-              <SkipForward className="h-5 w-5" strokeWidth={1.5} />
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleMic}
-              disabled={effectiveStatus === "transcribing" || effectiveStatus === "thinking"}
-              className="order-4 flex w-full items-center gap-2 rounded-full border border-border bg-background px-4 py-3 text-left hover:border-clay disabled:cursor-wait disabled:opacity-70 md:ml-4 md:flex-1"
-            >
-              <Mic
-                className={`h-4 w-4 ${isMuted ? "text-destructive" : "text-clay"}`}
-                strokeWidth={1.75}
-              />
-              <span className="text-sm text-muted-foreground">
-                {voiceStatusLabel} 路 {micButtonLabel}
-              </span>
+              {t("cook.nextStepButton")}
             </button>
           </div>
         </div>

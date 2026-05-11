@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import { v4 as uuidv4 } from "uuid";
+import type { VideoImportDraftSnapshot } from "@/stores/import-draft-store";
 
 export interface Recipe {
   id: string;
@@ -50,10 +51,35 @@ export interface VoicePreviewCacheEntry {
   createdAt: number;
 }
 
+export type VideoImportTaskProgress =
+  | "pending"
+  | "transcribing"
+  | "structuring"
+  | "follow-up"
+  | "cover"
+  | "saving"
+  | "done"
+  | "error";
+
+export interface VideoImportTask {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  createdAt: number;
+  updatedAt: number;
+  progress: VideoImportTaskProgress;
+  progressPercent: number;
+  progressLabelKey: string;
+  recipeTitle: string;
+  snapshot: VideoImportDraftSnapshot;
+}
+
 class CookTalkDB extends Dexie {
   recipes!: EntityTable<Recipe, "id">;
   voices!: EntityTable<Voice, "id">;
   voicePreviewCache!: EntityTable<VoicePreviewCacheEntry, "key">;
+  videoImportTasks!: EntityTable<VideoImportTask, "id">;
 
   constructor() {
     super("CookTalkDB");
@@ -65,6 +91,12 @@ class CookTalkDB extends Dexie {
       recipes: "id, title, createdAt, lastCookedAt, *tags.flavor",
       voices: "id, name, isDefault, language, createdAt",
       voicePreviewCache: "key, ownerKey, createdAt",
+    });
+    this.version(3).stores({
+      recipes: "id, title, createdAt, lastCookedAt, *tags.flavor",
+      voices: "id, name, isDefault, language, createdAt",
+      voicePreviewCache: "key, ownerKey, createdAt",
+      videoImportTasks: "id, updatedAt, createdAt",
     });
   }
 }
@@ -162,4 +194,16 @@ export async function saveVoicePreviewAudio(
     ...entry,
     createdAt: entry.createdAt ?? Date.now(),
   });
+}
+
+export async function getAllVideoImportTasks(): Promise<VideoImportTask[]> {
+  return db.videoImportTasks.orderBy("updatedAt").reverse().toArray();
+}
+
+export async function saveVideoImportTask(task: VideoImportTask): Promise<void> {
+  await db.videoImportTasks.put(task);
+}
+
+export async function deleteVideoImportTask(id: string): Promise<void> {
+  await db.videoImportTasks.delete(id);
 }

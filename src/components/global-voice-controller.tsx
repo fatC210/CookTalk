@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useVoiceSession } from "@/hooks/use-voice-session";
 import { executeVoiceAction } from "@/lib/voice-actions";
-import { hasWakeWord, normalizeSpeechText, stripWakeWords } from "@/lib/voice-pipeline";
+import { normalizeSpeechText } from "@/lib/voice-pipeline";
 import { getActiveWakeWords, useAppStore } from "@/stores/app-store";
 
 type NavigablePath = "/" | "/recipes" | "/import" | "/voices" | "/settings" | "/onboarding";
@@ -25,10 +25,10 @@ export function GlobalVoiceController() {
   const clearManualWake = useAppStore((s) => s.clearManualWake);
   const homeConversationActive = useAppStore((s) => s.homeConversationActive);
   const pendingHomeAwake = useAppStore((s) => s.pendingHomeAwake);
-  const queueHomeAwake = useAppStore((s) => s.queueHomeAwake);
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const setListenMode = useAppStore((s) => s.setListenMode);
-  const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
+  const setTheme = useAppStore((s) => s.setTheme);
+  const setLanguage = useAppStore((s) => s.setLanguage);
 
   const enabled = pathname !== "/cook";
   const activeListenMode =
@@ -67,14 +67,16 @@ export function GlobalVoiceController() {
         return;
       }
 
-      if (pathname !== "/" && hasWakeWord(transcript, activeWakeWords)) {
-        const commandText = stripWakeWords(transcript, activeWakeWords);
-        queueHomeAwake({
-          phrase: transcript,
-          source: "wake-word",
-          transcript: normalizeSpeechText(commandText),
-        });
-        void navigate({ to: "/" });
+      const settingsIntent = parseGlobalSettingsIntent(transcript);
+      if (settingsIntent?.type === "theme") {
+        setTheme(settingsIntent.value);
+        toast.success(getThemeSuccessMessage(settingsIntent.value, t));
+        return;
+      }
+
+      if (settingsIntent?.type === "language") {
+        setLanguage(settingsIntent.value);
+        toast.success(getLanguageSuccessMessage(settingsIntent.value));
         return;
       }
 
@@ -106,17 +108,17 @@ export function GlobalVoiceController() {
       navigate,
       pathname,
       pendingHomeAwake,
-      queueHomeAwake,
       setListenMode,
+      setLanguage,
+      setTheme,
       t,
       toggleVoiceBadges,
-      activeWakeWords,
     ],
   );
 
   const voiceSession = useVoiceSession({
     enabled,
-    wakeWords: activeWakeWords,
+    wakeWords: getActiveWakeWords(wakeWords),
     language,
     listenMode: activeListenMode,
     manualWakeActive,
@@ -139,15 +141,7 @@ export function GlobalVoiceController() {
         return;
       }
 
-      if (pathname !== "/") {
-        queueHomeAwake({
-          phrase: event.phrase,
-          source: event.source,
-          transcript: event.transcript ?? "",
-        });
-        void navigate({ to: "/" });
-        return;
-      }
+      if (pathname !== "/") return;
 
       if (event.transcript?.trim()) return;
 
@@ -188,6 +182,52 @@ export function GlobalVoiceController() {
   ]);
 
   return null;
+}
+
+type GlobalSettingsIntent =
+  | { type: "theme"; value: "light" | "dark" | "auto" }
+  | { type: "language"; value: "en" | "zh" };
+
+function parseGlobalSettingsIntent(transcript: string): GlobalSettingsIntent | null {
+  const text = normalizeSpeechText(transcript);
+
+  if (
+    /(切换到|换成|设为|设置为|打开).*(深色|暗色)|switch to dark|dark mode|turn on dark/i.test(text)
+  ) {
+    return { type: "theme", value: "dark" };
+  }
+
+  if (
+    /(切换到|换成|设为|设置为|打开).*(浅色|亮色)|switch to light|light mode|turn on light/i.test(
+      text,
+    )
+  ) {
+    return { type: "theme", value: "light" };
+  }
+
+  if (/(跟随系统|自动主题|自动模式)|system theme|auto theme|follow system/i.test(text)) {
+    return { type: "theme", value: "auto" };
+  }
+
+  if (/(切换到中文|改成中文|使用中文)|switch to chinese|use chinese/i.test(text)) {
+    return { type: "language", value: "zh" };
+  }
+
+  if (/(切换到英文|改成英文|使用英文)|switch to english|use english/i.test(text)) {
+    return { type: "language", value: "en" };
+  }
+
+  return null;
+}
+
+function getThemeSuccessMessage(theme: "light" | "dark" | "auto", t: (key: string) => string) {
+  if (theme === "dark") return t("settings.appearance.dark");
+  if (theme === "light") return t("settings.appearance.light");
+  return t("settings.appearance.auto");
+}
+
+function getLanguageSuccessMessage(language: "en" | "zh") {
+  return language === "zh" ? "中文" : "English";
 }
 
 function parseGlobalNavigationIntent(transcript: string): NavigationIntent | null {

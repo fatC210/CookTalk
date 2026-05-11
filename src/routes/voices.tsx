@@ -886,274 +886,276 @@ function VoicesPage() {
           if (!open) closeCloneDialog();
         }}
       >
-        <DialogContent className="w-[calc(100vw-1rem)] min-w-0 overflow-x-hidden px-4 py-4 sm:w-[calc(100vw-2rem)] sm:max-w-2xl sm:px-6 sm:py-5 md:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="font-display text-xl sm:text-2xl">
-              {t("voices.cloneDialogTitle")}
-            </DialogTitle>
-            <DialogDescription>{t("voices.cloneDialogDescription")}</DialogDescription>
-          </DialogHeader>
+        <DialogContent className="w-[calc(100vw-1rem)] min-w-0 overflow-x-hidden rounded-[1.75rem] border-border p-0 sm:w-[calc(100vw-2rem)] sm:max-w-2xl md:max-w-3xl">
+          <div className="p-6 sm:p-7">
+            <DialogHeader>
+              <DialogTitle className="font-display text-xl sm:text-2xl">
+                {t("voices.cloneDialogTitle")}
+              </DialogTitle>
+              <DialogDescription>{t("voices.cloneDialogDescription")}</DialogDescription>
+            </DialogHeader>
 
-          {/* Step 1: Record or upload */}
-          {cloneStep === "record" && (
-            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] md:items-start">
-              <div className="min-w-0 space-y-3">
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {t("voices.recordOrUpload")}
-                </p>
-                <div className="rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:hidden">
-                  <details className="group">
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-left">
-                      <span className="min-w-0 flex-1 font-medium text-foreground">
-                        {t("voices.samplePromptTitle")}
-                      </span>
-                      <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
-                    </summary>
-                    <p className="mt-2 break-words">{t("voices.samplePrompt")}</p>
-                  </details>
-                </div>
-                <div className="hidden rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:block">
-                  <p className="mb-1 font-medium text-foreground">
-                    {t("voices.samplePromptTitle")}
+            {/* Step 1: Record or upload */}
+            {cloneStep === "record" && (
+              <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] md:items-start">
+                <div className="min-w-0 space-y-3">
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {t("voices.recordOrUpload")}
                   </p>
-                  <p className="break-words">{t("voices.samplePrompt")}</p>
-                </div>
-              </div>
-
-              <div className="min-w-0 space-y-3">
-                <div className="rounded-2xl border border-border p-4 text-center sm:p-5">
-                  {isRecording ? (
-                    <div className="space-y-3">
-                      <div className="flex h-12 items-center justify-center gap-0.5 sm:h-14">
-                        {Array.from({ length: 24 }).map((_, k) => (
-                          <span
-                            key={k}
-                            className="w-1 rounded-full bg-clay animate-pulse"
-                            style={{
-                              height: `${24 + Math.abs(Math.sin(k * 0.9)) * 24}px`,
-                              animationDelay: `${k * 40}ms`,
-                            }}
-                          />
-                        ))}
-                      </div>
-                      <p className="font-display text-3xl tabular-nums sm:text-4xl">
-                        {formatRecordingDuration(recordingTime)}
-                        <span className="text-sm font-sans text-muted-foreground">
-                          {" "}
-                          / {formatRecordingDuration(VOICE_CLONE_RECORDING_MAX_SECONDS)}
+                  <div className="rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:hidden">
+                    <details className="group">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-left">
+                        <span className="min-w-0 flex-1 font-medium text-foreground">
+                          {t("voices.samplePromptTitle")}
                         </span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {t("voices.recordingMinimumHint")}
-                      </p>
-                      <button
-                        className="inline-flex items-center gap-2 rounded-full bg-destructive px-6 py-2.5 text-sm text-white hover:bg-destructive/80"
-                        onClick={() => stopRecording()}
-                        type="button"
-                      >
-                        <StopCircle className="h-4 w-4" /> {t("voices.stopRecording")}
-                      </button>
-                    </div>
-                  ) : recordedAudio ? (
-                    <div className="space-y-3">
-                      {isRecordedAudioLongEnough ? (
-                        <CheckCircle2 className="mx-auto h-10 w-10 text-clay" strokeWidth={1.5} />
-                      ) : (
-                        <AlertCircle
-                          className="mx-auto h-10 w-10 text-destructive"
-                          strokeWidth={1.5}
-                        />
-                      )}
-                      <div>
-                        <p className="text-sm">
-                          {t("voices.recordedAudio", { count: recordingTime })}
+                        <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
+                      </summary>
+                      <p className="mt-2 break-words">{t("voices.samplePrompt")}</p>
+                    </details>
+                  </div>
+                  <div className="hidden rounded-xl bg-secondary/60 p-3 text-xs leading-relaxed text-muted-foreground md:block">
+                    <p className="mb-1 font-medium text-foreground">
+                      {t("voices.samplePromptTitle")}
+                    </p>
+                    <p className="break-words">{t("voices.samplePrompt")}</p>
+                  </div>
+                </div>
+
+                <div className="min-w-0 space-y-3">
+                  <div className="rounded-2xl border border-border p-4 text-center sm:p-5">
+                    {isRecording ? (
+                      <div className="space-y-3">
+                        <div className="flex h-12 items-center justify-center gap-0.5 sm:h-14">
+                          {Array.from({ length: 24 }).map((_, k) => (
+                            <span
+                              key={k}
+                              className="w-1 rounded-full bg-clay animate-pulse"
+                              style={{
+                                height: `${24 + Math.abs(Math.sin(k * 0.9)) * 24}px`,
+                                animationDelay: `${k * 40}ms`,
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <p className="font-display text-3xl tabular-nums sm:text-4xl">
+                          {formatRecordingDuration(recordingTime)}
+                          <span className="text-sm font-sans text-muted-foreground">
+                            {" "}
+                            / {formatRecordingDuration(VOICE_CLONE_RECORDING_MAX_SECONDS)}
+                          </span>
                         </p>
-                        {!isRecordedAudioLongEnough && (
-                          <p className="mt-1 text-xs text-destructive">
-                            {t("voices.recordingTooShortInline")}
-                          </p>
+                        <p className="text-xs text-muted-foreground">
+                          {t("voices.recordingMinimumHint")}
+                        </p>
+                        <button
+                          className="inline-flex items-center gap-2 rounded-full bg-destructive px-6 py-2.5 text-sm text-white hover:bg-destructive/80"
+                          onClick={() => stopRecording()}
+                          type="button"
+                        >
+                          <StopCircle className="h-4 w-4" /> {t("voices.stopRecording")}
+                        </button>
+                      </div>
+                    ) : recordedAudio ? (
+                      <div className="space-y-3">
+                        {isRecordedAudioLongEnough ? (
+                          <CheckCircle2 className="mx-auto h-10 w-10 text-clay" strokeWidth={1.5} />
+                        ) : (
+                          <AlertCircle
+                            className="mx-auto h-10 w-10 text-destructive"
+                            strokeWidth={1.5}
+                          />
                         )}
+                        <div>
+                          <p className="text-sm">
+                            {t("voices.recordedAudio", { count: recordingTime })}
+                          </p>
+                          {!isRecordedAudioLongEnough && (
+                            <p className="mt-1 text-xs text-destructive">
+                              {t("voices.recordingTooShortInline")}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          className="text-xs text-muted-foreground underline hover:text-foreground"
+                          onClick={() => {
+                            setRecordedAudio(null);
+                            setRecordingTime(0);
+                            void startRecording();
+                          }}
+                          type="button"
+                        >
+                          {t("voices.rerecord")}
+                        </button>
                       </div>
-                      <button
-                        className="text-xs text-muted-foreground underline hover:text-foreground"
-                        onClick={() => {
-                          setRecordedAudio(null);
-                          setRecordingTime(0);
-                          void startRecording();
-                        }}
-                        type="button"
-                      >
-                        {t("voices.rerecord")}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="flex h-12 items-center justify-center sm:h-14">
-                        <Mic className="h-10 w-10 text-muted-foreground" strokeWidth={1} />
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex h-12 items-center justify-center sm:h-14">
+                          <Mic className="h-10 w-10 text-muted-foreground" strokeWidth={1} />
+                        </div>
+                        <button
+                          className="inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-2.5 text-sm text-background hover:bg-clay"
+                          onClick={startRecording}
+                          type="button"
+                        >
+                          <Mic className="h-4 w-4" /> {t("voices.startRecording")}
+                        </button>
                       </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 border-t border-border" />
+                    <span className="text-xs text-muted-foreground">{t("common.or")}</span>
+                    <div className="flex-1 border-t border-border" />
+                  </div>
+
+                  <div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      onChange={handleAudioUpload}
+                    />
+                    {uploadedAudio ? (
+                      <div className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-border p-3">
+                        <AppTooltip content={uploadedAudio.name}>
+                          <span className="block min-w-0 flex-1 truncate text-sm">
+                            {t("voices.audioSelectedWithName", { name: uploadedAudio.name })}
+                          </span>
+                        </AppTooltip>
+                        <button
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            setUploadedAudio(null);
+                            if (fileInputRef.current) fileInputRef.current.value = "";
+                          }}
+                          type="button"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
                       <button
-                        className="inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-2.5 text-sm text-background hover:bg-clay"
-                        onClick={startRecording}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border py-3 text-sm hover:border-foreground"
+                        onClick={() => fileInputRef.current?.click()}
                         type="button"
                       >
-                        <Mic className="h-4 w-4" /> {t("voices.startRecording")}
+                        <Upload className="h-4 w-4" /> {t("voices.uploadAudio")}
                       </button>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 border-t border-border" />
-                  <span className="text-xs text-muted-foreground">{t("common.or")}</span>
-                  <div className="flex-1 border-t border-border" />
-                </div>
-
-                <div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="audio/*"
-                    className="hidden"
-                    onChange={handleAudioUpload}
-                  />
-                  {uploadedAudio ? (
-                    <div className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-border p-3">
-                      <AppTooltip content={uploadedAudio.name}>
-                        <span className="block min-w-0 flex-1 truncate text-sm">
-                          {t("voices.audioSelectedWithName", { name: uploadedAudio.name })}
-                        </span>
-                      </AppTooltip>
-                      <button
-                        className="shrink-0 text-muted-foreground hover:text-foreground"
-                        onClick={() => {
-                          setUploadedAudio(null);
-                          if (fileInputRef.current) fileInputRef.current.value = "";
-                        }}
-                        type="button"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border py-3 text-sm hover:border-foreground"
-                      onClick={() => fileInputRef.current?.click()}
-                      type="button"
-                    >
-                      <Upload className="h-4 w-4" /> {t("voices.uploadAudio")}
-                    </button>
-                  )}
-                </div>
-
-                <button
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
-                  disabled={!canContinueWithAudio}
-                  onClick={() => {
-                    if (!canContinueWithAudio) {
-                      if (recordedAudio && !isRecordedAudioLongEnough) {
-                        toast.error(t("voices.recordingTooShort"));
+                  <button
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
+                    disabled={!canContinueWithAudio}
+                    onClick={() => {
+                      if (!canContinueWithAudio) {
+                        if (recordedAudio && !isRecordedAudioLongEnough) {
+                          toast.error(t("voices.recordingTooShort"));
+                        }
+                        return;
                       }
-                      return;
-                    }
-                    setCloneStep("name");
+                      setCloneStep("name");
+                    }}
+                    type="button"
+                  >
+                    {t("common.continue")}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: Name */}
+            {cloneStep === "name" && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">{t("voices.namePrompt")}</p>
+                <input
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
+                  placeholder={t("voices.namePlaceholder")}
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && voiceName.trim()) setCloneStep("confirm");
                   }}
-                  type="button"
+                  autoFocus
+                />
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
+                    onClick={() => setCloneStep("record")}
+                  >
+                    {t("common.back")}
+                  </button>
+                  <button
+                    className="flex-1 rounded-full bg-foreground py-2.5 text-sm text-background hover:bg-clay disabled:opacity-50"
+                    disabled={!voiceName.trim()}
+                    onClick={() => setCloneStep("confirm")}
+                  >
+                    {t("common.continue")}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Confirm authorization */}
+            {cloneStep === "confirm" && (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-border bg-secondary/50 p-4 text-sm space-y-2">
+                  <p className="font-medium text-foreground">{t("voices.authorizationRequired")}</p>
+                  <p className="text-muted-foreground">{t("voices.authorizationIntro")}</p>
+                  <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
+                    <li>{t("voices.authorizationRight")}</li>
+                    <li>{t("voices.authorizationConsent")}</li>
+                    <li>{t("voices.authorizationPersonal")}</li>
+                  </ul>
+                </div>
+                <p className="text-sm">
+                  {t("voices.voiceName")} <span className="font-medium">{voiceName}</span>
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
+                    onClick={() => setCloneStep("name")}
+                  >
+                    {t("common.back")}
+                  </button>
+                  <button
+                    className="flex-1 rounded-full bg-foreground py-2.5 text-sm text-background hover:bg-clay"
+                    onClick={handleCloneVoice}
+                  >
+                    {t("voices.agreeClone")}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Cloning */}
+            {cloneStep === "cloning" && (
+              <div className="py-8 text-center space-y-4">
+                <Loader2 className="mx-auto h-12 w-12 animate-spin text-clay" strokeWidth={1.25} />
+                <h3 className="font-display text-xl">{t("voices.cloning")}</h3>
+                <p className="text-sm text-muted-foreground">{t("voices.cloningWait")}</p>
+              </div>
+            )}
+
+            {/* Step 5: Done */}
+            {cloneStep === "done" && (
+              <div className="py-8 text-center space-y-4">
+                <CheckCircle2 className="mx-auto h-12 w-12 text-clay" strokeWidth={1.25} />
+                <h3 className="font-display text-xl">{t("voices.cloned")}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {t("voices.availableInLibrary", { name: voiceName })}
+                </p>
+                <button
+                  className="w-full rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay"
+                  onClick={closeCloneDialog}
                 >
-                  {t("common.continue")}
+                  {t("common.done")}
                 </button>
               </div>
-            </div>
-          )}
-
-          {/* Step 2: Name */}
-          {cloneStep === "name" && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">{t("voices.namePrompt")}</p>
-              <input
-                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay"
-                placeholder={t("voices.namePlaceholder")}
-                value={voiceName}
-                onChange={(e) => setVoiceName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && voiceName.trim()) setCloneStep("confirm");
-                }}
-                autoFocus
-              />
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <button
-                  className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
-                  onClick={() => setCloneStep("record")}
-                >
-                  {t("common.back")}
-                </button>
-                <button
-                  className="flex-1 rounded-full bg-foreground py-2.5 text-sm text-background hover:bg-clay disabled:opacity-50"
-                  disabled={!voiceName.trim()}
-                  onClick={() => setCloneStep("confirm")}
-                >
-                  {t("common.continue")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Confirm authorization */}
-          {cloneStep === "confirm" && (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-border bg-secondary/50 p-4 text-sm space-y-2">
-                <p className="font-medium text-foreground">{t("voices.authorizationRequired")}</p>
-                <p className="text-muted-foreground">{t("voices.authorizationIntro")}</p>
-                <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
-                  <li>{t("voices.authorizationRight")}</li>
-                  <li>{t("voices.authorizationConsent")}</li>
-                  <li>{t("voices.authorizationPersonal")}</li>
-                </ul>
-              </div>
-              <p className="text-sm">
-                {t("voices.voiceName")} <span className="font-medium">{voiceName}</span>
-              </p>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <button
-                  className="flex-1 rounded-full border border-border py-2.5 text-sm hover:border-foreground"
-                  onClick={() => setCloneStep("name")}
-                >
-                  {t("common.back")}
-                </button>
-                <button
-                  className="flex-1 rounded-full bg-foreground py-2.5 text-sm text-background hover:bg-clay"
-                  onClick={handleCloneVoice}
-                >
-                  {t("voices.agreeClone")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 4: Cloning */}
-          {cloneStep === "cloning" && (
-            <div className="py-8 text-center space-y-4">
-              <Loader2 className="mx-auto h-12 w-12 animate-spin text-clay" strokeWidth={1.25} />
-              <h3 className="font-display text-xl">{t("voices.cloning")}</h3>
-              <p className="text-sm text-muted-foreground">{t("voices.cloningWait")}</p>
-            </div>
-          )}
-
-          {/* Step 5: Done */}
-          {cloneStep === "done" && (
-            <div className="py-8 text-center space-y-4">
-              <CheckCircle2 className="mx-auto h-12 w-12 text-clay" strokeWidth={1.25} />
-              <h3 className="font-display text-xl">{t("voices.cloned")}</h3>
-              <p className="text-sm text-muted-foreground">
-                {t("voices.availableInLibrary", { name: voiceName })}
-              </p>
-              <button
-                className="w-full rounded-full bg-foreground py-3 text-sm text-background hover:bg-clay"
-                onClick={closeCloneDialog}
-              >
-                {t("common.done")}
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

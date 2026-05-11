@@ -7,7 +7,7 @@ interface CookingState {
   totalSteps: number;
   isPaused: boolean;
 
-  startCooking: (recipeId: string, totalSteps: number) => void;
+  startCooking: (recipeId: string, totalSteps: number, initialStep?: number) => void;
   endCooking: () => void;
   nextStep: () => void;
   prevStep: () => void;
@@ -23,8 +23,14 @@ export const useCookingStore = create<CookingState>()((set, get) => ({
   totalSteps: 0,
   isPaused: false,
 
-  startCooking: (recipeId, totalSteps) =>
-    set({ isActive: true, recipeId, currentStep: 0, totalSteps, isPaused: false }),
+  startCooking: (recipeId, totalSteps, initialStep = 0) =>
+    set({
+      isActive: true,
+      recipeId,
+      currentStep: Math.max(0, Math.min(initialStep, Math.max(totalSteps - 1, 0))),
+      totalSteps,
+      isPaused: false,
+    }),
 
   endCooking: () =>
     set({ isActive: false, recipeId: null, currentStep: 0, totalSteps: 0, isPaused: false }),

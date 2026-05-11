@@ -1,8 +1,9 @@
 import { createStart, createMiddleware } from "@tanstack/react-start";
 
 import { renderErrorPage } from "./lib/error-page";
+import { parseLanguageCookie } from "./lib/language";
 
-const errorMiddleware = createMiddleware().server(async ({ next }) => {
+const errorMiddleware = createMiddleware({ type: "request" }).server(async ({ next, request }) => {
   try {
     return await next();
   } catch (error) {
@@ -10,7 +11,7 @@ const errorMiddleware = createMiddleware().server(async ({ next }) => {
       throw error;
     }
     console.error(error);
-    return new Response(renderErrorPage(), {
+    return new Response(renderErrorPage(parseLanguageCookie(request.headers.get("cookie"))), {
       status: 500,
       headers: { "content-type": "text/html; charset=utf-8" },
     });

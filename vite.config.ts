@@ -87,6 +87,25 @@ function serverFnErrorLogger(): Plugin {
   };
 }
 
+function faviconRedirect(): Plugin {
+  return {
+    name: "favicon-redirect",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url !== "/favicon.ico") {
+          next();
+          return;
+        }
+
+        res.statusCode = 302;
+        res.setHeader("Location", "/logo-dark.png");
+        res.end();
+      });
+    },
+  };
+}
+
 export default defineConfig(({ command, mode }) => {
   const envDefine: Record<string, string> = {};
   const loadedEnv = loadEnv(mode, process.cwd(), "VITE_");
@@ -99,6 +118,7 @@ export default defineConfig(({ command, mode }) => {
     tailwindcss(),
     tsConfigPaths({ projects: ["./tsconfig.json"] }),
     serverFnErrorLogger(),
+    faviconRedirect(),
     ...tanstackStart({
       importProtection: {
         behavior: "error",

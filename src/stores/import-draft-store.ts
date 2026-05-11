@@ -42,6 +42,31 @@ export type ManualStep = {
 
 export type ManualTextImportStatus = "idle" | "structuring";
 
+export type VideoImportDraftSnapshot = Pick<
+  ImportDraftValues,
+  | "selectedMediaFile"
+  | "stage"
+  | "error"
+  | "transcript"
+  | "structuredRecipe"
+  | "coverImage"
+  | "videoCoverSource"
+  | "editTitle"
+  | "editSteps"
+  | "editIngredients"
+  | "editDifficulty"
+  | "editTotalTime"
+  | "followUpAnswers"
+  | "followUpProgress"
+  | "followUpIndex"
+  | "followUpInput"
+  | "followUpPrompt"
+  | "followUpStatus"
+  | "followUpError"
+  | "followUpStarted"
+  | "followUpCompleted"
+>;
+
 type Setter<T> = Dispatch<SetStateAction<T>>;
 
 type ImportDraftValues = {
@@ -124,6 +149,7 @@ type ImportDraftActions = {
   setManualCoverSource: Setter<Recipe["coverSource"]>;
   setIsManualGeneratingCover: Setter<boolean>;
   setIsManualSaving: Setter<boolean>;
+  replaceVideoDraft: (snapshot: VideoImportDraftSnapshot | null | undefined) => void;
   clearFollowUpDraft: () => void;
   clearVideoDraft: () => void;
   clearManualDraft: () => void;
@@ -219,6 +245,40 @@ function createInitialImportDraft(): ImportDraftValues {
   };
 }
 
+export function createInitialVideoDraftSnapshot(): VideoImportDraftSnapshot {
+  return {
+    selectedMediaFile: null,
+    stage: "idle",
+    error: null,
+    transcript: "",
+    structuredRecipe: null,
+    coverImage: null,
+    videoCoverSource: "default",
+    editTitle: "",
+    editSteps: [],
+    editIngredients: [],
+    editDifficulty: "",
+    editTotalTime: "",
+    ...createFollowUpDraft(),
+  };
+}
+
+export function hasVideoDraftContent(snapshot: VideoImportDraftSnapshot): boolean {
+  return [
+    snapshot.selectedMediaFile,
+    snapshot.transcript.trim(),
+    snapshot.structuredRecipe,
+    snapshot.coverImage,
+    snapshot.error,
+    snapshot.editTitle.trim(),
+    snapshot.editIngredients.length > 0,
+    snapshot.editSteps.length > 0,
+    snapshot.stage !== "idle",
+    snapshot.followUpStarted,
+    snapshot.followUpCompleted,
+  ].some(Boolean);
+}
+
 function resolveSetState<T>(value: SetStateAction<T>, current: T): T {
   return typeof value === "function" ? (value as (current: T) => T)(current) : value;
 }
@@ -227,12 +287,7 @@ export const useImportDraftStore = create<ImportDraftState>()((set) => {
   const setField =
     <K extends keyof ImportDraftValues>(key: K): Setter<ImportDraftValues[K]> =>
     (value) =>
-      set(
-        (state) =>
-          ({
-            [key]: resolveSetState(value, state[key]),
-          }) as Pick<ImportDraftValues, K>,
-      );
+      set((state) => ({ [key]: resolveSetState(value, state[key]) }) as Pick<ImportDraftValues, K>);
 
   return {
     ...createInitialImportDraft(),
@@ -274,23 +329,13 @@ export const useImportDraftStore = create<ImportDraftState>()((set) => {
     setManualCoverSource: setField("manualCoverSource"),
     setIsManualGeneratingCover: setField("isManualGeneratingCover"),
     setIsManualSaving: setField("isManualSaving"),
-    clearFollowUpDraft: () => set(createFollowUpDraft()),
-    clearVideoDraft: () =>
+    replaceVideoDraft: (snapshot) =>
       set({
-        selectedMediaFile: null,
-        stage: "idle",
-        error: null,
-        transcript: "",
-        structuredRecipe: null,
-        coverImage: null,
-        videoCoverSource: "default",
-        editTitle: "",
-        editIngredients: [],
-        editSteps: [],
-        editDifficulty: "",
-        editTotalTime: "",
-        ...createFollowUpDraft(),
+        ...createInitialVideoDraftSnapshot(),
+        ...(snapshot ?? createInitialVideoDraftSnapshot()),
       }),
+    clearFollowUpDraft: () => set(createFollowUpDraft()),
+    clearVideoDraft: () => set(createInitialVideoDraftSnapshot()),
     clearManualDraft: () =>
       set({
         manualTitle: "",

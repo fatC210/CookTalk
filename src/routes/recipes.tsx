@@ -10,12 +10,22 @@ import {
   ChefHat,
   Mic,
   UtensilsCrossed,
+  ChevronDown,
 } from "lucide-react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Recipe } from "@/lib/db";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "react-i18next";
 import { useState, useEffect, useMemo } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/recipes")({
   head: () => ({
@@ -28,6 +38,12 @@ export const Route = createFileRoute("/recipes")({
 });
 
 type SortKey = "lastCookedAt" | "createdAt" | "totalTimeMin" | "difficulty";
+
+type FilterOption = {
+  id: string;
+  label: string;
+  group: "cuisine" | "flavor" | "difficulty";
+};
 
 const DIFFICULTY_ORDER: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
 
@@ -49,10 +65,22 @@ function gradientForId(id: string): string {
   return CARD_GRADIENTS[hash % CARD_GRADIENTS.length];
 }
 
+function matchesFilter(recipe: Recipe, option: FilterOption): boolean {
+  switch (option.group) {
+    case "cuisine":
+      return recipe.tags.cuisine === option.label;
+    case "flavor":
+      return recipe.tags.flavor?.includes(option.label) ?? false;
+    case "difficulty":
+      return recipe.tags.difficulty === option.id.replace("difficulty:", "");
+  }
+}
+
 function filterAndSort(
   recipes: Recipe[],
   search: string,
-  cuisine: string,
+  activeFilterIds: Set<string>,
+  filterOptions: FilterOption[],
   sort: SortKey,
 ): Recipe[] {
   const q = search.trim().toLowerCase();
@@ -69,8 +97,11 @@ function filterAndSort(
     });
   }
 
-  if (cuisine !== "all") {
-    result = result.filter((r) => r.tags.cuisine === cuisine);
+  if (activeFilterIds.size > 0) {
+    const activeFilters = filterOptions.filter((option) => activeFilterIds.has(option.id));
+    result = result.filter((recipe) =>
+      activeFilters.every((option) => matchesFilter(recipe, option)),
+    );
   }
 
   result = [...result].sort((a, b) => {
@@ -95,7 +126,7 @@ function filterAndSort(
 function RecipesPage() {
   const { t, i18n: activeI18n } = useTranslation();
   const [search, setSearch] = useState("");
-  const [activeCuisine, setActiveCuisine] = useState("all");
+  const [activeFilterIds, setActiveFilterIds] = useState<string[]>([]);
   const [sort, setSort] = useState<SortKey>("lastCookedAt");
 
   const liveRecipes = useLiveQuery(() => db.recipes.toArray(), []);
@@ -105,22 +136,47 @@ function RecipesPage() {
     document.title = `${t("recipes.title")} - CookTalk`;
   }, [t, activeI18n.language]);
 
-  // Extract unique cuisines from loaded recipes
-  const cuisines = useMemo<string[]>(() => {
-    const set = new Set<string>();
-    allRecipes.forEach((r) => {
-      if (r.tags.cuisine) set.add(r.tags.cuisine);
-    });
-    return Array.from(set).sort();
-  }, [allRecipes]);
+  const filterOptions = useMemo<FilterOption[]>(() => {
+    const cuisines = new Set<string>();
+    const flavors = new Set<string>();
+    const difficulties = new Set<NonNullable<Recipe["tags"]["difficulty"]>>();
 
-  // Filtered & sorted list
+    allRecipes.forEach((recipe) => {
+      const cuisine = recipe.tags.cuisine?.trim();
+      if (cuisine) cuisines.add(cuisine);
+
+      recipe.tags.flavor?.forEach((flavor) => {
+        const normalized = flavor.trim();
+        if (normalized) flavors.add(normalized);
+      });
+
+      if (recipe.tags.difficulty) difficulties.add(recipe.tags.difficulty);
+    });
+
+    return [
+      ...Array.from(cuisines)
+        .sort()
+        .map((label) => ({ id: `cuisine:${label}`, label, group: "cuisine" as const })),
+      ...Array.from(flavors)
+        .sort()
+        .map((label) => ({ id: `flavor:${label}`, label, group: "flavor" as const })),
+      ...Array.from(difficulties)
+        .sort((a, b) => DIFFICULTY_ORDER[a] - DIFFICULTY_ORDER[b])
+        .map((difficulty) => ({
+          id: `difficulty:${difficulty}`,
+          label: t(`recipes.difficulty.${difficulty}`),
+          group: "difficulty" as const,
+        })),
+    ];
+  }, [allRecipes, t]);
+
+  const activeFilterIdSet = useMemo(() => new Set(activeFilterIds), [activeFilterIds]);
+
   const displayed = useMemo(
-    () => filterAndSort(allRecipes, search, activeCuisine, sort),
-    [allRecipes, search, activeCuisine, sort],
+    () => filterAndSort(allRecipes, search, activeFilterIdSet, filterOptions, sort),
+    [allRecipes, search, activeFilterIdSet, filterOptions, sort],
   );
 
-  // Build cover image object URLs and revoke on cleanup
   const coverUrls = useMemo(() => {
     const map = new Map<string, string>();
     allRecipes.forEach((r) => {
@@ -144,11 +200,35 @@ function RecipesPage() {
     difficulty: t("recipes.sortDifficulty"),
   };
 
+  const activeFilters = filterOptions.filter((option) => activeFilterIdSet.has(option.id));
+
+  const importButton = (
+    <Link
+      to="/import"
+      className="inline-flex w-full items-center justify-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:w-auto sm:px-5"
+    >
+      <Plus className="h-4 w-4" strokeWidth={1.75} />
+      {t("recipes.importVideo")}
+    </Link>
+  );
+
   function cycleSortKey() {
     const keys: SortKey[] = ["lastCookedAt", "createdAt", "totalTimeMin", "difficulty"];
     const idx = keys.indexOf(sort);
     setSort(keys[(idx + 1) % keys.length]);
   }
+
+  function toggleFilter(id: string) {
+    setActiveFilterIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  }
+
+  function clearFilters() {
+    setActiveFilterIds([]);
+  }
+
+  const hasFilterOptions = filterOptions.length > 0;
 
   return (
     <div className="app-page-bg min-h-screen flex flex-col">
@@ -165,62 +245,53 @@ function RecipesPage() {
               <h1 className="page-title">{t("recipes.title")}</h1>
               <VoiceHint className="mt-2">{t("recipes.voiceHint")}</VoiceHint>
             </div>
-            <Link
-              to="/import"
-              className="inline-flex w-full items-center justify-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:w-auto sm:px-5"
-            >
-              <Plus className="h-4 w-4" strokeWidth={1.75} />
-              {t("recipes.importVideo")}
-            </Link>
+            <div className="hidden md:block">{importButton}</div>
           </div>
 
-          <div className="mt-5 flex w-full min-w-0 items-center gap-3">
-            <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-border bg-card px-3 sm:px-4">
-              <Search className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
-              <input
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                placeholder={t("recipes.searchPlaceholder")}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <span className="voice-hint hidden lg:inline">{t("recipes.orSaySearch")}</span>
-              <Mic className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
-            </div>
+          <div className="mt-5 flex w-full min-w-0 flex-col gap-3">
+            <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:gap-2">
+              <div className="flex h-10 w-full min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 sm:px-4 lg:flex-1">
+                <Search className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
+                <input
+                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  placeholder={t("recipes.searchPlaceholder")}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+                <span className="voice-hint hidden xl:inline">{t("recipes.orSaySearch")}</span>
+                <Mic className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
+              </div>
 
-            <div className="flex min-w-0 flex-none items-center justify-end gap-2 overflow-x-auto pb-1">
-              <button
-                onClick={() => setActiveCuisine("all")}
-                className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
-                  activeCuisine === "all"
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border bg-card hover:border-foreground"
-                }`}
-              >
-                {t("recipes.all")}
-              </button>
-              {cuisines.map((c) => (
+              <div className="flex min-w-0 w-full items-center gap-2 overflow-x-auto pb-1 lg:w-auto lg:max-w-full lg:justify-end lg:pb-0">
                 <button
-                  key={c}
-                  onClick={() => setActiveCuisine(c)}
-                  className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-xs ${
-                    activeCuisine === c
+                  onClick={clearFilters}
+                  className={cn(
+                    "relative inline-flex shrink-0 items-center gap-1.5 rounded-full border px-4 py-2 text-xs",
+                    activeFilterIds.length === 0
                       ? "border-foreground bg-foreground text-background"
-                      : "border-border bg-card hover:border-foreground"
-                  }`}
+                      : "border-border bg-card hover:border-foreground",
+                  )}
                 >
-                  {c}
+                  {t("recipes.all")}
                 </button>
-              ))}
 
-              <button className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground">
-                <Filter className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("recipes.filter")}
-              </button>
-              <button
-                onClick={cycleSortKey}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground"
-              >
-                <ArrowUpDown className="h-3.5 w-3.5" strokeWidth={1.75} /> {sortLabels[sort]}
-              </button>
+                <SplitFilterButton
+                  hasOptions={hasFilterOptions}
+                  activeFilters={activeFilters}
+                  allOptions={filterOptions}
+                  activeFilterIds={activeFilterIdSet}
+                  onToggleFilter={toggleFilter}
+                  onClearFilters={clearFilters}
+                  t={t}
+                />
+
+                <button
+                  onClick={cycleSortKey}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs hover:border-foreground"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5" strokeWidth={1.75} /> {sortLabels[sort]}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -229,7 +300,7 @@ function RecipesPage() {
       <section className="flex-1">
         <div className="page-content-container">
           {displayed.length === 0 ? (
-            <EmptyState search={search} t={t} />
+            <EmptyState search={search} t={t} importButton={importButton} />
           ) : (
             <div className="recipe-card-grid">
               {displayed.map((r, i) => (
@@ -240,6 +311,160 @@ function RecipesPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function SplitFilterButton({
+  hasOptions,
+  activeFilters,
+  allOptions,
+  activeFilterIds,
+  onToggleFilter,
+  onClearFilters,
+  t,
+}: {
+  hasOptions: boolean;
+  activeFilters: FilterOption[];
+  allOptions: FilterOption[];
+  activeFilterIds: Set<string>;
+  onToggleFilter: (id: string) => void;
+  onClearFilters: () => void;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const filterLabel =
+    activeFilters.length > 0
+      ? t("recipes.filterSelected", { count: activeFilters.length })
+      : t("recipes.filter");
+
+  const filterPreview =
+    activeFilters.length > 0
+      ? activeFilters
+          .slice(0, 2)
+          .map((filter) => filter.label)
+          .join(" · ")
+      : t("recipes.filterHint");
+
+  const cuisines = allOptions.filter((option) => option.group === "cuisine");
+  const flavors = allOptions.filter((option) => option.group === "flavor");
+  const difficulties = allOptions.filter((option) => option.group === "difficulty");
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <div
+        className="inline-flex shrink-0 overflow-hidden rounded-full border border-border bg-card text-xs hover:border-foreground"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-2 transition-colors",
+              activeFilters.length > 0
+                ? "bg-foreground text-background hover:bg-clay"
+                : "hover:bg-accent/60",
+            )}
+            aria-label={t("recipes.filter")}
+          >
+            <Filter className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <span>{filterLabel}</span>
+          </button>
+        </DropdownMenuTrigger>
+        <span className="w-px bg-border" aria-hidden />
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex min-w-0 max-w-32 items-center gap-1.5 px-2.5 py-2 text-muted-foreground hover:bg-accent/60 sm:max-w-40"
+            aria-label={t("recipes.filterMenuTitle")}
+          >
+            <span className="truncate">{filterPreview}</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+          </button>
+        </DropdownMenuTrigger>
+      </div>
+
+      <DropdownMenuContent
+        align="end"
+        className="w-64"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+      >
+        <DropdownMenuLabel>{t("recipes.filterMenuTitle")}</DropdownMenuLabel>
+        {hasOptions ? (
+          <>
+            {cuisines.length > 0 && (
+              <>
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  {t("recipes.filterGroupCuisine")}
+                </DropdownMenuLabel>
+                {cuisines.map((option) => (
+                  <DropdownMenuCheckboxItem
+                    key={option.id}
+                    checked={activeFilterIds.has(option.id)}
+                    onCheckedChange={() => onToggleFilter(option.id)}
+                  >
+                    {option.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </>
+            )}
+
+            {flavors.length > 0 && (
+              <>
+                {(cuisines.length > 0 || difficulties.length > 0) && <DropdownMenuSeparator />}
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  {t("recipes.filterGroupFlavor")}
+                </DropdownMenuLabel>
+                {flavors.map((option) => (
+                  <DropdownMenuCheckboxItem
+                    key={option.id}
+                    checked={activeFilterIds.has(option.id)}
+                    onCheckedChange={() => onToggleFilter(option.id)}
+                  >
+                    {option.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </>
+            )}
+
+            {difficulties.length > 0 && (
+              <>
+                {(cuisines.length > 0 || flavors.length > 0) && <DropdownMenuSeparator />}
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  {t("recipes.filterGroupDifficulty")}
+                </DropdownMenuLabel>
+                {difficulties.map((option) => (
+                  <DropdownMenuCheckboxItem
+                    key={option.id}
+                    checked={activeFilterIds.has(option.id)}
+                    onCheckedChange={() => onToggleFilter(option.id)}
+                  >
+                    {option.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </>
+            )}
+
+            <DropdownMenuSeparator />
+            <button
+              type="button"
+              onClick={() => {
+                onClearFilters();
+                setOpen(false);
+              }}
+              className="flex w-full items-center justify-center rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              {t("recipes.clearFilter")}
+            </button>
+          </>
+        ) : (
+          <div className="px-2 py-3 text-sm text-muted-foreground">
+            {t("recipes.noFilterOptions")}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -318,9 +543,11 @@ function RecipeCard({
 function EmptyState({
   search,
   t,
+  importButton,
 }: {
   search: string;
   t: (key: string, opts?: Record<string, unknown>) => string;
+  importButton: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-6 py-24 text-center">
@@ -333,15 +560,7 @@ function EmptyState({
           {search ? t("recipes.noRecipesMatch", { search }) : t("recipes.noRecipesBody")}
         </p>
       </div>
-      {!search && (
-        <Link
-          to="/import"
-          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
-        >
-          <Plus className="h-4 w-4" strokeWidth={1.75} />
-          {t("recipes.importVideo")}
-        </Link>
-      )}
+      {!search && importButton}
     </div>
   );
 }

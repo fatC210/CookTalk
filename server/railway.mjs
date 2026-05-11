@@ -101,6 +101,12 @@ async function serveStatic(req, res) {
   }
 
   const url = new URL(getRequestUrl(req));
+  if (url.pathname === "/favicon.ico") {
+    res.writeHead(302, { location: "/logo-dark.png" });
+    res.end();
+    return true;
+  }
+
   const staticPath = getStaticPath(url.pathname);
   if (!staticPath) return false;
 

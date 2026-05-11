@@ -803,6 +803,13 @@ function splitFlavor(value: unknown): string[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
+const HEURISTIC_STEP_PATTERN =
+  /(?:先|首先|然后|再|接着|随后|最后|把|将|用|加入|放入|倒入|下入|撒入|切|切成|切好|剁|拍|腌|拌|搅拌|翻炒|炒|煎|炸|烤|蒸|煮|炖|焖|焯|爆香|收汁|勾芡|出锅|盛出|装盘|备用|浸泡|清洗|冲洗|去皮|揉|醒发|发酵|mix|stir|add|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve)/i;
+const HEURISTIC_FILLER_PATTERN =
+  /(?:大家好|hello|hi everyone|点赞|关注|收藏|转发|订阅|感谢观看|下期见|记得关注|我是|欢迎来到|sponsor|sponsored|subscribe)/i;
+const HEAT_OR_TIP_PATTERN =
+  /(?:小火|中火|大火|微火|全程|注意|不要|别|记得|避免|low heat|medium heat|high heat|be careful|make sure)/i;
+
 function normalizeIngredient(value: unknown): RecipePayload["ingredients"][number] | null {
   if (typeof value === "string") {
     const text = cleanRecipeTextValue(stripListMarker(value));
@@ -1090,6 +1097,158 @@ function parseLabeledRecipeText(text: string): RecipePayload | null {
   return { title, ingredients, steps, tags: cuisine ? { cuisine } : {} };
 }
 
+function normalizeHeuristicSentence(value: string): string {
+  return cleanRecipeTextValue(
+    value
+      .replace(/^[,，。；;:：\s]+/, "")
+      .replace(
+        /^(?:先|首先|然后|再|接着|随后|最后一步|最后|这时候|此时|下一步|step\s*\d+|第[\d一二三四五六七八九十]+步)\s*/i,
+        "",
+      ),
+  );
+}
+
+function splitHeuristicSegments(text: string): string[] {
+  const normalized = text
+    .replace(/\r/g, "\n")
+    .replace(/[。！？!?；;]/g, "\n")
+    .replace(/([，,])\s*(然后|再|接着|随后|最后|最后再|下一步)/g, "\n$2")
+    .replace(/(?:\n|^)\s*(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*/g, "\n");
+
+  return normalized
+    .split(/\n+/)
+    .flatMap((segment) => segment.split(/(?<=\S)\s{2,}/))
+    .map((segment) => normalizeHeuristicSentence(segment))
+    .filter(Boolean);
+}
+
+function isLikelyRecipeStep(text: string): boolean {
+  if (!text || text.length < 4) return false;
+  if (HEURISTIC_FILLER_PATTERN.test(text) && !HEURISTIC_STEP_PATTERN.test(text)) return false;
+  if (containsMetaReasoning(text)) return false;
+  return (
+    HEURISTIC_STEP_PATTERN.test(text) ||
+    HEAT_OR_TIP_PATTERN.test(text) ||
+    Boolean(parseDurationToSeconds(text))
+  );
+}
+
+function inferRecipeTitleFromText(text: string): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const patterns = [
+    /(?:今天(?:给大家)?(?:分享|做|教大家做|来做)|这次做|我们做|来做一道|教你做|做一道|做一个)\s*["“]?([^"，。！？,.!?\n]{2,24})["”]?/i,
+    /([^"，。！？,.!?\n]{2,24})(?:的做法|教程|怎么做)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern)?.[1];
+    const title = omitSchemaPlaceholder(cleanRecipeTextValue(match ?? ""));
+    if (title && !HEURISTIC_FILLER_PATTERN.test(title)) return title;
+  }
+
+  return "";
+}
+
+function inferIngredientsFromText(text: string): RecipePayload["ingredients"] {
+  const matches = [
+    ...text.matchAll(
+      /(?:食材|配料|用料|准备|材料)[:：]?\s*([^\n]+(?:\n(?!.*(?:步骤|做法|开始|先|然后|接着|最后)).+)*)/gi,
+    ),
+  ];
+  const candidates = matches
+    .map((match) => match[1]?.trim() ?? "")
+    .filter(Boolean)
+    .flatMap((block) => block.split(/[\n,，、]/))
+    .map((item) => cleanRecipeTextValue(item))
+    .filter(Boolean);
+
+  return normalizeIngredients(candidates);
+}
+
+function inferStepsFromText(text: string): RecipePayload["steps"] {
+  const seen = new Set<string>();
+  const steps: RecipePayload["steps"] = [];
+
+  for (const segment of splitHeuristicSegments(text)) {
+    if (!isLikelyRecipeStep(segment)) continue;
+
+    const description = normalizeHeuristicSentence(segment);
+    if (!description || description.length < 4) continue;
+
+    const dedupeKey = normalizePlaceholderText(description);
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const durationSec = parseDurationToSeconds(description);
+    const tips =
+      HEAT_OR_TIP_PATTERN.test(description) && description.length <= 60 ? description : undefined;
+
+    steps.push({
+      order: steps.length + 1,
+      description,
+      ...(durationSec ? { durationSec } : {}),
+      ...(tips && tips !== description ? { tips } : {}),
+    });
+  }
+
+  return steps.slice(0, 20).map((step, index) => ({ ...step, order: index + 1 }));
+}
+
+function buildHeuristicRecipePayload(text: string): RecipePayload | null {
+  const source = trimRecipeSourceText(text);
+  if (!source) return null;
+
+  const ingredients = inferIngredientsFromText(source);
+  const steps = inferStepsFromText(source);
+  if (ingredients.length === 0 && steps.length === 0) return null;
+
+  return {
+    title: inferRecipeTitleFromText(source),
+    ingredients,
+    steps,
+    tags: {},
+  };
+}
+
+function mergeRecipeTags(
+  primary: RecipePayload["tags"],
+  fallback: RecipePayload["tags"],
+): RecipePayload["tags"] {
+  return {
+    ...fallback,
+    ...primary,
+    flavor: primary.flavor?.length ? primary.flavor : fallback.flavor,
+  };
+}
+
+function enrichRecipePayload(
+  recipe: RecipePayload,
+  ...fallbackTexts: Array<string | undefined>
+): RecipePayload {
+  let enriched: RecipePayload = {
+    title: recipe.title,
+    ingredients: recipe.ingredients,
+    steps: recipe.steps,
+    tags: { ...recipe.tags, flavor: recipe.tags.flavor ? [...recipe.tags.flavor] : undefined },
+  };
+
+  for (const text of fallbackTexts) {
+    if (!text?.trim()) continue;
+    const heuristic = buildHeuristicRecipePayload(text);
+    if (!heuristic) continue;
+
+    enriched = {
+      title: enriched.title || heuristic.title,
+      ingredients:
+        enriched.ingredients.length > 0 ? enriched.ingredients : heuristic.ingredients,
+      steps: enriched.steps.length > 0 ? enriched.steps : heuristic.steps,
+      tags: mergeRecipeTags(enriched.tags, heuristic.tags),
+    };
+  }
+
+  return enriched;
+}
+
 export class LLMService {
   private config: Required<LLMConfig>;
 
@@ -1250,9 +1409,12 @@ export class LLMService {
   private async parseOrRepairRecipePayload(
     result: string,
     errorMessage: string,
+    fallbackSourceText?: string,
   ): Promise<RecipePayload> {
     const parsed = this.parseRecipePayload(result, errorMessage);
-    if (parsed) return parsed;
+    if (parsed) {
+      return enrichRecipePayload(parsed, result, fallbackSourceText);
+    }
 
     const repairPrompt = [
       "Convert the following failed recipe extraction response into valid JSON only.",
@@ -1281,7 +1443,14 @@ export class LLMService {
     );
 
     const repairedParsed = this.parseRecipePayload(repaired, errorMessage);
-    if (repairedParsed) return repairedParsed;
+    if (repairedParsed) {
+      return enrichRecipePayload(repairedParsed, repaired, fallbackSourceText, result);
+    }
+
+    const heuristic =
+      buildHeuristicRecipePayload(result) ??
+      (fallbackSourceText ? buildHeuristicRecipePayload(fallbackSourceText) : null);
+    if (heuristic) return heuristic;
 
     throw new Error(errorMessage);
   }
@@ -1307,21 +1476,21 @@ export class LLMService {
 
     const prompt =
       language === "zh"
-        ? `?????????????????????? JSON?
+        ? `下面是一段做菜视频的转写内容，请将它整理成结构化 JSON：
 {
-  "title": "??",
-  "ingredients": [{"name": "???", "amount": "??"}],
-  "steps": [{"order": 1, "description": "????", "durationSec": ??, "tips": "??????"}],
-  "tags": {"flavor": ["??"], "difficulty": "easy|medium|hard", "cuisine": "??", "totalTimeMin": ?????}
+  "title": "菜名",
+  "ingredients": [{"name": "食材名", "amount": "用量"}],
+  "steps": [{"order": 1, "description": "步骤描述", "durationSec": 300, "tips": "可选提示"}],
+  "tags": {"flavor": ["口味"], "difficulty": "easy|medium|hard", "cuisine": "菜系", "totalTimeMin": 20}
 }
-???
-- ??????????????????????
-- ??????????????????????????????
-- ??? 3 ??????? 10 ????????????
-- ?????????????? tips?
-- ???? Markdown??????????????????? JSON?
+要求：
+- 忽略寒暄、广告、口头禅和与做菜无关的内容。
+- 保留真正有用的菜名、食材、步骤、火候、时长和关键技巧。
+- 像“煮 3 分钟”“小火焖 10 分钟”这类时长，请尽量提取到 "durationSec"。
+- 重要的火候、注意事项、技巧补充写到 "tips"。
+- 不要输出 Markdown、解释、字段说明或思考过程，只返回合法 JSON。
 
-?????
+转写内容：
 ${trimRecipeSourceText(transcript)}`
         : `Below is a cooking-video transcript. Convert it into structured JSON:
 {
@@ -1346,17 +1515,18 @@ ${trimRecipeSourceText(transcript)}`;
           role: "system",
           content:
             language === "zh"
-              ? "???????????????? JSON??? Markdown????????????????"
+              ? "你是一名专业厨艺助手。始终只返回合法 JSON，不要输出 Markdown、解释或思考过程。"
               : "You are a professional chef assistant. Always respond with valid JSON only, no markdown, no explanations, and no chain-of-thought.",
         },
         { role: "user", content: prompt },
       ],
-      { maxTokens: 1400, responseFormat: "json_object", temperature: 0.1 },
+      { maxTokens: 1400, responseFormat: "json_object", temperature: 0 },
     );
 
     return this.parseOrRepairRecipePayload(
       result,
       "No usable recipe content was extracted from the transcript",
+      transcript,
     );
   }
 
@@ -1370,54 +1540,54 @@ ${trimRecipeSourceText(transcript)}`;
 
     const prompt = [
       language === "zh"
-        ? "????????????? CookTalk ?????? JSON?"
+        ? "你需要把原始菜谱文字整理成 CookTalk 可用的结构化 JSON。"
         : "You are converting rough recipe text into structured CookTalk recipe JSON.",
       language === "zh"
-        ? "???????????????????????????????"
+        ? "输入可能是网页摘录、聊天记录、做菜笔记，或者没有排版的整段菜谱文字。"
         : "The input may be a web page excerpt, pasted recipe, plain notes, or unformatted cooking text.",
       language === "zh"
-        ? "????? JSON??? Markdown????? schema?"
+        ? "只返回合法 JSON，不要输出 Markdown，结构请严格遵循下面的 schema："
         : "Return valid JSON only, no markdown, using this schema:",
       "{",
-      language === "zh" ? '  "title": "??",' : '  "title": "Recipe name",',
+      language === "zh" ? '  "title": "菜名",' : '  "title": "Recipe name",',
       language === "zh"
-        ? '  "ingredients": [{"name": "???", "amount": "??"}],'
+        ? '  "ingredients": [{"name": "食材名", "amount": "用量"}],'
         : '  "ingredients": [{"name": "ingredient", "amount": "amount"}],',
       language === "zh"
-        ? '  "steps": [{"order": 1, "description": "????", "durationSec": 300, "tips": "????"}],'
+        ? '  "steps": [{"order": 1, "description": "步骤描述", "durationSec": 300, "tips": "可选提示"}],'
         : '  "steps": [{"order": 1, "description": "step text", "durationSec": 300, "tips": "optional tip"}],',
       '  "tags": {',
-      language === "zh" ? '    "flavor": ["??"],' : '    "flavor": ["savory"],',
+      language === "zh" ? '    "flavor": ["口味"],' : '    "flavor": ["savory"],',
       '    "difficulty": "easy|medium|hard",',
-      language === "zh" ? '    "cuisine": "??",' : '    "cuisine": "cuisine name",',
+      language === "zh" ? '    "cuisine": "菜系",' : '    "cuisine": "cuisine name",',
       '    "totalTimeMin": 20,',
       '    "servings": 2,',
-      language === "zh" ? '    "spiceLevel": "??",' : '    "spiceLevel": "mild",',
-      language === "zh" ? '    "notes": "????"' : '    "notes": "optional notes"',
+      language === "zh" ? '    "spiceLevel": "辣度",' : '    "spiceLevel": "mild",',
+      language === "zh" ? '    "notes": "可选备注"' : '    "notes": "optional notes"',
       "  }",
       "}",
-      language === "zh" ? "???" : "Rules:",
+      language === "zh" ? "要求：" : "Rules:",
       language === "zh"
-        ? "- ????????????????"
+        ? "- 尽量保留用户原本想表达的菜名和做法。"
         : "- Preserve the user's intended dish and wording where practical.",
       language === "zh"
-        ? "- ????????????????????"
+        ? "- 把内容拆成清晰的食材列表和有顺序的步骤。"
         : "- Break the recipe into clear ingredients and ordered steps.",
       language === "zh"
-        ? "- ????????????????"
+        ? "- 步骤文字要简洁，适合做菜时朗读。"
         : "- Keep step text concise and readable for cooking playback.",
-      language === "zh" ? "- ?????????????" : "- Match the current interface language.",
+      language === "zh" ? "- 输出语言与当前界面语言保持一致。" : "- Match the current interface language.",
       language === "zh"
-        ? "- ????????????????????"
+        ? "- 只有在文本里有依据时，才补充可推断的可选信息。"
         : "- Infer optional metadata only when reasonably supported by the text.",
       language === "zh"
-        ? "- ???????????????????"
+        ? "- 不确定的可选字段宁可省略，也不要编造。"
         : "- Omit unknown optional fields instead of inventing details.",
       language === "zh"
-        ? "- ???? Markdown?schema ????????????????????"
+        ? "- 不要输出 Markdown、schema 解释、字段映射说明、思考过程或自言自语。"
         : "- Do not include markdown, schema explanations, field mapping notes, chain-of-thought, or self-talk.",
       "",
-      `${language === "zh" ? "????" : "Recipe text"}:
+      `${language === "zh" ? "菜谱文字" : "Recipe text"}:
 ${trimRecipeSourceText(recipeText)}`,
     ].join("\n");
 
@@ -1427,17 +1597,18 @@ ${trimRecipeSourceText(recipeText)}`,
           role: "system",
           content:
             language === "zh"
-              ? "???????????????? JSON??? Markdown????????????????"
+              ? "你是一名专业厨艺助手。始终只返回合法 JSON，不要输出 Markdown、解释或思考过程。"
               : "You are a professional chef assistant. Always respond with valid JSON only, no markdown, no explanations, and no chain-of-thought.",
         },
         { role: "user", content: prompt },
       ],
-      { maxTokens: 1400, responseFormat: "json_object", temperature: 0.1 },
+      { maxTokens: 1400, responseFormat: "json_object", temperature: 0 },
     );
 
     return this.parseOrRepairRecipePayload(
       result,
       "Failed to parse structured recipe JSON from text input",
+      recipeText,
     );
   }
 
@@ -1472,7 +1643,7 @@ ${trimRecipeSourceText(recipeText)}`,
         },
         { role: "user", content: prompt },
       ],
-      { maxTokens: 1600, responseFormat: "json_object", temperature: 0.1 },
+      { maxTokens: 1600, responseFormat: "json_object", temperature: 0 },
     );
 
     return this.parseOrRepairRecipePayload(

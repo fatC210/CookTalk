@@ -634,6 +634,9 @@ function DetailPage() {
     : voiceSelectDisabled
       ? t("recipeDetail.voiceSelectDisabled")
       : defaultVoiceLabel;
+  const voiceStatusText = isLoadingElevenLabsVoices
+    ? t("settings.voice.loadingElevenLabsVoices")
+    : elevenLabsVoicesError;
   const canGenerateCover = hasLlmKey && hasImageGenKey;
 
   return (
@@ -673,7 +676,7 @@ function DetailPage() {
                 {t("recipeDetail.summary", { count: steps.length })}
               </p>
 
-              <div className="mt-6 flex flex-wrap items-center gap-2 text-xs">
+              <div className="mt-6 flex flex-wrap items-start gap-2 text-xs">
                 {totalMin > 0 && (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
                     <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />{" "}
@@ -690,7 +693,7 @@ function DetailPage() {
                     <ChefHat className="h-3.5 w-3.5" strokeWidth={1.75} /> {tags.cuisine}
                   </span>
                 )}
-                <div className="min-w-[11rem]">
+                <div className="flex w-full flex-col gap-1 sm:w-[22rem] lg:w-[24rem]">
                   <Select
                     value={voiceId ?? DEFAULT_RECIPE_VOICE_VALUE}
                     onValueChange={(nextValue) =>
@@ -718,16 +721,14 @@ function DetailPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {(isLoadingElevenLabsVoices || elevenLabsVoicesError) && (
-                    <div className="mt-1 text-[11px] text-muted-foreground">
-                      {isLoadingElevenLabsVoices
-                        ? t("settings.voice.loadingElevenLabsVoices")
-                        : elevenLabsVoicesError}
-                    </div>
-                  )}
+                  <div className="min-h-[1rem] text-[11px] leading-4 text-muted-foreground">
+                    {voiceStatusText ?? ""}
+                  </div>
                 </div>
               </div>
-              <div className="mt-2 text-xs text-muted-foreground">{voiceHelperText}</div>
+              <div className="mt-2 min-h-[1rem] text-xs text-muted-foreground">
+                {voiceHelperText}
+              </div>
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <button
@@ -1036,7 +1037,12 @@ function DetailPage() {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm font-medium">{t("recipeDetail.ingredients")}</h3>
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-sm font-medium">{t("recipeDetail.ingredients")}</h3>
+                    <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                      {editIngredients.length}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs hover:border-foreground"
@@ -1048,7 +1054,7 @@ function DetailPage() {
                 </div>
                 <div className="space-y-2">
                   {editIngredients.map((ingredient, index) => (
-                    <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                    <div key={index} className="group grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                       <Input
                         ref={(node) => {
                           editIngredientNameRefs.current[index] = node;
@@ -1069,7 +1075,7 @@ function DetailPage() {
                       <button
                         type="button"
                         aria-label={t("common.delete")}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border hover:border-destructive hover:text-destructive"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                         onClick={() =>
                           setEditIngredients((current) =>
                             current.length > 1
@@ -1088,7 +1094,12 @@ function DetailPage() {
 
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-medium">{t("recipeDetail.steps")}</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-medium">{t("recipeDetail.steps")}</h3>
+                  <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                    {editSteps.length}
+                  </span>
+                </div>
                 <button
                   type="button"
                   className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs hover:border-foreground"
@@ -1100,13 +1111,13 @@ function DetailPage() {
               </div>
               <div className="space-y-3">
                 {editSteps.map((step, index) => (
-                  <div key={index} className="rounded-2xl border border-border bg-card p-4">
+                  <div key={index} className="group rounded-2xl border border-border bg-card p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <span className="font-display text-lg">{index + 1}</span>
                       <button
                         type="button"
                         aria-label={t("common.delete")}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border hover:border-destructive hover:text-destructive"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                         onClick={() =>
                           setEditSteps((current) =>
                             current.length > 1

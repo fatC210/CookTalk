@@ -4,17 +4,47 @@ import i18n from "@/lib/i18n";
 import { LANGUAGE_COOKIE_NAME } from "@/lib/language";
 
 export const BUILT_IN_WAKE_WORD = "Hey CookTalk";
+const LEGACY_WAKE_WORDS = ["嗨厨语"];
 
 function normalizeWakeWord(word: string): string {
-  return word.toLowerCase().replace(/[\s\-_'’]+/g, "");
+  return word.toLowerCase().replace(/[/\s+\-_']+/g, "");
 }
 
 export function isBuiltInWakeWord(word: string): boolean {
   return normalizeWakeWord(word) === "heycooktalk";
 }
 
+function isLegacyWakeWord(word: string): boolean {
+  return LEGACY_WAKE_WORDS.some(
+    (legacyWakeWord) => normalizeWakeWord(legacyWakeWord) === normalizeWakeWord(word),
+  );
+}
+
+function sanitizeWakeWords(wakeWords: string[]): string[] {
+  const seenWakeWords = new Set<string>();
+
+  return wakeWords.reduce<string[]>((nextWakeWords, word) => {
+    const trimmedWord = word.trim();
+    const normalizedWord = normalizeWakeWord(trimmedWord);
+
+    if (
+      !trimmedWord ||
+      !normalizedWord ||
+      isBuiltInWakeWord(trimmedWord) ||
+      isLegacyWakeWord(trimmedWord) ||
+      seenWakeWords.has(normalizedWord)
+    ) {
+      return nextWakeWords;
+    }
+
+    seenWakeWords.add(normalizedWord);
+    nextWakeWords.push(trimmedWord);
+    return nextWakeWords;
+  }, []);
+}
+
 export function getActiveWakeWords(wakeWords: string[]): string[] {
-  return [BUILT_IN_WAKE_WORD, ...wakeWords.filter((word) => !isBuiltInWakeWord(word))];
+  return [BUILT_IN_WAKE_WORD, ...sanitizeWakeWords(wakeWords)];
 }
 
 export type HomeAwakeDetail = {
@@ -116,21 +146,16 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ voiceBadgesVisible: state !== undefined ? state : !s.voiceBadgesVisible })),
 
       // Wake words
-      wakeWords: ["嗨厨语"],
+      wakeWords: [],
       addWakeWord: (word) =>
         set((s) => {
-          const nextWord = word.trim();
-          if (
-            !nextWord ||
-            isBuiltInWakeWord(nextWord) ||
-            s.wakeWords.some(
-              (existingWord) => normalizeWakeWord(existingWord) === normalizeWakeWord(nextWord),
-            )
-          ) {
+          const nextWakeWords = sanitizeWakeWords([...s.wakeWords, word]);
+
+          if (nextWakeWords.length === s.wakeWords.length) {
             return {};
           }
 
-          return { wakeWords: [...s.wakeWords, nextWord] };
+          return { wakeWords: nextWakeWords };
         }),
       removeWakeWord: (word) =>
         set((s) =>
@@ -194,6 +219,20 @@ export const useAppStore = create<AppState>()(
     {
       name: "cooktalk-app",
       partialize: ({ manualWakeActive, manualWakeExpiresAt, pendingHomeAwake, ...state }) => state,
+      merge: (persistedState, currentState) => {
+        const nextState =
+          persistedState && typeof persistedState === "object"
+            ? (persistedState as Partial<AppState>)
+            : {};
+
+        return {
+          ...currentState,
+          ...nextState,
+          wakeWords: sanitizeWakeWords(
+            Array.isArray(nextState.wakeWords) ? nextState.wakeWords : currentState.wakeWords,
+          ),
+        };
+      },
       skipHydration: true,
     },
   ),

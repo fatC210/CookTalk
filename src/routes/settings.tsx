@@ -37,7 +37,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { storeApiKey, getApiKey, removeApiKey } from "@/lib/crypto";
-import { isBuiltInWakeWord, useAppStore } from "@/stores/app-store";
+import { getActiveWakeWords, isBuiltInWakeWord, useAppStore } from "@/stores/app-store";
 import { db } from "@/lib/db";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "react-i18next";
@@ -776,7 +776,7 @@ function SettingsPage() {
 
   // 鈹€鈹€ Wake word input 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const [newWakeWord, setNewWakeWord] = useState("");
-  const visibleWakeWords = wakeWords.filter((word) => !isBuiltInWakeWord(word));
+  const visibleWakeWords = getActiveWakeWords(wakeWords);
 
   const handleAddWakeWord = () => {
     const word = newWakeWord.trim();
@@ -859,14 +859,14 @@ function SettingsPage() {
           <div className="settings-layout grid gap-8 lg:grid-cols-12">
             {/* Sidebar */}
             <aside className="settings-sidebar lg:col-span-3">
-              <nav className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
+              <nav className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:block lg:space-y-1">
                 {sections.map((s) => (
                   <button
                     key={s.label}
                     type="button"
                     onClick={() => setActiveTab(s.value)}
                     aria-current={activeTab === s.value ? "page" : undefined}
-                    className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm whitespace-nowrap transition-colors lg:w-full ${
+                    className={`flex min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors lg:w-full ${
                       activeTab === s.value
                         ? "bg-secondary text-foreground"
                         : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
@@ -1022,14 +1022,16 @@ function SettingsPage() {
                               className="inline-flex items-center gap-1 rounded-full bg-foreground px-3 py-1.5 text-xs text-background"
                             >
                               {w}
-                              <button
-                                type="button"
-                                onClick={() => removeWakeWord(w)}
-                                className="ml-0.5 inline-flex h-5 w-5 appearance-none items-center justify-center rounded-full border border-transparent bg-transparent p-0 shadow-none ring-0 hover:border-border hover:bg-transparent hover:opacity-70 focus-visible:border-border focus-visible:ring-0 active:bg-transparent"
-                                aria-label={t("settings.aria.removeWakeWord", { word: w })}
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
+                              {!isBuiltInWakeWord(w) && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeWakeWord(w)}
+                                  className="ml-0.5 inline-flex h-5 w-5 appearance-none items-center justify-center rounded-full border border-transparent bg-transparent p-0 shadow-none ring-0 hover:border-border hover:bg-transparent hover:opacity-70 focus-visible:border-border focus-visible:ring-0 active:bg-transparent"
+                                  aria-label={t("settings.aria.removeWakeWord", { word: w })}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
                             </span>
                           ))}
                         </div>

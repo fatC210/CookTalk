@@ -6,8 +6,8 @@ import {
   Clock,
   Loader2,
   Mic,
+  Plus,
   Send,
-  Trash2,
   Volume2,
   VolumeX,
   Waves,
@@ -112,6 +112,13 @@ type ChatMessage = {
   recipes?: ChatRecipe[];
   progress?: RecipeImportProgress;
   isReading?: boolean;
+};
+
+type StoredHomeConversation = {
+  version: 1;
+  messages: Array<Omit<ChatMessage, "createdAt"> & { createdAt: string }>;
+  latestRecipes: ChatRecipe[];
+  latestRecipeDraftText: string;
 };
 
 type AppLanguage = "en" | "zh";
@@ -222,7 +229,7 @@ const ASSISTANT_COPY: Record<
     noRecipeDraft: "我还没有可上传或开始烹饪的做菜方案。请先让我生成一道菜的做法。",
     stayHere: "好的，我会留在这里。需要时直接说菜名、口味，或让我从网页搜索菜谱。",
     emptyReply: "我刚才没组织好回答，你可以换个说法再问一次，我会按做菜场景继续帮你。",
-    clearSuccess: "已清空当前对话",
+    clearSuccess: "已开始新对话",
     inputPlaceholder: "输入文字（或直接说话）...",
     sendLabel: "发送",
     manualWakeLabel: "手动唤醒麦克风",
@@ -280,7 +287,7 @@ const ASSISTANT_COPY: Record<
       "Sure, I'll stay here. When ready, tell me a dish, flavor, or ask me to search recipes from the web.",
     emptyReply:
       "I didn't phrase that well. Ask again another way, and I'll help in a cooking-focused way.",
-    clearSuccess: "Current conversation cleared",
+    clearSuccess: "Started a new chat",
     inputPlaceholder: "Type a message (or just speak)...",
     sendLabel: "Send",
     manualWakeLabel: "Wake microphone manually",
@@ -316,6 +323,67 @@ type AssistantAudioReveal = {
 };
 
 const CHAT_SCROLL_BOTTOM_THRESHOLD_PX = 96;
+const HOME_CONVERSATION_STORAGE_KEY = "cooktalk-home-conversation";
+
+function loadStoredHomeConversation(): StoredHomeConversation | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(HOME_CONVERSATION_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<StoredHomeConversation>;
+    if (!Array.isArray(parsed.messages) || !Array.isArray(parsed.latestRecipes)) return null;
+
+    return {
+      version: 1,
+      messages: parsed.messages.map((message) => ({
+        ...message,
+        createdAt:
+          typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString(),
+      })),
+      latestRecipes: parsed.latestRecipes,
+      latestRecipeDraftText:
+        typeof parsed.latestRecipeDraftText === "string" ? parsed.latestRecipeDraftText : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistHomeConversation({
+  messages,
+  latestRecipes,
+  latestRecipeDraftText,
+}: {
+  messages: ChatMessage[];
+  latestRecipes: ChatRecipe[];
+  latestRecipeDraftText: string;
+}) {
+  if (typeof window === "undefined") return;
+
+  if (
+    messages.length === 0 &&
+    latestRecipes.length === 0 &&
+    latestRecipeDraftText.trim().length === 0
+  ) {
+    window.localStorage.removeItem(HOME_CONVERSATION_STORAGE_KEY);
+    return;
+  }
+
+  const snapshot: StoredHomeConversation = {
+    version: 1,
+    messages: messages.map(({ createdAt, ...message }) => ({
+      ...message,
+      isReading: false,
+      createdAt: createdAt.toISOString(),
+    })),
+    latestRecipes,
+    latestRecipeDraftText,
+  };
+
+  window.localStorage.setItem(HOME_CONVERSATION_STORAGE_KEY, JSON.stringify(snapshot));
+}
 
 function buildRecipeLibraryContext(recipes: Recipe[], language: AppLanguage): string {
   if (recipes.length === 0) {
@@ -499,13 +567,24 @@ function HomePage() {
   const language = useAppStore((s) => s.language);
   const assistantCopy = ASSISTANT_COPY[language];
   const conversationVoiceId = useAppStore((s) => s.conversationVoiceId);
+  const persistedConversation = useMemo(() => loadStoredHomeConversation(), []);
 
   const [voiceDetail, setVoiceDetail] = useState<VoiceStatusDetail | null>(null);
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus>("idle");
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [latestRecipes, setLatestRecipes] = useState<ChatRecipe[]>([]);
-  const [latestRecipeDraftText, setLatestRecipeDraftText] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    (persistedConversation?.messages ?? []).map(({ createdAt, isReading, ...message }) => ({
+      ...message,
+      isReading: false,
+      createdAt: new Date(createdAt),
+    })),
+  );
+  const [latestRecipes, setLatestRecipes] = useState<ChatRecipe[]>(
+    () => persistedConversation?.latestRecipes ?? [],
+  );
+  const [latestRecipeDraftText, setLatestRecipeDraftText] = useState(
+    () => persistedConversation?.latestRecipeDraftText ?? "",
+  );
   const [mutedMessageId, setMutedMessageId] = useState<string | null>(null);
   const [isAssistantLoading, setAssistantLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -590,6 +669,10 @@ function HomePage() {
   useEffect(() => {
     mutedMessageIdRef.current = mutedMessageId;
   }, [mutedMessageId]);
+
+  useEffect(() => {
+    persistHomeConversation({ messages, latestRecipes, latestRecipeDraftText });
+  }, [latestRecipeDraftText, latestRecipes, messages]);
 
   useEffect(() => {
     setHomeConversationActive(isConversationActive);
@@ -1284,10 +1367,24 @@ function HomePage() {
       }
 
       if (chatRecipe.sourceUrl) {
-        const openedWindow = window.open(chatRecipe.sourceUrl, "_blank", "noopener,noreferrer");
+        const openedWindow = window.open(chatRecipe.sourceUrl, "_blank");
         if (!openedWindow) {
-          window.location.assign(chatRecipe.sourceUrl);
+          toast.error(
+            language === "zh"
+              ? "浏览器拦截了自动打开，请点击结果卡片里的“打开”按钮。"
+              : "The browser blocked auto-open. Use the Open button in the recipe card.",
+          );
+          pushAssistant({
+            kind: "guide",
+            text: assistantCopy.webResultOnly(chatRecipe.title),
+          });
           return;
+        }
+
+        try {
+          openedWindow.opener = null;
+        } catch {
+          // Ignore cross-window hardening failures and keep the new tab open.
         }
 
         pushAssistant({
@@ -1302,7 +1399,7 @@ function HomePage() {
         text: assistantCopy.webResultOnly(chatRecipe.title),
       });
     },
-    [assistantCopy, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
+    [assistantCopy, language, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
   );
 
   const handleStartCooking = useCallback(
@@ -1380,6 +1477,79 @@ function HomePage() {
     [language, recipes],
   );
 
+  const findLocalRecipeCardsForSearch = useCallback(
+    (query: string): ChatRecipe[] => {
+      const normalized = cleanRecipeSearchKeyword(query).toLowerCase();
+      const shouldFallbackToAllRecipes =
+        !normalized &&
+        (/(recipe|recipes)/i.test(query) ||
+          /已有菜谱|我的菜谱|本地菜谱|菜谱库|菜谱|食谱|做法/.test(query));
+
+      return recipes
+        .filter((recipe) => {
+          const values = [
+            recipe.title,
+            recipe.tags.cuisine,
+            recipe.tags.flavor?.join(" "),
+            recipe.ingredients.map((ingredient) => ingredient.name).join(" "),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          if (normalized) return values.includes(normalized);
+          return shouldFallbackToAllRecipes;
+        })
+        .slice(0, 3)
+        .map(recipeToChatRecipe);
+    },
+    [recipes],
+  );
+
+  const buildSearchRecipeCards = useCallback(
+    async (query: string, mode: "combined" | "local" | "web"): Promise<ChatRecipe[]> => {
+      const localMatches = mode === "web" ? [] : findLocalRecipeCardsForSearch(query);
+      if (mode === "local") return localMatches;
+
+      const webMatches = await fetchWebRecipeCards(query, language);
+      if (mode === "web") return webMatches;
+
+      const seenTitles = new Set(localMatches.map((recipe) => recipe.title.trim().toLowerCase()));
+      return [
+        ...localMatches,
+        ...webMatches.filter((recipe) => !seenTitles.has(recipe.title.trim().toLowerCase())),
+      ].slice(0, 6);
+    },
+    [findLocalRecipeCardsForSearch, language],
+  );
+
+  const getRecipeSearchMode = useCallback((text: string) => {
+    const hasEnglishSearchIntent = /(search|look up|find)(?:\s+for)?/i.test(text);
+    const hasChineseSearchIntent =
+      /搜索|搜索一下|搜搜|搜一下|搜一搜|搜搜看|查查|查一下|查一查|找找|找一下|找一找/.test(text);
+    const hasHowToIntent = /怎么做|如何做|做法|怎么煮|如何煮/.test(text);
+    const referencesWebPage =
+      /网页|网上|联网/.test(text) && /(看|看看|看下|看一下|搜|查|找)/.test(text);
+
+    if (
+      !hasEnglishSearchIntent &&
+      !hasChineseSearchIntent &&
+      !hasHowToIntent &&
+      !referencesWebPage
+    ) {
+      return null;
+    }
+
+    const wantsLocal =
+      /(local|saved recipes?|recipe library)/i.test(text) ||
+      /已有菜谱|我的菜谱|本地菜谱|菜谱库/.test(text);
+    const wantsWeb = /(web|online|internet)/i.test(text) || /网页|网上|联网/.test(text);
+
+    if (wantsLocal && !wantsWeb) return "local" as const;
+    if (wantsWeb && !wantsLocal) return "web" as const;
+    return "combined" as const;
+  }, []);
+
   const handleCommand = useCallback(
     (rawText: string) => {
       const text = rawText.trim();
@@ -1393,39 +1563,66 @@ function HomePage() {
       setAssistantLoading(true);
       setAssistantStatus("thinking");
 
-      window.setTimeout(() => {
-        void (async () => {
+      void (async () => {
+        if (commandTurnRef.current !== turnId) return;
+
+        const selectedIndex = findRecipeNumber(text);
+        const selectedRecipe = selectedIndex == null ? null : latestRecipes[selectedIndex];
+
+        if (selectedRecipe && /(看|查看|详情|打开|介绍)/i.test(text)) {
+          handleOpenRecipe(selectedRecipe);
+          return;
+        }
+
+        if (selectedRecipe && /(开始|做|烹饪|煮)/i.test(text)) {
+          handleStartCooking(selectedRecipe);
+          return;
+        }
+
+        const recipeSearchMode = getRecipeSearchMode(text);
+        if (recipeSearchMode) {
+          const resolvedSearchQuery = resolveRecipeSearchQuery(text, conversationMessages);
+          const cards = await buildSearchRecipeCards(resolvedSearchQuery, recipeSearchMode);
           if (commandTurnRef.current !== turnId) return;
+          setLatestRecipes(cards);
+          pushAssistant({
+            kind: cards.length > 0 ? "recipes" : "guide",
+            text:
+              cards.length > 0
+                ? assistantCopy.recommendations
+                : recipeSearchMode === "local"
+                  ? assistantCopy.noLocalRecipes
+                  : assistantCopy.webSearchEmpty,
+            recipes: cards,
+          });
+          return;
+        }
 
-          const selectedIndex = findRecipeNumber(text);
-          const selectedRecipe = selectedIndex == null ? null : latestRecipes[selectedIndex];
-
-          if (selectedRecipe && /(看|查看|详情|打开|介绍)/i.test(text)) {
-            handleOpenRecipe(selectedRecipe);
+        if (/(上传|保存|加入|添加).*(菜谱|菜谱库)|save.*recipe/i.test(text)) {
+          if (!hasLlmKey) {
+            promptConfigureLlmKey();
             return;
           }
+          await handleSaveLatestRecipeDraft();
+          return;
+        }
 
-          if (selectedRecipe && /(开始|做|烹饪|煮)/i.test(text)) {
-            handleStartCooking(selectedRecipe);
+        if (/(开始|进入).*(烹饪|烹调|做菜|cooking)|start cooking|cooking mode/i.test(text)) {
+          const targetRecipe = selectedRecipe ?? latestRecipes[0];
+          if (targetRecipe) {
+            handleStartCooking(targetRecipe);
             return;
           }
-
-          if (
-            /(网页|网上|联网|搜索|搜一下|查一下|web|online|internet)/i.test(text) &&
-            /(菜谱|食谱|做法|recipe|recipes|search|搜索|搜一下|查一下)/i.test(text)
-          ) {
-            const cards = await fetchWebRecipeCards(text, language);
-            if (commandTurnRef.current !== turnId) return;
-            setLatestRecipes(cards);
-            pushAssistant({
-              kind: cards.length > 0 ? "recipes" : "guide",
-              text: cards.length > 0 ? assistantCopy.recommendations : assistantCopy.webSearchEmpty,
-              recipes: cards,
-            });
+          if (!hasLlmKey) {
+            promptConfigureLlmKey();
             return;
           }
+          await handleSaveLatestRecipeDraft({ startCooking: true });
+          return;
+        }
 
-          if (/(上传|保存|加入|添加).*(菜谱|菜谱库)|save.*recipe/i.test(text)) {
+        if (/(导入|视频|新菜谱|import)/i.test(text)) {
+          if (/(菜谱|菜谱库|recipe)/i.test(text) && !/(视频|video)/i.test(text)) {
             if (!hasLlmKey) {
               promptConfigureLlmKey();
               return;
@@ -1433,131 +1630,87 @@ function HomePage() {
             await handleSaveLatestRecipeDraft();
             return;
           }
+          const cards = await buildRecipeCards(text);
+          if (commandTurnRef.current !== turnId) return;
+          setLatestRecipes(cards);
+          pushAssistant({
+            kind: cards.length > 0 ? "recipes" : "guide",
+            text:
+              cards.length > 0 ? assistantCopy.importWithCards : assistantCopy.importWithoutCards,
+            recipes: cards,
+          });
+          return;
+        }
 
-          if (/(开始|进入).*(烹饪|烹调|做菜|cooking)|start cooking|cooking mode/i.test(text)) {
-            const targetRecipe = selectedRecipe ?? latestRecipes[0];
-            if (targetRecipe) {
-              handleStartCooking(targetRecipe);
-              return;
-            }
-            if (!hasLlmKey) {
-              promptConfigureLlmKey();
-              return;
-            }
-            await handleSaveLatestRecipeDraft({ startCooking: true });
+        if (/(设置|语速|声音|徽标|唤醒|settings)/i.test(text)) {
+          const rateMatch = text.match(/(0\.8|1\.0|1|1\.2|1\.5|2)(\s*)倍/);
+          if (rateMatch) {
+            setSpeechRate(Number(rateMatch[1]));
+            pushAssistant({ kind: "confirm", text: assistantCopy.rateChanged(rateMatch[1]) });
             return;
           }
-
-          if (/(导入|视频|新菜谱|import)/i.test(text)) {
-            if (/(菜谱|菜谱库|recipe)/i.test(text) && !/(视频|video)/i.test(text)) {
-              if (!hasLlmKey) {
-                promptConfigureLlmKey();
-                return;
-              }
-              await handleSaveLatestRecipeDraft();
-              return;
-            }
-            const cards = await buildRecipeCards(text);
-            if (commandTurnRef.current !== turnId) return;
-            setLatestRecipes(cards);
-            pushAssistant({
-              kind: cards.length > 0 ? "recipes" : "guide",
-              text:
-                cards.length > 0 ? assistantCopy.importWithCards : assistantCopy.importWithoutCards,
-              recipes: cards,
-            });
+          if (/隐藏.*(建议|徽标)|hide.*badge/i.test(text)) {
+            toggleVoiceBadges(false);
+            pushAssistant({ kind: "confirm", text: assistantCopy.badgesHidden });
             return;
           }
+          pushAssistant({
+            kind: "guide",
+            text: assistantCopy.settingsGuide,
+          });
+          return;
+        }
 
-          if (/(设置|语速|声音|徽标|唤醒|settings)/i.test(text)) {
-            const rateMatch = text.match(/(0\.8|1\.0|1|1\.2|1\.5|2)(\s*)倍/);
-            if (rateMatch) {
-              setSpeechRate(Number(rateMatch[1]));
-              pushAssistant({ kind: "confirm", text: assistantCopy.rateChanged(rateMatch[1]) });
-              return;
-            }
-            if (/隐藏.*(建议|徽标)|hide.*badge/i.test(text)) {
-              toggleVoiceBadges(false);
-              pushAssistant({ kind: "confirm", text: assistantCopy.badgesHidden });
-              return;
-            }
-            pushAssistant({
-              kind: "guide",
-              text: assistantCopy.settingsGuide,
-            });
-            return;
-          }
+        if (/(打开|进入).*(设置|settings)/i.test(text)) {
+          pushAssistant({ kind: "confirm", text: assistantCopy.openingSettings });
+          window.setTimeout(() => {
+            stopAssistantPlayback(true);
+            void navigate({ to: "/settings" });
+          }, 450);
+          return;
+        }
 
-          if (/(打开|进入).*(设置|settings)/i.test(text)) {
-            pushAssistant({ kind: "confirm", text: assistantCopy.openingSettings });
-            window.setTimeout(() => {
-              stopAssistantPlayback(true);
-              void navigate({ to: "/settings" });
-            }, 450);
-            return;
-          }
+        if (/(菜谱库|我的菜谱|全部菜谱|recipes)/i.test(text)) {
+          pushAssistant({ kind: "confirm", text: assistantCopy.openingRecipes });
+          window.setTimeout(() => {
+            stopAssistantPlayback(true);
+            void navigate({ to: "/recipes" });
+          }, 450);
+          return;
+        }
 
-          if (/(菜谱库|我的菜谱|全部菜谱|recipes)/i.test(text)) {
-            pushAssistant({ kind: "confirm", text: assistantCopy.openingRecipes });
-            window.setTimeout(() => {
-              stopAssistantPlayback(true);
-              void navigate({ to: "/recipes" });
-            }, 450);
-            return;
-          }
+        if (/^(是|好|可以|yes|ok)$/i.test(text) && latestRecipes[0]) {
+          handleStartCooking(latestRecipes[0]);
+          return;
+        }
 
-          if (/(换一批|推荐|吃什么|今晚|午饭|晚饭|早餐|辣|川菜|番茄炒蛋|红烧肉|水煮)/i.test(text)) {
-            const cards = await buildRecipeCards(text);
-            if (commandTurnRef.current !== turnId) return;
-            setLatestRecipes(cards);
-            if (cards.length === 0) {
-              pushAssistant({
-                kind: "guide",
-                text: assistantCopy.noLocalRecipes,
-              });
-              return;
-            }
+        if (/^(否|不用|待会|no)$/i.test(text)) {
+          pushAssistant({
+            kind: "text",
+            text: assistantCopy.stayHere,
+          });
+          return;
+        }
 
-            pushAssistant({
-              kind: "recipes",
-              text: assistantCopy.recommendations,
-              recipes: cards,
-            });
-            return;
-          }
+        if (!hasLlmKey) {
+          promptConfigureLlmKey();
+          return;
+        }
 
-          if (/^(是|好|可以|yes|ok)$/i.test(text) && latestRecipes[0]) {
-            handleStartCooking(latestRecipes[0]);
-            return;
-          }
-
-          if (/^(否|不用|待会|no)$/i.test(text)) {
-            pushAssistant({
-              kind: "text",
-              text: assistantCopy.stayHere,
-            });
-            return;
-          }
-
-          if (!hasLlmKey) {
-            promptConfigureLlmKey();
-            return;
-          }
-
-          await streamAssistantTextReply(text, conversationMessages);
-        })();
-      }, 0);
+        await streamAssistantTextReply(text, conversationMessages);
+      })();
     },
     [
       addMessage,
+      buildSearchRecipeCards,
       buildRecipeCards,
       findRecipeNumber,
+      getRecipeSearchMode,
       handleSaveLatestRecipeDraft,
       handleOpenRecipe,
       handleStartCooking,
       assistantCopy,
       hasLlmKey,
-      language,
       latestRecipes,
       messages,
       navigate,
@@ -1610,8 +1763,11 @@ function HomePage() {
 
   const clearConversation = () => {
     commandTurnRef.current += 1;
+    shouldAutoScrollRef.current = true;
+    setInput("");
     setMessages([]);
     setLatestRecipes([]);
+    setLatestRecipeDraftText("");
     stopAssistantPlayback(false);
     toast.success(assistantCopy.clearSuccess);
   };
@@ -1672,20 +1828,20 @@ function HomePage() {
             <div
               className={cn(
                 "relative mx-auto w-full max-w-[760px]",
-                isConversationActive && "pt-12 sm:pt-8",
+                isConversationActive && "pt-9 sm:pt-7",
               )}
             >
               {isConversationActive && (
-                <div className="group/clear absolute left-1/2 top-0 z-20 flex h-10 w-full max-w-[220px] -translate-x-1/2 items-center justify-center">
+                <div className="group/clear absolute left-1/2 -top-3 z-20 flex -translate-x-1/2 items-center justify-center sm:-top-2">
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    className="h-8 w-full gap-1.5 rounded-full border border-border/80 bg-card/95 px-3 text-xs opacity-100 shadow-sm backdrop-blur transition-all duration-150 sm:translate-y-1 sm:opacity-0 sm:pointer-events-none sm:group-hover/clear:translate-y-0 sm:group-hover/clear:opacity-100 sm:group-hover/clear:pointer-events-auto sm:focus-visible:translate-y-0 sm:focus-visible:opacity-100 sm:focus-visible:pointer-events-auto"
+                    className="h-7 gap-1.5 rounded-full border border-border/80 bg-card/95 px-3 text-[11px] opacity-100 shadow-sm backdrop-blur transition-all duration-150 sm:h-8 sm:px-3.5 sm:text-xs sm:translate-y-1 sm:opacity-0 sm:pointer-events-none sm:group-hover/clear:translate-y-0 sm:group-hover/clear:opacity-100 sm:group-hover/clear:pointer-events-auto sm:focus-visible:translate-y-0 sm:focus-visible:opacity-100 sm:focus-visible:pointer-events-auto"
                     onClick={clearConversation}
                     aria-label={t("home.chat.clearConversation")}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Plus className="h-3.5 w-3.5" />
                     {t("home.chat.clearConversation")}
                   </Button>
                 </div>
@@ -2135,7 +2291,7 @@ async function fetchWebRecipeContent(sourceUrl: string): Promise<{
 function cleanRecipeSearchKeyword(query: string): string {
   const cleaned = query
     .replace(
-      /(帮我|给我|请|找找|找一下|找|查查|查一下|搜一下|搜索|推荐|换一批|菜谱|食谱|做法|今晚|午饭|晚饭|早餐|吃什么|怎么做|如何做|怎么煮|如何煮)/g,
+      /(帮我|给我|告诉我|请|找找|找一下|找一找|找|查查|查一下|查一查|查|搜搜|搜一下|搜一搜|搜搜看|搜索一下|搜索|搜|看看|看一下|看下|看一看|去|网页|网上|联网|推荐|换一批|菜谱|食谱|做法|今晚|午饭|晚饭|早餐|吃什么|怎么做|如何做|怎么煮|如何煮)/g,
       "",
     )
     .replace(/[，。！？、,.!?;；:："'“”‘’]/g, " ")
@@ -2149,6 +2305,44 @@ function cleanRecipeSearchKeyword(query: string): string {
   }
 
   return cleaned;
+}
+
+function isConcreteRecipeSearchKeyword(keyword: string): boolean {
+  return (
+    keyword.length >= 2 &&
+    !/^(这个|那个|这个菜|那个菜|这道菜|那道菜|它|这个做法|那个做法|这道菜做法|那道菜做法)$/.test(
+      keyword,
+    )
+  );
+}
+
+function resolveRecipeSearchQuery(query: string, messages: ChatMessage[]): string {
+  const normalized = cleanRecipeSearchKeyword(query);
+  if (isConcreteRecipeSearchKeyword(normalized)) {
+    return normalized;
+  }
+
+  const shouldInheritFromHistory =
+    /(search|look up|find)(?:\s+for)?/i.test(query) ||
+    /搜索|搜索一下|搜搜|搜一下|搜一搜|搜搜看|查查|查一下|查一查|找找|找一下|找一找|网页|网上|联网|怎么做|如何做|做法|怎么煮|如何煮/.test(
+      query,
+    );
+
+  if (!shouldInheritFromHistory) {
+    return normalized;
+  }
+
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "user") continue;
+
+    const candidate = cleanRecipeSearchKeyword(message.text);
+    if (isConcreteRecipeSearchKeyword(candidate)) {
+      return candidate;
+    }
+  }
+
+  return normalized;
 }
 
 function formatTime(date: Date, language: string) {

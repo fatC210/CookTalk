@@ -1,15 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  Outlet,
-  Link,
-  createRootRouteWithContext,
-  useRouter,
-  HeadContent,
-  Scripts,
-} from "@tanstack/react-router";
+import { Outlet, createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
+import { RouteReloadErrorScreen, RouteStatusScreen } from "@/components/route-status-screen";
 import { ThemeProvider } from "@/components/theme-provider";
 import { GlobalVoiceController } from "@/components/global-voice-controller";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -56,55 +50,28 @@ function NotFoundComponent() {
   const { t } = useTranslation();
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-7xl font-bold text-foreground">404</h1>
-        <h2 className="mt-4 text-xl font-semibold text-foreground">{t("root.notFound.title")}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">{t("root.notFound.body")}</p>
-        <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            {t("root.goHome")}
-          </Link>
-        </div>
-      </div>
-    </div>
+    <RouteStatusScreen
+      title={t("root.notFound.title")}
+      body={t("root.notFound.body")}
+      primaryLabel={t("common.retry")}
+      secondaryLabel={t("root.goHome")}
+      primaryAction={() => window.location.reload()}
+    />
   );
 }
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
-  const router = useRouter();
   const { t } = useTranslation();
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">
-          {t("root.error.title")}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">{t("root.error.body")}</p>
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <button
-            onClick={() => {
-              router.invalidate();
-              reset();
-            }}
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            {t("common.retry")}
-          </button>
-          <a
-            href="/"
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            {t("root.goHome")}
-          </a>
-        </div>
-      </div>
-    </div>
+    <RouteReloadErrorScreen
+      title={t("root.error.title")}
+      body={t("root.error.body")}
+      primaryLabel={t("common.retry")}
+      secondaryLabel={t("root.goHome")}
+      reset={reset}
+    />
   );
 }
 
