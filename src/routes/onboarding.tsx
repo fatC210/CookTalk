@@ -125,7 +125,10 @@ function OnboardingPage() {
       <SiteHeader />
 
       <section className="relative flex-1 overflow-hidden">
-        <div className="absolute -top-40 -right-20 h-[500px] w-[500px] rounded-full bg-accent/30 blur-3xl" aria-hidden />
+        <div
+          className="absolute -top-40 -right-20 h-[500px] w-[500px] rounded-full bg-accent/30 blur-3xl"
+          aria-hidden
+        />
         <div className="relative mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-20">
           <div className="text-center">
             <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs">
@@ -153,8 +156,8 @@ function OnboardingPage() {
                     isActive
                       ? "border-border bg-card"
                       : done
-                      ? "border-border/60 bg-card/60"
-                      : "border-border/30 bg-card/20"
+                        ? "border-border/60 bg-card/60"
+                        : "border-border/30 bg-card/20"
                   }`}
                 >
                   <VoiceBadge n={i + 1} className="absolute left-5 top-5 sm:-left-3 sm:top-6" />
@@ -162,7 +165,11 @@ function OnboardingPage() {
                   {/* Step icon */}
                   <div
                     className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl sm:h-14 sm:w-14 ${
-                      done ? "bg-foreground text-background" : isActive ? "bg-secondary" : "bg-secondary/40"
+                      done
+                        ? "bg-foreground text-background"
+                        : isActive
+                          ? "bg-secondary"
+                          : "bg-secondary/40"
                     }`}
                   >
                     {done ? (
@@ -174,10 +181,14 @@ function OnboardingPage() {
 
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                      <h3 className="font-display text-2xl">{t(`onboarding.steps.${key}.title`)}</h3>
+                      <h3 className="font-display text-2xl">
+                        {t(`onboarding.steps.${key}.title`)}
+                      </h3>
                       {done && <span className="text-xs text-clay">{t("onboarding.done")}</span>}
                     </div>
-                    <p className="mt-1 text-sm text-muted-foreground">{t(`onboarding.steps.${key}.body`)}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t(`onboarding.steps.${key}.body`)}
+                    </p>
 
                     {/* Step-specific content when active */}
                     {isActive && (
@@ -215,7 +226,11 @@ function OnboardingPage() {
                                 type="button"
                                 onClick={() => setShowKey((s) => !s)}
                                 className="text-muted-foreground hover:text-foreground"
-                                aria-label={showKey ? t("onboarding.aria.hideKey") : t("onboarding.aria.showKey")}
+                                aria-label={
+                                  showKey
+                                    ? t("onboarding.aria.hideKey")
+                                    : t("onboarding.aria.showKey")
+                                }
                               >
                                 {showKey ? (
                                   <EyeOff className="h-4 w-4" strokeWidth={1.75} />
@@ -256,7 +271,9 @@ function OnboardingPage() {
                                   }`}
                                 >
                                   <div className="font-medium text-sm">{v.name}</div>
-                                  <div className={`mt-0.5 ${selectedVoice === v.id ? "text-background/70" : "text-muted-foreground"}`}>
+                                  <div
+                                    className={`mt-0.5 ${selectedVoice === v.id ? "text-background/70" : "text-muted-foreground"}`}
+                                  >
                                     {v.desc}
                                   </div>
                                 </button>
@@ -268,7 +285,8 @@ function OnboardingPage() {
                               disabled={!selectedVoice}
                               className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-40 sm:w-auto"
                             >
-                              {t("onboarding.steps.voice.action")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                              {t("onboarding.steps.voice.action")}{" "}
+                              <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
                             </button>
                           </div>
                         )}
@@ -280,7 +298,8 @@ function OnboardingPage() {
                             onClick={openSampleRecipe}
                             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay sm:w-auto"
                           >
-                            {t("onboarding.steps.recipe.action")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                            {t("onboarding.steps.recipe.action")}{" "}
+                            <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
                           </button>
                         )}
                       </div>
@@ -294,7 +313,8 @@ function OnboardingPage() {
                       onClick={requestMic}
                       className="hidden items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm hover:border-foreground md:inline-flex"
                     >
-                      {t("onboarding.steps.mic.regrant")} <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
+                      {t("onboarding.steps.mic.regrant")}{" "}
+                      <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
                     </button>
                   )}
                 </li>

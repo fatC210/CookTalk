@@ -250,7 +250,10 @@
     "finish": "Finish cooking",
     "finishConfirm": "Are you sure you want to finish cooking?",
     "voiceQa": "Voice Q&A",
-    "voiceQaBody": "Ask anything — \"what can I substitute?\", \"how do I know it's done?\""
+    "voiceQaBody": "Ask anything — \"what can I substitute?\", \"how do I know it's done?\"",
+    "voiceQaPrompt": "If you have any questions during the step, ask me anytime.",
+    "youLabel": "You",
+    "stepSpokenOnce": "Step spoken"
   },
   "import": {
     "metaTitle": "Import - CookTalk",
@@ -382,7 +385,7 @@
     "llmKeyWarning": "LLM API key not configured — saving transcript only.",
     "coverGenerationWarning": "Cover generation failed — using default.",
     "coverGenerationFailed": "Could not generate the cover. Check the image generation API URL, model, or key, then try again.",
-    "pipelineFailed": "Pipeline failed",
+    "pipelineFailed": "Processing failed. Please try again.",
     "untitledRecipe": "Untitled Recipe",
     "recipeSaved": "Recipe saved!",
     "saveFailed": "Save failed",

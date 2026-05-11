@@ -250,7 +250,10 @@
     "finish": "完成烹饪",
     "finishConfirm": "确定要结束烹饪吗？",
     "voiceQa": "语音问答",
-    "voiceQaBody": "随时提问 — “可以用什么替代？”、“怎么判断熟了？”"
+    "voiceQaBody": "随时提问 — “可以用什么替代？”、“怎么判断熟了？”",
+    "voiceQaPrompt": "在操作过程中有问题可以随时问我",
+    "youLabel": "你",
+    "stepSpokenOnce": "已朗读本步"
   },
   "import": {
     "metaTitle": "导入 - CookTalk",
@@ -377,7 +380,7 @@
     "llmKeyWarning": "未配置 LLM API 密钥 — 将仅保存转录文本。",
     "coverGenerationWarning": "封面生成失败 — 使用默认封面。",
     "coverGenerationFailed": "封面生成失败。请检查图片生成 API 地址、模型或密钥后再试。",
-    "pipelineFailed": "处理流程失败",
+    "pipelineFailed": "处理失败，请重试。",
     "untitledRecipe": "未命名菜谱",
     "recipeSaved": "菜谱已保存！",
     "saveFailed": "保存失败",

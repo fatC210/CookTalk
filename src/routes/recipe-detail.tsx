@@ -52,7 +52,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { useElevenLabsVoices, type ElevenLabsVoiceOption } from "@/hooks/use-elevenlabs-voices";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
@@ -119,12 +120,98 @@ function createEmptyStep(): EditStep {
   return { description: "", durationMin: "", tips: "" };
 }
 
+type StepDescriptionFieldProps = {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  textareaRef?: React.Ref<HTMLTextAreaElement>;
+};
+
+function StepDescriptionField({
+  value,
+  onChange,
+  placeholder,
+  textareaRef,
+}: StepDescriptionFieldProps) {
+  return (
+    <label className="space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{placeholder}</span>
+      <AutoResizeTextarea
+        ref={textareaRef}
+        className="overflow-y-hidden rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus-visible:border-clay focus-visible:ring-0"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        minRows={1}
+        maxRows={6}
+      />
+    </label>
+  );
+}
+
+type StepMetadataFieldsProps = {
+  durationValue: string;
+  tipsValue: string;
+  onDurationChange: (value: string) => void;
+  onTipsChange: (value: string) => void;
+  durationLabel: string;
+  durationPlaceholder: string;
+  durationUnit: string;
+  tipsLabel: string;
+  tipsPlaceholder: string;
+};
+
+function StepMetadataFields({
+  durationValue,
+  tipsValue,
+  onDurationChange,
+  onTipsChange,
+  durationLabel,
+  durationPlaceholder,
+  durationUnit,
+  tipsLabel,
+  tipsPlaceholder,
+}: StepMetadataFieldsProps) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+      <label className="space-y-1.5">
+        <span className="text-xs font-medium text-muted-foreground">{durationLabel}</span>
+        <div className="flex rounded-xl border border-border bg-card transition-colors focus-within:border-clay">
+          <input
+            className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+            value={durationValue}
+            onChange={(event) => onDurationChange(event.target.value)}
+            placeholder={durationPlaceholder}
+            inputMode="numeric"
+          />
+          <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
+            {durationUnit}
+          </span>
+        </div>
+      </label>
+      <label className="space-y-1.5">
+        <span className="text-xs font-medium text-muted-foreground">{tipsLabel}</span>
+        <input
+          className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
+          value={tipsValue}
+          onChange={(event) => onTipsChange(event.target.value)}
+          placeholder={tipsPlaceholder}
+        />
+      </label>
+    </div>
+  );
+}
+
 function DetailPage() {
   const { t, i18n } = useTranslation();
   const { id } = Route.useSearch();
   const navigate = useNavigate();
   const cookingVoiceId = useAppStore((s) => s.cookingVoiceId);
+  const hasLlmKey = useAppStore((s) => s.hasLlmKey);
+  const hasImageGenKey = useAppStore((s) => s.hasImageGenKey);
   const coverInputRef = useRef<HTMLInputElement>(null);
+  const editIngredientNameRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const editStepDescriptionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const liveClonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []);
   const {
     options: elevenLabsVoiceOptions,
@@ -361,6 +448,26 @@ function DetailPage() {
     );
   }, []);
 
+  const addEditIngredient = useCallback(() => {
+    setEditIngredients((current) => {
+      const next = [...current, createEmptyIngredient()];
+      window.requestAnimationFrame(() => {
+        editIngredientNameRefs.current[next.length - 1]?.focus();
+      });
+      return next;
+    });
+  }, []);
+
+  const addEditStep = useCallback(() => {
+    setEditSteps((current) => {
+      const next = [...current, createEmptyStep()];
+      window.requestAnimationFrame(() => {
+        editStepDescriptionRefs.current[next.length - 1]?.focus();
+      });
+      return next;
+    });
+  }, []);
+
   const handleSaveEdit = useCallback(async () => {
     if (!id || !recipe) return;
 
@@ -527,6 +634,7 @@ function DetailPage() {
     : voiceSelectDisabled
       ? t("recipeDetail.voiceSelectDisabled")
       : defaultVoiceLabel;
+  const canGenerateCover = hasLlmKey && hasImageGenKey;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -687,15 +795,16 @@ function DetailPage() {
                   onChange={handleCoverInputChange}
                 />
                 {coverUrl ? (
-                  <button
-                    type="button"
-                    aria-label={t("recipeDetail.coverPreviewOpen")}
-                    title={t("recipeDetail.coverPreviewOpen")}
-                    onClick={() => setExpandedCoverPreview({ src: coverUrl, alt: title })}
-                    className="absolute inset-0 cursor-zoom-in overflow-hidden text-left"
-                  >
-                    <img src={coverUrl} alt={title} className="h-full w-full object-cover" />
-                  </button>
+                  <AppTooltip content={t("recipeDetail.coverPreviewOpen")}>
+                    <button
+                      type="button"
+                      aria-label={t("recipeDetail.coverPreviewOpen")}
+                      onClick={() => setExpandedCoverPreview({ src: coverUrl, alt: title })}
+                      className="absolute inset-0 cursor-zoom-in overflow-hidden text-left"
+                    >
+                      <img src={coverUrl} alt={title} className="h-full w-full object-cover" />
+                    </button>
+                  </AppTooltip>
                 ) : (
                   <>
                     <div className="absolute inset-0 grain opacity-50" aria-hidden />
@@ -706,35 +815,40 @@ function DetailPage() {
                   </>
                 )}
                 <div className="pointer-events-none absolute right-4 top-4 z-20 flex gap-2 opacity-0 transition-opacity group-hover/cover:pointer-events-auto group-hover/cover:opacity-100 group-focus-within/cover:pointer-events-auto group-focus-within/cover:opacity-100">
-                  <button
-                    type="button"
-                    aria-label={t("recipeDetail.uploadCover")}
-                    title={t("recipeDetail.uploadCover")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      coverInputRef.current?.click();
-                    }}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background"
+                  <AppTooltip content={t("recipeDetail.uploadCover")}>
+                    <button
+                      type="button"
+                      aria-label={t("recipeDetail.uploadCover")}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        coverInputRef.current?.click();
+                      }}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background"
+                    >
+                      <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                  </AppTooltip>
+                  <AppTooltip
+                    content={t("recipeDetail.aiGenerateCover")}
+                    disabled={isGeneratingCover || !canGenerateCover}
                   >
-                    <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("recipeDetail.aiGenerateCover")}
-                    title={t("recipeDetail.aiGenerateCover")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleGenerateCover();
-                    }}
-                    disabled={isGeneratingCover}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isGeneratingCover ? (
-                      <RefreshCw className="h-4 w-4 animate-spin" strokeWidth={1.75} />
-                    ) : (
-                      <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                    )}
-                  </button>
+                    <button
+                      type="button"
+                      aria-label={t("recipeDetail.aiGenerateCover")}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleGenerateCover();
+                      }}
+                      disabled={isGeneratingCover || !canGenerateCover}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isGeneratingCover ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" strokeWidth={1.75} />
+                      ) : (
+                        <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                      )}
+                    </button>
+                  </AppTooltip>
                 </div>
                 <div className="pointer-events-none absolute bottom-4 left-4 right-4 z-10 flex items-center justify-between rounded-2xl bg-background/80 px-4 py-3 backdrop-blur">
                   <div className="text-xs">
@@ -877,11 +991,18 @@ function DetailPage() {
                 </label>
                 <label className="space-y-2">
                   <span className="text-sm font-medium">{t("import.manualTotalTime")}</span>
-                  <Input
-                    inputMode="numeric"
-                    value={editTotalTime}
-                    onChange={(event) => setEditTotalTime(event.target.value)}
-                  />
+                  <div className="flex rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay">
+                    <input
+                      className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+                      inputMode="numeric"
+                      value={editTotalTime}
+                      onChange={(event) => setEditTotalTime(event.target.value)}
+                      placeholder={t("import.manualTotalTimePlaceholder")}
+                    />
+                    <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
+                      {t("import.manualStepDurationUnit")}
+                    </span>
+                  </div>
                 </label>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -919,9 +1040,7 @@ function DetailPage() {
                   <button
                     type="button"
                     className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs hover:border-foreground"
-                    onClick={() =>
-                      setEditIngredients((current) => [...current, createEmptyIngredient()])
-                    }
+                    onClick={addEditIngredient}
                   >
                     <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
                     {t("import.manualAddIngredient")}
@@ -931,6 +1050,9 @@ function DetailPage() {
                   {editIngredients.map((ingredient, index) => (
                     <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                       <Input
+                        ref={(node) => {
+                          editIngredientNameRefs.current[index] = node;
+                        }}
                         value={ingredient.name}
                         placeholder={t("import.manualIngredientName")}
                         onChange={(event) =>
@@ -970,7 +1092,7 @@ function DetailPage() {
                 <button
                   type="button"
                   className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs hover:border-foreground"
-                  onClick={() => setEditSteps((current) => [...current, createEmptyStep()])}
+                  onClick={addEditStep}
                 >
                   <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
                   {t("import.manualAddStep")}
@@ -996,27 +1118,25 @@ function DetailPage() {
                         <X className="h-4 w-4" strokeWidth={1.75} />
                       </button>
                     </div>
-                    <Textarea
+                    <StepDescriptionField
+                      textareaRef={(node) => {
+                        editStepDescriptionRefs.current[index] = node;
+                      }}
                       value={step.description}
+                      onChange={(value) => updateEditStep(index, { description: value })}
                       placeholder={t("import.manualStepDescription")}
-                      className="min-h-24 resize-y"
-                      onChange={(event) =>
-                        updateEditStep(index, { description: event.target.value })
-                      }
                     />
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <Input
-                        inputMode="numeric"
-                        value={step.durationMin}
-                        placeholder={t("import.manualStepDuration")}
-                        onChange={(event) =>
-                          updateEditStep(index, { durationMin: event.target.value })
-                        }
-                      />
-                      <Input
-                        value={step.tips}
-                        placeholder={t("import.manualStepTips")}
-                        onChange={(event) => updateEditStep(index, { tips: event.target.value })}
+                    <div className="mt-3">
+                      <StepMetadataFields
+                        durationValue={step.durationMin}
+                        tipsValue={step.tips}
+                        onDurationChange={(value) => updateEditStep(index, { durationMin: value })}
+                        onTipsChange={(value) => updateEditStep(index, { tips: value })}
+                        durationLabel={t("import.manualStepDuration")}
+                        durationPlaceholder={t("import.manualStepDurationPlaceholder")}
+                        durationUnit={t("import.manualStepDurationUnit")}
+                        tipsLabel={t("import.manualStepTips")}
+                        tipsPlaceholder={t("import.manualStepTipsPlaceholder")}
                       />
                     </div>
                   </div>

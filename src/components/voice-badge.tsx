@@ -7,7 +7,13 @@ export function VoiceBadge({ n, className }: { n: number; className?: string }) 
   return <span className={cn("voice-badge", className)}>{n}</span>;
 }
 
-export function VoiceHint({ children, className }: { children: React.ReactNode; className?: string }) {
+export function VoiceHint({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   const visible = useAppStore((s) => s.voiceBadgesVisible);
   if (!visible) return null;
   return (

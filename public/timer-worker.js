@@ -30,11 +30,11 @@ function tick() {
     });
   });
 
-  self.postMessage({ type: 'tick', timers: states });
+  self.postMessage({ type: "tick", timers: states });
 
   // Send completed notifications
-  completed.forEach(t => {
-    self.postMessage({ type: 'completed', id: t.id, label: t.label });
+  completed.forEach((t) => {
+    self.postMessage({ type: "completed", id: t.id, label: t.label });
   });
 }
 
@@ -42,7 +42,7 @@ self.onmessage = function (e) {
   const { type, id, label, seconds } = e.data;
 
   switch (type) {
-    case 'start':
+    case "start":
       timers.set(id, {
         label,
         totalSeconds: seconds,
@@ -55,7 +55,7 @@ self.onmessage = function (e) {
       }
       break;
 
-    case 'cancel':
+    case "cancel":
       timers.delete(id);
       if (timers.size === 0 && intervalId) {
         clearInterval(intervalId);
@@ -63,7 +63,7 @@ self.onmessage = function (e) {
       }
       break;
 
-    case 'extend':
+    case "extend":
       if (timers.has(id)) {
         const timer = timers.get(id);
         timer.remaining += seconds;
@@ -72,7 +72,7 @@ self.onmessage = function (e) {
       }
       break;
 
-    case 'clear':
+    case "clear":
       timers.clear();
       if (intervalId) {
         clearInterval(intervalId);

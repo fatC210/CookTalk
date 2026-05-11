@@ -1,6 +1,17 @@
 import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
-import { CheckCircle2, ChefHat, Clock, Loader2, Mic, Send, Trash2, Volume2, VolumeX, Waves } from "lucide-react";
+import {
+  CheckCircle2,
+  ChefHat,
+  Clock,
+  Loader2,
+  Mic,
+  Send,
+  Trash2,
+  Volume2,
+  VolumeX,
+  Waves,
+} from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -385,10 +396,10 @@ async function streamKitchenAssistantReply({
       { role: "system", content: KITCHEN_ASSISTANT_SYSTEM_PROMPTS[language] },
       {
         role: "system",
-          content:
-            language === "zh"
-              ? `用户本地菜谱库摘要：\n${buildRecipeLibraryContext(recipes, language)}`
-              : `User's saved recipe library summary:\n${buildRecipeLibraryContext(recipes, language)}`,
+        content:
+          language === "zh"
+            ? `用户本地菜谱库摘要：\n${buildRecipeLibraryContext(recipes, language)}`
+            : `User's saved recipe library summary:\n${buildRecipeLibraryContext(recipes, language)}`,
       },
       ...history,
       { role: "user", content: text },
@@ -506,6 +517,7 @@ function HomePage() {
   const commandTurnRef = useRef(0);
   const mutedMessageIdRef = useRef<string | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const voiceWakeDisabled = !hasElevenLabsKey && !input.trim();
 
   const currentStatus = isAssistantLoading
     ? "thinking"
@@ -640,12 +652,7 @@ function HomePage() {
   );
 
   const playAssistantAudioBlob = useCallback(
-    (
-      runId: string,
-      messageId: string,
-      audioBlob: Blob,
-      reveal?: AssistantAudioReveal,
-    ) =>
+    (runId: string, messageId: string, audioBlob: Blob, reveal?: AssistantAudioReveal) =>
       new Promise<void>((resolve) => {
         if (assistantRunRef.current !== runId) {
           resolve();
@@ -692,8 +699,7 @@ function HomePage() {
               Number.isFinite(audio.duration) && audio.duration > 0
                 ? audio.duration * 1000
                 : fallbackDuration;
-            const progress =
-              duration > 0 ? Math.min(1, (audio.currentTime * 1000) / duration) : 1;
+            const progress = duration > 0 ? Math.min(1, (audio.currentTime * 1000) / duration) : 1;
             const revealLength = Math.min(
               reveal.segmentText.length,
               Math.max(initialRevealLength, Math.floor(reveal.segmentText.length * progress)),
@@ -761,14 +767,16 @@ function HomePage() {
       const queueSegment = ({ speechText, displayText }: SpeechSegment) => {
         if (!hasElevenLabsKey || !speechText.trim()) return;
 
-        const blobPromise = synthesizeWithElevenLabs(speechText, conversationVoiceId, language).catch(
-          (error: unknown) => {
-            if (assistantRunRef.current === runId) {
-              toast.error(error instanceof Error ? error.message : assistantCopy.voiceGenFailed);
-            }
-            return null;
-          },
-        );
+        const blobPromise = synthesizeWithElevenLabs(
+          speechText,
+          conversationVoiceId,
+          language,
+        ).catch((error: unknown) => {
+          if (assistantRunRef.current === runId) {
+            toast.error(error instanceof Error ? error.message : assistantCopy.voiceGenFailed);
+          }
+          return null;
+        });
 
         playbackChain = playbackChain.then(async () => {
           if (assistantRunRef.current !== runId) return;
@@ -963,7 +971,9 @@ function HomePage() {
             const message = ensureAssistantMessage();
             updateMessage(
               message.id,
-              hasElevenLabsKey ? { text: assistantText } : { text: assistantText, displayText: assistantText },
+              hasElevenLabsKey
+                ? { text: assistantText }
+                : { text: assistantText, displayText: assistantText },
             );
             speechScheduler?.append(chunk);
           },
@@ -975,7 +985,9 @@ function HomePage() {
         const message = ensureAssistantMessage();
         updateMessage(
           message.id,
-          hasElevenLabsKey ? { text: assistantText } : { text: assistantText, displayText: assistantText },
+          hasElevenLabsKey
+            ? { text: assistantText }
+            : { text: assistantText, displayText: assistantText },
         );
         setLatestRecipeDraftText(`${text}\n\n${assistantText}`.trim());
         if (!receivedChunk && assistantText) {
@@ -1025,11 +1037,17 @@ function HomePage() {
   );
 
   const structureAndSaveRecipeDraft = useCallback(
-    async (draftText: string, options: { sourceUrl?: string; fallbackTitle?: string } = {}): Promise<Recipe> => {
+    async (
+      draftText: string,
+      options: { sourceUrl?: string; fallbackTitle?: string } = {},
+    ): Promise<Recipe> => {
       const service = await getConfiguredLLMService();
       if (!service) throw new Error(assistantCopy.llmKeyRequired);
 
-      const draft = (await service.structureRecipeFromText(draftText)) as StructuredRecipeDraft;
+      const draft = (await service.structureRecipeFromText(
+        draftText,
+        language,
+      )) as StructuredRecipeDraft;
       const title =
         draft.title?.trim() ||
         options.fallbackTitle?.trim() ||
@@ -1190,7 +1208,8 @@ function HomePage() {
           });
         }, 500);
       } catch (error) {
-        const message = error instanceof Error ? error.message : assistantCopy.webRecipeImportFailed;
+        const message =
+          error instanceof Error ? error.message : assistantCopy.webRecipeImportFailed;
         updateMessage(progressMessage.id, {
           text: assistantCopy.webRecipeImportFailed,
           displayText: assistantCopy.webRecipeImportFailed,
@@ -1265,7 +1284,16 @@ function HomePage() {
       }
 
       if (chatRecipe.sourceUrl) {
-        void importWebRecipe(chatRecipe, { openDetail: true });
+        const openedWindow = window.open(chatRecipe.sourceUrl, "_blank", "noopener,noreferrer");
+        if (!openedWindow) {
+          window.location.assign(chatRecipe.sourceUrl);
+          return;
+        }
+
+        pushAssistant({
+          kind: "confirm",
+          text: assistantCopy.openedWebResult(chatRecipe.title),
+        });
         return;
       }
 
@@ -1274,7 +1302,7 @@ function HomePage() {
         text: assistantCopy.webResultOnly(chatRecipe.title),
       });
     },
-    [assistantCopy, importWebRecipe, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
+    [assistantCopy, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
   );
 
   const handleStartCooking = useCallback(
@@ -1283,7 +1311,7 @@ function HomePage() {
         pushAssistant({ kind: "confirm", text: assistantCopy.startLocalRecipe(chatRecipe.title) });
         window.setTimeout(() => {
           stopAssistantPlayback(true);
-          void navigate({ to: "/cook", search: { id: chatRecipe.id } });
+          void navigate({ to: "/cook", search: { id: chatRecipe.id, step: 0 } });
         }, 450);
         return;
       }
@@ -1535,7 +1563,6 @@ function HomePage() {
       navigate,
       promptConfigureLlmKey,
       pushAssistant,
-      recipes,
       setSpeechRate,
       stopAssistantPlayback,
       streamAssistantTextReply,
@@ -1545,8 +1572,7 @@ function HomePage() {
 
   useEffect(() => {
     const handleHomeAwake = (event: Event) => {
-      const transcript =
-        (event as CustomEvent<HomeAwakeDetail>).detail?.transcript?.trim() ?? "";
+      const transcript = (event as CustomEvent<HomeAwakeDetail>).detail?.transcript?.trim() ?? "";
       if (transcript) {
         handleCommand(transcript);
         return;
@@ -1676,6 +1702,7 @@ function HomePage() {
                 />
                 <Button
                   type={input.trim() ? "submit" : "button"}
+                  disabled={voiceWakeDisabled}
                   size="icon"
                   onClick={() => {
                     if (!input.trim()) {
@@ -1688,6 +1715,8 @@ function HomePage() {
                     currentStatus === "recording" || currentStatus === "awake"
                       ? "scale-105 animate-pulse border-clay/40 bg-accent/35 text-clay shadow-[0_10px_24px_-16px_oklch(0.48_0.04_55_/_0.45)]"
                       : "border-border/70 bg-background/80 text-foreground shadow-[0_10px_24px_-16px_oklch(0.28_0.02_60_/_0.35)] hover:border-clay/40 hover:bg-background hover:text-clay",
+                    voiceWakeDisabled &&
+                      "cursor-not-allowed border-border/60 bg-background/65 text-muted-foreground hover:border-border/60 hover:bg-background/65 hover:text-muted-foreground",
                   )}
                   aria-label={
                     input.trim() ? assistantCopy.sendLabel : assistantCopy.manualWakeLabel
@@ -1828,12 +1857,9 @@ function MessageBubble({
                 onStart={() => onStartCooking(recipe)}
               />
             ))}
-            <p className="pt-1 text-xs text-muted-foreground">
-              {t("home.chat.recipeSuggestion")}
-            </p>
+            <p className="pt-1 text-xs text-muted-foreground">{t("home.chat.recipeSuggestion")}</p>
           </div>
         )}
-
       </div>
       {message.isReading && !isUser && hasAssistantText && (
         <div className="ml-3 mt-2">
@@ -1880,12 +1906,10 @@ function RecipeImportProgressPanel({
             key={step.id}
             className={cn(
               "flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px]",
-              step.status === "done" &&
-                "border-clay/20 bg-accent/35 font-medium text-clay",
+              step.status === "done" && "border-clay/20 bg-accent/35 font-medium text-clay",
               step.status === "active" &&
                 "border-clay/35 bg-background font-medium text-foreground shadow-sm",
-              step.status === "pending" &&
-                "border-border/70 bg-secondary/50 text-muted-foreground",
+              step.status === "pending" && "border-border/70 bg-secondary/50 text-muted-foreground",
             )}
           >
             {step.status === "done" ? (
@@ -1907,7 +1931,11 @@ function AssistantLoadingBubble() {
   const { t } = useTranslation();
 
   return (
-    <article className="flex flex-col items-start" aria-live="polite" aria-label={t("home.chat.loadingReply")}>
+    <article
+      className="flex flex-col items-start"
+      aria-live="polite"
+      aria-label={t("home.chat.loadingReply")}
+    >
       <div className="rounded-[1.5rem] border border-border bg-card px-4 py-3 shadow-sm">
         <div className="flex items-center gap-1.5 py-1" aria-hidden>
           {[0, 1, 2].map((index) => (

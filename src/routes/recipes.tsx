@@ -1,7 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader } from "@/components/site-header";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
-import { Search, Filter, ArrowUpDown, Plus, Clock, ChefHat, Mic, UtensilsCrossed } from "lucide-react";
+import {
+  Search,
+  Filter,
+  ArrowUpDown,
+  Plus,
+  Clock,
+  ChefHat,
+  Mic,
+  UtensilsCrossed,
+} from "lucide-react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Recipe } from "@/lib/db";
 import i18n from "@/lib/i18n";
@@ -89,7 +98,8 @@ function RecipesPage() {
   const [activeCuisine, setActiveCuisine] = useState("all");
   const [sort, setSort] = useState<SortKey>("lastCookedAt");
 
-  const allRecipes = useLiveQuery(() => db.recipes.toArray(), []) ?? [];
+  const liveRecipes = useLiveQuery(() => db.recipes.toArray(), []);
+  const allRecipes = useMemo(() => liveRecipes ?? [], [liveRecipes]);
 
   useEffect(() => {
     document.title = `${t("recipes.title")} - CookTalk`;
@@ -149,7 +159,8 @@ function RecipesPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <span className="page-kicker">
-                {t("recipes.personalKb")} · {t("recipes.recipesCount", { count: allRecipes.length })}
+                {t("recipes.personalKb")} ·{" "}
+                {t("recipes.recipesCount", { count: allRecipes.length })}
               </span>
               <h1 className="page-title">{t("recipes.title")}</h1>
               <VoiceHint className="mt-2">{t("recipes.voiceHint")}</VoiceHint>
@@ -222,13 +233,7 @@ function RecipesPage() {
           ) : (
             <div className="recipe-card-grid">
               {displayed.map((r, i) => (
-                <RecipeCard
-                  key={r.id}
-                  recipe={r}
-                  index={i}
-                  coverUrl={coverUrls.get(r.id)}
-                  t={t}
-                />
+                <RecipeCard key={r.id} recipe={r} index={i} coverUrl={coverUrls.get(r.id)} t={t} />
               ))}
             </div>
           )}
@@ -264,7 +269,9 @@ function RecipeCard({
       className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:border-clay/60"
     >
       <VoiceBadge n={index + 1} className="absolute left-3 top-3 z-10 !bg-card !opacity-90" />
-      <div className={`relative aspect-[16/10] overflow-hidden ${coverUrl ? "" : `bg-gradient-to-br ${gradient}`}`}>
+      <div
+        className={`relative aspect-[16/10] overflow-hidden ${coverUrl ? "" : `bg-gradient-to-br ${gradient}`}`}
+      >
         {coverUrl ? (
           <img
             src={coverUrl}
@@ -287,7 +294,9 @@ function RecipeCard({
         <div className="flex items-center text-xs text-muted-foreground">
           <span>{cuisineLabel}</span>
         </div>
-        <h3 className="font-display text-lg font-semibold leading-tight group-hover:text-clay">{recipe.title}</h3>
+        <h3 className="font-display text-lg font-semibold leading-tight group-hover:text-clay">
+          {recipe.title}
+        </h3>
         {flavorStr && <p className="text-xs text-muted-foreground">{flavorStr}</p>}
         <div className="mt-2 flex items-center justify-between gap-3 border-t border-border pt-3 text-xs">
           <span className="inline-flex items-center gap-1.5">

@@ -1,5 +1,7 @@
 import type { Recipe } from "./db";
 import { getApiKey } from "./crypto";
+import i18n from "./i18n";
+import type { AppLanguage } from "./language";
 
 type RecipePayload = Omit<
   Recipe,
@@ -27,6 +29,11 @@ type ChatOptions = {
   temperature?: number;
   timeoutMs?: number;
 };
+
+function resolveRecipeLanguage(language?: AppLanguage): AppLanguage {
+  if (language === "en" || language === "zh") return language;
+  return i18n.language.startsWith("zh") ? "zh" : "en";
+}
 
 interface LLMConfig {
   apiKey: string;
@@ -68,10 +75,12 @@ export const DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_LLM_MODEL = "gpt-4o-mini";
 export const DEFAULT_IMAGE_MODEL = "gpt-image-1.5";
 const OPENAI_API_HOST = "api.openai.com";
-const OPENAI_COMPATIBLE_ROOT_HOSTS = new Set([OPENAI_API_HOST, "onetoken.sh"]);
+const OPENAI_COMPATIBLE_ROOT_HOSTS = new Set([OPENAI_API_HOST, "onetoken.sh", "onetoken.one"]);
 const API_VALIDATION_TIMEOUT_MS = 10_000;
 const OPENAI_COMPATIBLE_PROXY_PATH = "/api/openai-compatible";
 const MAX_RECIPE_SOURCE_CHARS = 8_000;
+const META_REASONING_PATTERN =
+  /\b(?:prompt|json|schema|field|fields|mapping|map to schema|infer|invent|optional|respond with|return valid|markdown|refine the json|failed response|repair malformed|rule|rules|assistant|model)\b|(?:我应该|我会|让我|等等|先|再|提示词|字段|结构化|返回|输出|省略|编造|推断|修复|让我们|我想|我不能)/i;
 const DURATION_HOUR_PATTERN = /(\d+(?:\.\d+)?)\s*(?:小时|hours?\b|hrs?\b|h\b)/i;
 const DURATION_MINUTE_PATTERN = /(\d+(?:\.\d+)?)\s*(?:分钟|分|minutes?\b|mins?\b|m\b)/i;
 const DURATION_SECOND_PATTERN = /(\d+(?:\.\d+)?)\s*(?:秒|seconds?\b|secs?\b|s\b)/i;
@@ -393,14 +402,27 @@ export async function validateOpenAIChatConfig(config: Required<LLMConfig>): Pro
 export async function validateOpenAIModelConfig(config: Required<LLMConfig>): Promise<boolean> {
   try {
     const baseUrl = normalizeOpenAIBaseUrl(config.baseUrl);
-    const response = await fetchWithTimeout(
+    const headers = { Authorization: `Bearer ${config.apiKey}` };
+    const modelDetailResponse = await fetchWithTimeout(
       `${baseUrl}/models/${encodeURIComponent(config.model)}`,
-      {
-        headers: { Authorization: `Bearer ${config.apiKey}` },
-      },
+      { headers },
     );
 
-    return response.ok;
+    if (modelDetailResponse.ok) return true;
+    if (![404, 405].includes(modelDetailResponse.status)) return false;
+
+    const modelListResponse = await fetchWithTimeout(`${baseUrl}/models`, { headers });
+    if (!modelListResponse.ok) return false;
+
+    const contentType = modelListResponse.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) return false;
+
+    const data = (await modelListResponse.json()) as { data?: unknown };
+    if (!Array.isArray(data.data)) return false;
+
+    return data.data.some(
+      (entry) => isRecord(entry) && typeof entry.id === "string" && entry.id === config.model,
+    );
   } catch {
     return false;
   }
@@ -518,9 +540,14 @@ function isSchemaNoiseLine(value: string): boolean {
       .trim(),
   );
   if (SCHEMA_ONLY_FIELDS.has(normalized)) return true;
+  if (META_REASONING_PATTERN.test(stripped)) return true;
 
   const words = normalized.split(/\s+/).filter(Boolean);
   return words.length > 0 && words.every((word) => SCHEMA_ONLY_FIELDS.has(word));
+}
+
+function containsMetaReasoning(value: string): boolean {
+  return META_REASONING_PATTERN.test(cleanRecipeTextValue(value));
 }
 
 function readFirstRecord(
@@ -899,6 +926,7 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
 
     const description = readInlineLabeledValue(text, STEP_TEXT_LABELS) || text;
     if (isRecipeSchemaPlaceholder(description) || isSchemaNoiseLine(description)) return null;
+    if (containsMetaReasoning(description)) return null;
     return description ? { order: index + 1, description } : null;
   }
 
@@ -918,6 +946,7 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
     ]),
   );
   if (!description) return null;
+  if (containsMetaReasoning(description)) return null;
 
   const orderValue = readFirstValue(value, ["order", "stepNumber", "index", "序号"]);
   const order =
@@ -1257,21 +1286,58 @@ export class LLMService {
     throw new Error(errorMessage);
   }
 
-  async structureRecipe(transcript: string): Promise<RecipePayload> {
+  structureRecipe = async (transcript: string, language?: AppLanguage): Promise<RecipePayload> => {
+    return this.structureRecipeInLanguage(transcript, resolveRecipeLanguage(language));
+  };
+
+  structureRecipeFromText = async (
+    recipeText: string,
+    language?: AppLanguage,
+  ): Promise<RecipePayload> => {
+    return this.structureRecipeFromTextInLanguage(recipeText, resolveRecipeLanguage(language));
+  };
+
+  private async structureRecipeInLanguage(
+    transcript: string,
+    language: AppLanguage,
+  ): Promise<RecipePayload> {
     if (!transcript.trim()) {
       throw new Error("Cannot structure recipe from empty transcript");
     }
 
-    const prompt = `以下是一段烹饪视频的语音转录。请提取为 JSON 格式：
+    const prompt =
+      language === "zh"
+        ? `?????????????????????? JSON?
 {
-  "title": "菜名",
-  "ingredients": [{"name": "食材名", "amount": "用量"}],
-  "steps": [{"order": 1, "description": "步骤描述", "durationSec": 秒数, "tips": "提示（可选）"}],
-  "tags": {"flavor": ["口味"], "difficulty": "easy|medium|hard", "cuisine": "菜系", "totalTimeMin": 总时间分钟}
+  "title": "??",
+  "ingredients": [{"name": "???", "amount": "??"}],
+  "steps": [{"order": 1, "description": "????", "durationSec": ??, "tips": "??????"}],
+  "tags": {"flavor": ["??"], "difficulty": "easy|medium|hard", "cuisine": "??", "totalTimeMin": ?????}
 }
-规则：忽略口播废话/广告；从"煮3分钟"等表述提取时间；关键火候/手法提示放入 tips。务必返回有效 JSON。
+???
+- ??????????????????????
+- ??????????????????????????????
+- ??? 3 ??????? 10 ????????????
+- ?????????????? tips?
+- ???? Markdown??????????????????? JSON?
 
-转录内容：
+?????
+${trimRecipeSourceText(transcript)}`
+        : `Below is a cooking-video transcript. Convert it into structured JSON:
+{
+  "title": "Recipe name",
+  "ingredients": [{"name": "ingredient", "amount": "amount"}],
+  "steps": [{"order": 1, "description": "step description", "durationSec": 300, "tips": "optional tip"}],
+  "tags": {"flavor": ["savory"], "difficulty": "easy|medium|hard", "cuisine": "cuisine name", "totalTimeMin": 20}
+}
+Rules:
+- Ignore filler chatter, greetings, ads, and non-recipe content.
+- Title, ingredients, and steps should be in English unless the source clearly requires another language.
+- Extract durations from wording like "boil for 3 minutes" or "simmer on low for 10 minutes".
+- Put important heat control, technique, and caution notes into tips.
+- Do not include markdown, explanations, field-mapping notes, or chain-of-thought. Return JSON only.
+
+Transcript:
 ${trimRecipeSourceText(transcript)}`;
 
     const result = await this.chat(
@@ -1279,7 +1345,9 @@ ${trimRecipeSourceText(transcript)}`;
         {
           role: "system",
           content:
-            "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+            language === "zh"
+              ? "???????????????? JSON??? Markdown????????????????"
+              : "You are a professional chef assistant. Always respond with valid JSON only, no markdown, no explanations, and no chain-of-thought.",
         },
         { role: "user", content: prompt },
       ],
@@ -1292,38 +1360,65 @@ ${trimRecipeSourceText(transcript)}`;
     );
   }
 
-  async structureRecipeFromText(recipeText: string): Promise<RecipePayload> {
+  private async structureRecipeFromTextInLanguage(
+    recipeText: string,
+    language: AppLanguage,
+  ): Promise<RecipePayload> {
     if (!recipeText.trim()) {
       throw new Error("Cannot structure recipe from empty recipe text");
     }
 
     const prompt = [
-      "You are converting rough recipe text into structured CookTalk recipe JSON.",
-      "The input may be a pasted recipe, plain notes, or unformatted cooking text.",
-      "Return valid JSON only, no markdown, using this schema:",
+      language === "zh"
+        ? "????????????? CookTalk ?????? JSON?"
+        : "You are converting rough recipe text into structured CookTalk recipe JSON.",
+      language === "zh"
+        ? "???????????????????????????????"
+        : "The input may be a web page excerpt, pasted recipe, plain notes, or unformatted cooking text.",
+      language === "zh"
+        ? "????? JSON??? Markdown????? schema?"
+        : "Return valid JSON only, no markdown, using this schema:",
       "{",
-      '  "title": "Recipe name",',
-      '  "ingredients": [{"name": "ingredient", "amount": "amount"}],',
-      '  "steps": [{"order": 1, "description": "step text", "durationSec": 300, "tips": "optional tip"}],',
+      language === "zh" ? '  "title": "??",' : '  "title": "Recipe name",',
+      language === "zh"
+        ? '  "ingredients": [{"name": "???", "amount": "??"}],'
+        : '  "ingredients": [{"name": "ingredient", "amount": "amount"}],',
+      language === "zh"
+        ? '  "steps": [{"order": 1, "description": "????", "durationSec": 300, "tips": "????"}],'
+        : '  "steps": [{"order": 1, "description": "step text", "durationSec": 300, "tips": "optional tip"}],',
       '  "tags": {',
-      '    "flavor": ["savory"],',
+      language === "zh" ? '    "flavor": ["??"],' : '    "flavor": ["savory"],',
       '    "difficulty": "easy|medium|hard",',
-      '    "cuisine": "cuisine name",',
+      language === "zh" ? '    "cuisine": "??",' : '    "cuisine": "cuisine name",',
       '    "totalTimeMin": 20,',
       '    "servings": 2,',
-      '    "spiceLevel": "mild",',
-      '    "notes": "optional notes"',
+      language === "zh" ? '    "spiceLevel": "??",' : '    "spiceLevel": "mild",',
+      language === "zh" ? '    "notes": "????"' : '    "notes": "optional notes"',
       "  }",
       "}",
-      "Rules:",
-      "- Preserve the user's intended dish and wording where practical.",
-      "- Break the recipe into clear ingredients and ordered steps.",
-      "- Keep step text concise and readable for cooking playback.",
-      "- Infer optional metadata only when reasonably supported by the text.",
-      "- Omit unknown optional fields instead of inventing details.",
-      "- Do not include markdown, schema explanations, or field mapping notes.",
+      language === "zh" ? "???" : "Rules:",
+      language === "zh"
+        ? "- ????????????????"
+        : "- Preserve the user's intended dish and wording where practical.",
+      language === "zh"
+        ? "- ????????????????????"
+        : "- Break the recipe into clear ingredients and ordered steps.",
+      language === "zh"
+        ? "- ????????????????"
+        : "- Keep step text concise and readable for cooking playback.",
+      language === "zh" ? "- ?????????????" : "- Match the current interface language.",
+      language === "zh"
+        ? "- ????????????????????"
+        : "- Infer optional metadata only when reasonably supported by the text.",
+      language === "zh"
+        ? "- ???????????????????"
+        : "- Omit unknown optional fields instead of inventing details.",
+      language === "zh"
+        ? "- ???? Markdown?schema ????????????????????"
+        : "- Do not include markdown, schema explanations, field mapping notes, chain-of-thought, or self-talk.",
       "",
-      `Recipe text:\n${trimRecipeSourceText(recipeText)}`,
+      `${language === "zh" ? "????" : "Recipe text"}:
+${trimRecipeSourceText(recipeText)}`,
     ].join("\n");
 
     const result = await this.chat(
@@ -1331,7 +1426,9 @@ ${trimRecipeSourceText(transcript)}`;
         {
           role: "system",
           content:
-            "You are a professional chef assistant. Always respond with valid JSON only, no markdown.",
+            language === "zh"
+              ? "???????????????? JSON??? Markdown????????????????"
+              : "You are a professional chef assistant. Always respond with valid JSON only, no markdown, no explanations, and no chain-of-thought.",
         },
         { role: "user", content: prompt },
       ],

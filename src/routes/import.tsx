@@ -21,7 +21,7 @@ import {
   Wand2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import type { TFunction } from "i18next";
 import { ElevenLabsService } from "@/lib/elevenlabs";
@@ -45,7 +45,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AppTooltip, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
 import { v4 as uuid } from "uuid";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -129,6 +130,10 @@ function formatImportError(err: unknown, fallback: string, t: TFunction): string
   const rawMessage = err instanceof Error ? err.message.trim() : "";
   if (!rawMessage) return fallback;
 
+  if (/not a function|is not defined|Cannot read properties of undefined/i.test(rawMessage)) {
+    return t("import.pipelineFailed");
+  }
+
   if (/LLM request timed out/i.test(rawMessage)) {
     return t("import.llmTimeout");
   }
@@ -146,7 +151,7 @@ function formatImportError(err: unknown, fallback: string, t: TFunction): string
   }
 
   if (/Failed to parse .*recipe JSON/i.test(rawMessage)) {
-    return fallback;
+    return t("import.pipelineFailed");
   }
 
   return rawMessage;
@@ -227,6 +232,38 @@ function StepMetadataFields({
   );
 }
 
+type StepDescriptionFieldProps = {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  textareaRef?: React.Ref<HTMLTextAreaElement>;
+};
+
+function StepDescriptionField({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  textareaRef,
+}: StepDescriptionFieldProps) {
+  return (
+    <label className="space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{placeholder}</span>
+      <AutoResizeTextarea
+        ref={textareaRef}
+        className="overflow-y-hidden rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus-visible:border-clay focus-visible:ring-0"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        minRows={1}
+        maxRows={6}
+        disabled={disabled}
+      />
+    </label>
+  );
+}
+
 function parseServingsAnswer(value: string): number | undefined {
   const digitsMatch = value.match(/\d+/);
   if (digitsMatch?.[0]) return parsePositiveInt(digitsMatch[0]);
@@ -287,6 +324,9 @@ function ImportPage() {
   const navigate = useNavigate();
   const conversationVoiceId = useAppStore((s) => s.conversationVoiceId);
   const language = useAppStore((s) => s.language);
+  const hasElevenLabsKey = useAppStore((s) => s.hasElevenLabsKey);
+  const hasLlmKey = useAppStore((s) => s.hasLlmKey);
+  const hasImageGenKey = useAppStore((s) => s.hasImageGenKey);
 
   useEffect(() => {
     document.title = t("import.metaTitle");
@@ -382,32 +422,47 @@ function ImportPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const manualCoverInputRef = useRef<HTMLInputElement>(null);
+  const editIngredientNameRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const editStepDescriptionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const manualIngredientNameRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const manualStepDescriptionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recorderTimeoutRef = useRef<number | null>(null);
 
   const MAX_SIZE = 200 * 1024 * 1024;
+  const canUseVoiceFollowUp = hasElevenLabsKey;
 
-  const followUpQuestions = [
+  const followUpQuestions = useMemo<
     {
-      field: "servings" as const,
-      label: t("import.followUp.servingsLabel"),
-      question: t("import.followUp.servingsQuestion"),
-      placeholder: t("import.followUp.servingsPlaceholder"),
-    },
-    {
-      field: "spiceLevel" as const,
-      label: t("import.followUp.spiceLabel"),
-      question: t("import.followUp.spiceQuestion"),
-      placeholder: t("import.followUp.spicePlaceholder"),
-    },
-    {
-      field: "notes" as const,
-      label: t("import.followUp.notesLabel"),
-      question: t("import.followUp.notesQuestion"),
-      placeholder: t("import.followUp.notesPlaceholder"),
-    },
-  ];
+      field: FollowUpField;
+      label: string;
+      question: string;
+      placeholder: string;
+    }[]
+  >(
+    () => [
+      {
+        field: "servings" as const,
+        label: t("import.followUp.servingsLabel"),
+        question: t("import.followUp.servingsQuestion"),
+        placeholder: t("import.followUp.servingsPlaceholder"),
+      },
+      {
+        field: "spiceLevel" as const,
+        label: t("import.followUp.spiceLabel"),
+        question: t("import.followUp.spiceQuestion"),
+        placeholder: t("import.followUp.spicePlaceholder"),
+      },
+      {
+        field: "notes" as const,
+        label: t("import.followUp.notesLabel"),
+        question: t("import.followUp.notesQuestion"),
+        placeholder: t("import.followUp.notesPlaceholder"),
+      },
+    ],
+    [t],
+  );
 
   const currentFollowUp = followUpQuestions[followUpIndex] ?? null;
 
@@ -431,7 +486,13 @@ function ImportPage() {
   };
 
   const addEditIngredient = () => {
-    setEditIngredients((current) => [...current, createEmptyIngredient()]);
+    setEditIngredients((current) => {
+      const next = [...current, createEmptyIngredient()];
+      window.requestAnimationFrame(() => {
+        editIngredientNameRefs.current[next.length - 1]?.focus();
+      });
+      return next;
+    });
   };
 
   const removeEditIngredient = (index: number) => {
@@ -451,7 +512,13 @@ function ImportPage() {
   };
 
   const addEditStep = () => {
-    setEditSteps((current) => [...current, createEmptyRecipeStep(current.length + 1)]);
+    setEditSteps((current) => {
+      const next = [...current, createEmptyRecipeStep(current.length + 1)];
+      window.requestAnimationFrame(() => {
+        editStepDescriptionRefs.current[next.length - 1]?.focus();
+      });
+      return next;
+    });
   };
 
   const removeEditStep = (index: number) => {
@@ -473,7 +540,7 @@ function ImportPage() {
     setFollowUpError(null);
   };
 
-  const stopAnswerRecording = () => {
+  const stopAnswerRecording = useCallback(() => {
     if (recorderTimeoutRef.current) {
       window.clearTimeout(recorderTimeoutRef.current);
       recorderTimeoutRef.current = null;
@@ -481,9 +548,9 @@ function ImportPage() {
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
       recorderRef.current.stop();
     }
-  };
+  }, []);
 
-  const cleanupAnswerRecording = () => {
+  const cleanupAnswerRecording = useCallback(() => {
     if (recorderTimeoutRef.current) {
       window.clearTimeout(recorderTimeoutRef.current);
       recorderTimeoutRef.current = null;
@@ -491,7 +558,7 @@ function ImportPage() {
     recorderRef.current = null;
     recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
     recorderStreamRef.current = null;
-  };
+  }, []);
 
   const resetFollowUpFlow = () => {
     cleanupAnswerRecording();
@@ -577,24 +644,44 @@ function ImportPage() {
     if (file) selectFile(file);
   };
 
-  const askFollowUpQuestion = async (index: number) => {
-    const question = followUpQuestions[index];
-    if (!question) return;
-    stopAnswerRecording();
-    cleanupAnswerRecording();
-    setFollowUpError(null);
-    setFollowUpPrompt(question.question);
-    setFollowUpStatus("speaking");
+  const askFollowUpQuestion = useCallback(
+    async (index: number) => {
+      const question = followUpQuestions[index];
+      if (!question) return;
+      if (!canUseVoiceFollowUp) {
+        setFollowUpError(null);
+        setFollowUpPrompt(question.question);
+        setFollowUpStatus("idle");
+        return;
+      }
+      stopAnswerRecording();
+      cleanupAnswerRecording();
+      setFollowUpError(null);
+      setFollowUpPrompt(question.question);
+      setFollowUpStatus("speaking");
 
-    try {
-      await speakWithElevenLabs(question.question, conversationVoiceId, language);
-    } catch (err) {
-      console.warn("Follow-up voice prompt failed:", err);
-      toast.warning(t("import.followUpVoiceWarning"));
-    } finally {
-      setFollowUpStatus((current) => (current === "speaking" ? "idle" : current));
-    }
-  };
+      try {
+        await speakWithElevenLabs(question.question, conversationVoiceId, language);
+      } catch (err) {
+        console.warn("Follow-up voice prompt failed:", err);
+        toast.warning(t("import.followUpVoiceWarning"));
+      } finally {
+        setFollowUpStatus((current) => (current === "speaking" ? "idle" : current));
+      }
+    },
+    [
+      canUseVoiceFollowUp,
+      cleanupAnswerRecording,
+      conversationVoiceId,
+      followUpQuestions,
+      language,
+      setFollowUpError,
+      setFollowUpPrompt,
+      setFollowUpStatus,
+      stopAnswerRecording,
+      t,
+    ],
+  );
 
   const isSkipAnswer = (value: string) => /^(跳过|不用|不需要|没有|无|skip)$/i.test(value.trim());
 
@@ -607,6 +694,10 @@ function ImportPage() {
 
   const startAnswerRecording = async () => {
     if (followUpStatus === "speaking" || followUpStatus === "refining") return;
+    if (!canUseVoiceFollowUp) {
+      toast.error(t("import.elevenLabsKeyMissing"));
+      return;
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -783,6 +874,10 @@ function ImportPage() {
 
   const startPipeline = async () => {
     if (!selectedMediaFile) return;
+    if (!hasElevenLabsKey) {
+      toast.error(t("import.elevenLabsKeyMissing"));
+      return;
+    }
 
     resetFollowUpFlow();
     setError(null);
@@ -816,7 +911,7 @@ function ImportPage() {
       if (!llmService) {
         toast.warning(t("import.llmKeyWarning"));
       } else {
-        recipe = (await llmService.structureRecipe(rawTranscript)) as StructuredRecipe;
+        recipe = (await llmService.structureRecipe(rawTranscript, language)) as StructuredRecipe;
         syncRecipeEditor(recipe);
       }
 
@@ -974,10 +1069,21 @@ function ImportPage() {
     );
   };
 
+  const resetManualTextDialog = () => {
+    setManualRawText("");
+    setManualTextImportStatus("idle");
+    setManualTextImportError(null);
+    setIsManualTextDialogOpen(false);
+  };
+
   const handleStructureManualText = async () => {
     const rawText = manualRawText.trim();
     if (!rawText) {
       toast.error(t("import.manualTextRequired"));
+      return;
+    }
+    if (!canStructureWithLlm) {
+      toast.error(t("import.manualTextLlmRequired"));
       return;
     }
 
@@ -990,10 +1096,12 @@ function ImportPage() {
         throw new Error(t("import.manualTextLlmRequired"));
       }
 
-      const recipe = (await llmService.structureRecipeFromText(rawText)) as StructuredRecipe;
+      const recipe = (await llmService.structureRecipeFromText(
+        rawText,
+        language,
+      )) as StructuredRecipe;
       applyStructuredRecipeToManualForm(recipe);
-      setIsManualTextDialogOpen(false);
-      setManualTextImportStatus("idle");
+      resetManualTextDialog();
       toast.success(t("import.manualTextStructured"));
     } catch (err) {
       const message = formatImportError(err, t("import.manualTextStructureFailed"), t);
@@ -1031,6 +1139,10 @@ function ImportPage() {
 
   const handleRegenerateCover = async () => {
     if (!structuredRecipe) return;
+    if (!canGenerateAiCover) {
+      toast.error(t("import.coverGenerationUnavailable"));
+      return;
+    }
 
     try {
       const llmService = await getConfiguredLLMService();
@@ -1066,6 +1178,10 @@ function ImportPage() {
     const title = manualTitle.trim();
     if (!title) {
       toast.error(t("import.manualTitleRequired"));
+      return;
+    }
+    if (!canGenerateAiCover) {
+      toast.error(t("import.coverGenerationUnavailable"));
       return;
     }
 
@@ -1105,7 +1221,7 @@ function ImportPage() {
       stopAnswerRecording();
       cleanupAnswerRecording();
     };
-  }, []);
+  }, [cleanupAnswerRecording, stopAnswerRecording]);
 
   useEffect(() => {
     if (!coverImage) {
@@ -1135,8 +1251,23 @@ function ImportPage() {
     setFollowUpStarted(true);
     setFollowUpIndex(0);
     setFollowUpInput("");
-    void askFollowUpQuestion(0);
-  }, [stage, structuredRecipe, followUpStarted]);
+    if (canUseVoiceFollowUp) {
+      void askFollowUpQuestion(0);
+    } else {
+      setFollowUpPrompt(followUpQuestions[0]?.question ?? "");
+    }
+  }, [
+    askFollowUpQuestion,
+    canUseVoiceFollowUp,
+    followUpQuestions,
+    followUpStarted,
+    setFollowUpIndex,
+    setFollowUpInput,
+    setFollowUpStarted,
+    setFollowUpPrompt,
+    stage,
+    structuredRecipe,
+  ]);
 
   const isRunning = ["transcribing", "structuring", "generating-cover", "saving"].includes(stage);
   const activeIdx = stageToIndex[stage];
@@ -1195,6 +1326,8 @@ function ImportPage() {
     followUpStatus === "transcribing" ||
     followUpStatus === "refining";
   const isManualTextStructuring = manualTextImportStatus === "structuring";
+  const canStructureWithLlm = hasLlmKey;
+  const canGenerateAiCover = hasLlmKey && hasImageGenKey;
 
   return (
     <div className="app-page-bg min-h-screen flex flex-col">
@@ -1335,6 +1468,7 @@ function ImportPage() {
                             e.stopPropagation();
                             void startPipeline();
                           }}
+                          disabled={!hasElevenLabsKey}
                         >
                           <Wand2 className="h-4 w-4" strokeWidth={1.75} />
                           {t("import.startProcessing")}
@@ -1402,6 +1536,7 @@ function ImportPage() {
                   <button
                     className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
                     onClick={() => void startPipeline()}
+                    disabled={!hasElevenLabsKey}
                   >
                     {t("import.retry")}
                   </button>
@@ -1550,6 +1685,9 @@ function ImportPage() {
                                 </button>
                               </div>
                               <input
+                                ref={(node) => {
+                                  editIngredientNameRefs.current[index] = node;
+                                }}
                                 className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.name ?? ""}
                                 onChange={(e) =>
@@ -1610,13 +1748,12 @@ function ImportPage() {
                                   <Trash2 className="h-4 w-4" strokeWidth={1.75} />
                                 </button>
                               </div>
-                              <textarea
-                                className="min-h-[88px] w-full resize-none rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus:border-clay"
+                              <StepDescriptionField
+                                textareaRef={(node) => {
+                                  editStepDescriptionRefs.current[index] = node;
+                                }}
                                 value={editSteps[index]?.description ?? ""}
-                                rows={3}
-                                onChange={(e) =>
-                                  updateEditStep(index, { description: e.target.value })
-                                }
+                                onChange={(value) => updateEditStep(index, { description: value })}
                                 placeholder={t("import.manualStepDescription")}
                               />
                               <StepMetadataFields
@@ -1731,6 +1868,9 @@ function ImportPage() {
                           >
                             <div className="grid gap-2 sm:grid-cols-[1fr_180px_auto]">
                               <input
+                                ref={(node) => {
+                                  editIngredientNameRefs.current[index] = node;
+                                }}
                                 className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.name ?? ""}
                                 onChange={(e) =>
@@ -1771,13 +1911,13 @@ function ImportPage() {
                               {index + 1}
                             </span>
                             <div className="flex-1 space-y-3">
-                              <textarea
-                                className="min-h-[88px] w-full resize-none rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus:border-clay"
+                              <StepDescriptionField
+                                textareaRef={(node) => {
+                                  editStepDescriptionRefs.current[index] = node;
+                                }}
                                 value={editSteps[index]?.description ?? ""}
-                                rows={3}
-                                onChange={(e) =>
-                                  updateEditStep(index, { description: e.target.value })
-                                }
+                                onChange={(value) => updateEditStep(index, { description: value })}
+                                placeholder={t("import.manualStepDescription")}
                               />
                               <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
                                 <div className="flex-1">
@@ -1896,38 +2036,50 @@ function ImportPage() {
                           </div>
                         )}
                         <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity group-hover/guided-cover:pointer-events-auto group-hover/guided-cover:opacity-100 group-focus-within/guided-cover:pointer-events-auto group-focus-within/guided-cover:opacity-100">
-                          <button
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (stage !== "saving") coverInputRef.current?.click();
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
+                          <AppTooltip
+                            content={t("import.uploadCover")}
                             disabled={stage === "saving"}
-                            type="button"
-                            aria-label={t("import.uploadCover")}
-                            title={t("import.uploadCover")}
                           >
-                            <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
-                          </button>
-                          <button
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (stage !== "saving") void handleRegenerateCover();
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
-                            disabled={isGeneratingCover || stage === "saving"}
-                            type="button"
-                            aria-label={t("import.aiGenerateCover")}
-                            title={t("import.aiGenerateCover")}
+                            <button
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (stage !== "saving") coverInputRef.current?.click();
+                              }}
+                              onKeyDown={(event) => event.stopPropagation()}
+                              disabled={stage === "saving"}
+                              type="button"
+                              aria-label={t("import.uploadCover")}
+                            >
+                              <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
+                            </button>
+                          </AppTooltip>
+                          <AppTooltip
+                            content={t("import.aiGenerateCover")}
+                            disabled={
+                              isGeneratingCover || stage === "saving" || !canGenerateAiCover
+                            }
                           >
-                            {isGeneratingCover ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                            )}
-                          </button>
+                            <button
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (stage !== "saving") void handleRegenerateCover();
+                              }}
+                              onKeyDown={(event) => event.stopPropagation()}
+                              disabled={
+                                isGeneratingCover || stage === "saving" || !canGenerateAiCover
+                              }
+                              type="button"
+                              aria-label={t("import.aiGenerateCover")}
+                            >
+                              {isGeneratingCover ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                              )}
+                            </button>
+                          </AppTooltip>
                         </div>
                       </div>
 
@@ -2026,27 +2178,34 @@ function ImportPage() {
                       </div>
                     </div>
 
-                    <TooltipProvider delayDuration={120}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            className="inline-flex h-10 w-10 shrink-0 appearance-none items-center justify-center rounded-full border border-transparent bg-transparent p-0 text-foreground shadow-none ring-0 transition-colors hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border focus-visible:ring-0 active:bg-transparent disabled:opacity-50"
-                            onClick={() => setIsManualTextDialogOpen(true)}
-                            disabled={isManualSaving}
-                            type="button"
-                            aria-label={t("import.manualTextOpenDialog")}
-                          >
-                            <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t("import.manualTextTooltip")}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          className="inline-flex h-10 w-10 shrink-0 appearance-none items-center justify-center rounded-full border border-transparent bg-transparent p-0 text-foreground shadow-none ring-0 transition-colors hover:border-border hover:bg-transparent hover:text-clay focus-visible:border-border focus-visible:ring-0 active:bg-transparent disabled:opacity-50"
+                          onClick={() => setIsManualTextDialogOpen(true)}
+                          disabled={isManualSaving}
+                          type="button"
+                          aria-label={t("import.manualTextOpenDialog")}
+                        >
+                          <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t("import.manualTextTooltip")}</TooltipContent>
+                    </Tooltip>
                   </div>
 
                   <VoiceHint className="mt-4">{t("import.manualVoiceHint")}</VoiceHint>
 
-                  <Dialog open={isManualTextDialogOpen} onOpenChange={setIsManualTextDialogOpen}>
+                  <Dialog
+                    open={isManualTextDialogOpen}
+                    onOpenChange={(open) => {
+                      if (open) {
+                        setIsManualTextDialogOpen(true);
+                        return;
+                      }
+                      resetManualTextDialog();
+                    }}
+                  >
                     <DialogContent className="max-w-2xl rounded-[1.75rem] border-border p-0">
                       <div className="p-6 sm:p-7">
                         <DialogHeader>
@@ -2079,7 +2238,9 @@ function ImportPage() {
                                 : "bg-foreground hover:bg-clay"
                             }`}
                             onClick={() => void handleStructureManualText()}
-                            disabled={isManualTextStructuring || isManualSaving}
+                            disabled={
+                              isManualTextStructuring || isManualSaving || !canStructureWithLlm
+                            }
                             type="button"
                           >
                             {isManualTextStructuring ? (
@@ -2182,7 +2343,13 @@ function ImportPage() {
                       <button
                         className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
                         onClick={() =>
-                          setManualIngredients((current) => [...current, createEmptyIngredient()])
+                          setManualIngredients((current) => {
+                            const next = [...current, createEmptyIngredient()];
+                            window.requestAnimationFrame(() => {
+                              manualIngredientNameRefs.current[next.length - 1]?.focus();
+                            });
+                            return next;
+                          })
                         }
                         type="button"
                       >
@@ -2199,6 +2366,9 @@ function ImportPage() {
                         >
                           <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
                             <input
+                              ref={(node) => {
+                                manualIngredientNameRefs.current[index] = node;
+                              }}
                               className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
                               value={ingredient.name}
                               onChange={(e) =>
@@ -2250,7 +2420,13 @@ function ImportPage() {
                       <button
                         className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
                         onClick={() =>
-                          setManualSteps((current) => [...current, createEmptyManualStep()])
+                          setManualSteps((current) => {
+                            const next = [...current, createEmptyManualStep()];
+                            window.requestAnimationFrame(() => {
+                              manualStepDescriptionRefs.current[next.length - 1]?.focus();
+                            });
+                            return next;
+                          })
                         }
                         type="button"
                       >
@@ -2285,21 +2461,23 @@ function ImportPage() {
                             </button>
                           </div>
 
-                          <textarea
-                            className="mt-3 w-full resize-none rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus:border-clay"
-                            value={step.description}
-                            onChange={(e) =>
-                              setManualSteps((current) =>
-                                current.map((item, itemIndex) =>
-                                  itemIndex === index
-                                    ? { ...item, description: e.target.value }
-                                    : item,
-                                ),
-                              )
-                            }
-                            rows={3}
-                            placeholder={t("import.manualStepDescription")}
-                          />
+                          <div className="mt-3">
+                            <StepDescriptionField
+                              textareaRef={(node) => {
+                                manualStepDescriptionRefs.current[index] = node;
+                              }}
+                              value={step.description}
+                              onChange={(value) =>
+                                setManualSteps((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, description: value } : item,
+                                  ),
+                                )
+                              }
+                              placeholder={t("import.manualStepDescription")}
+                              disabled={isManualSaving}
+                            />
+                          </div>
 
                           <div className="mt-3">
                             <StepMetadataFields
@@ -2515,7 +2693,9 @@ function ImportPage() {
                                     : void startAnswerRecording()
                                 }
                                 disabled={
-                                  followUpStatus === "speaking" || followUpStatus === "refining"
+                                  followUpStatus === "speaking" ||
+                                  followUpStatus === "refining" ||
+                                  !canUseVoiceFollowUp
                                 }
                               >
                                 {followUpStatus === "listening" ? (
@@ -2538,7 +2718,10 @@ function ImportPage() {
                               <button
                                 className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-3 text-sm hover:border-foreground disabled:opacity-50"
                                 onClick={() => void askFollowUpQuestion(followUpIndex)}
-                                disabled={followUpStatus !== "idle" && followUpStatus !== "done"}
+                                disabled={
+                                  !canUseVoiceFollowUp ||
+                                  (followUpStatus !== "idle" && followUpStatus !== "done")
+                                }
                               >
                                 <AudioLines className="h-4 w-4" strokeWidth={1.75} />
                                 {t("import.followUpReplay")}
@@ -2686,38 +2869,47 @@ function ImportPage() {
                           </div>
                         )}
                         <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity group-hover/manual-cover:pointer-events-auto group-hover/manual-cover:opacity-100 group-focus-within/manual-cover:pointer-events-auto group-focus-within/manual-cover:opacity-100">
-                          <button
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (!isManualSaving) manualCoverInputRef.current?.click();
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
-                            disabled={isManualSaving}
-                            type="button"
-                            aria-label={t("import.uploadCover")}
-                            title={t("import.uploadCover")}
+                          <AppTooltip content={t("import.uploadCover")} disabled={isManualSaving}>
+                            <button
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (!isManualSaving) manualCoverInputRef.current?.click();
+                              }}
+                              onKeyDown={(event) => event.stopPropagation()}
+                              disabled={isManualSaving}
+                              type="button"
+                              aria-label={t("import.uploadCover")}
+                            >
+                              <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
+                            </button>
+                          </AppTooltip>
+                          <AppTooltip
+                            content={t("import.aiGenerateCover")}
+                            disabled={
+                              isManualGeneratingCover || isManualSaving || !canGenerateAiCover
+                            }
                           >
-                            <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
-                          </button>
-                          <button
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (!isManualSaving) void handleRegenerateManualCover();
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
-                            disabled={isManualGeneratingCover || isManualSaving}
-                            type="button"
-                            aria-label={t("import.aiGenerateCover")}
-                            title={t("import.aiGenerateCover")}
-                          >
-                            {isManualGeneratingCover ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                            )}
-                          </button>
+                            <button
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (!isManualSaving) void handleRegenerateManualCover();
+                              }}
+                              onKeyDown={(event) => event.stopPropagation()}
+                              disabled={
+                                isManualGeneratingCover || isManualSaving || !canGenerateAiCover
+                              }
+                              type="button"
+                              aria-label={t("import.aiGenerateCover")}
+                            >
+                              {isManualGeneratingCover ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                              )}
+                            </button>
+                          </AppTooltip>
                         </div>
                       </div>
                     </div>

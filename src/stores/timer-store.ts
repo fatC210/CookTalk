@@ -1,6 +1,6 @@
-import { create } from 'zustand';
-import { v4 as uuidv4 } from 'uuid';
-import { useEffect } from 'react';
+import { create } from "zustand";
+import { v4 as uuidv4 } from "uuid";
+import { useEffect } from "react";
 
 export interface Timer {
   id: string;
@@ -53,14 +53,17 @@ export const useTimerStore = create<TimerState>()((set, get) => ({
     return newTimers.map((t) => t.id);
   },
 
-  cancelTimer: (id) =>
-    set((s) => ({ timers: s.timers.filter((t) => t.id !== id) })),
+  cancelTimer: (id) => set((s) => ({ timers: s.timers.filter((t) => t.id !== id) })),
 
   extendTimer: (id, seconds) =>
     set((s) => ({
       timers: s.timers.map((t) =>
         t.id === id
-          ? { ...t, remainingSeconds: t.remainingSeconds + seconds, totalSeconds: t.totalSeconds + seconds }
+          ? {
+              ...t,
+              remainingSeconds: t.remainingSeconds + seconds,
+              totalSeconds: t.totalSeconds + seconds,
+            }
           : t,
       ),
     })),

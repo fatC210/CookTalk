@@ -11,7 +11,6 @@ import {
   SkipForward,
   Timer,
   Volume2,
-  Waves,
   X,
 } from "lucide-react";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
@@ -54,10 +53,36 @@ type LatestCookingState = {
   isPaused: boolean;
 };
 
+type QaMessage = {
+  id: number;
+  speaker: "assistant" | "user";
+  text: string;
+};
+
 function formatTimer(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function getStepDescriptionParts(description: string): { main: string; highlight: string } {
+  const punctuationIndex = Math.max(
+    description.lastIndexOf("。"),
+    description.lastIndexOf(". "),
+    description.lastIndexOf("！"),
+    description.lastIndexOf("! "),
+    description.lastIndexOf("？"),
+    description.lastIndexOf("? "),
+  );
+
+  if (punctuationIndex <= 0) {
+    return { main: description, highlight: "" };
+  }
+
+  return {
+    main: description.slice(0, punctuationIndex + 1),
+    highlight: description.slice(punctuationIndex + 1).trim(),
+  };
 }
 
 function CookPage() {
@@ -74,10 +99,9 @@ function CookPage() {
   const hasElevenLabsKey = useAppStore((s) => s.hasElevenLabsKey);
 
   const [recipe, setRecipe] = useState<Recipe | null | undefined>(undefined);
-  const [spokenReply, setSpokenReply] = useState("");
-  const [lastTranscript, setLastTranscript] = useState("");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [qaMessages, setQaMessages] = useState<QaMessage[]>([]);
 
   const {
     currentStep,
@@ -94,6 +118,7 @@ function CookPage() {
   const { activeTimers, cancelTimer, extendTimer, startTimer, setOnCompleted } = useTimers();
 
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const qaMessageIdRef = useRef(0);
   const latestStateRef = useRef<LatestCookingState>({
     recipe: null,
     stepIndex: 0,
@@ -101,6 +126,7 @@ function CookPage() {
     isPaused: false,
   });
   const setMutedRef = useRef<((muted: boolean) => void) | null>(null);
+  const announcedStepKeyRef = useRef<string | null>(null);
 
   const recipeStepCount = recipe?.steps.length ?? 0;
   const safeStep =
@@ -110,6 +136,32 @@ function CookPage() {
   const stepCount = recipeStepCount;
   const resolvedVoiceId = recipe?.voiceId ?? cookingVoiceId ?? undefined;
   const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
+
+  const appendQaMessage = useCallback((speaker: QaMessage["speaker"], text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    qaMessageIdRef.current += 1;
+    setQaMessages((current) => [
+      ...current,
+      {
+        id: qaMessageIdRef.current,
+        speaker,
+        text: trimmed,
+      },
+    ]);
+  }, []);
+
+  const resetQaMessagesForStep = useCallback((prompt: string) => {
+    qaMessageIdRef.current = 1;
+    setQaMessages([
+      {
+        id: 1,
+        speaker: "assistant",
+        text: prompt,
+      },
+    ]);
+  }, []);
 
   useEffect(() => {
     document.title = t("cook.metaTitle");
@@ -129,16 +181,20 @@ function CookPage() {
   }, []);
 
   const speak = useCallback(
-    async (text: string) => {
-      if (!text.trim()) return;
-      setSpokenReply(text);
+    async (text: string, options?: { skipCard?: boolean }) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      if (!options?.skipCard) {
+        appendQaMessage("assistant", trimmed);
+      }
 
       if (!hasElevenLabsKey) return;
 
       setIsSpeaking(true);
       setVoiceError(null);
       try {
-        await speakWithElevenLabs(text, resolvedVoiceId, language);
+        await speakWithElevenLabs(trimmed, resolvedVoiceId, language);
       } catch (error) {
         const message = error instanceof Error ? error.message : t("cook.speechFailed");
         setVoiceError(message);
@@ -147,14 +203,17 @@ function CookPage() {
         setIsSpeaking(false);
       }
     },
-    [hasElevenLabsKey, language, resolvedVoiceId, t],
+    [appendQaMessage, hasElevenLabsKey, language, resolvedVoiceId, t],
   );
 
   const announceCurrentStep = useCallback(
     async (targetRecipe: Recipe, targetStep: number) => {
-      await speak(buildStepSpeech(targetRecipe, targetStep, language));
+      const stepSpeech = buildStepSpeech(targetRecipe, targetStep, language);
+      resetQaMessagesForStep(t("cook.voiceQaPrompt"));
+      announcedStepKeyRef.current = `${targetRecipe.id}:${targetStep}:${language}`;
+      await speak(stepSpeech, { skipCard: true });
     },
-    [language, speak],
+    [language, resetQaMessagesForStep, speak, t],
   );
 
   const handleTranscriptIntent = useCallback(
@@ -174,7 +233,6 @@ function CookPage() {
           }
           nextStep();
           updateLatestState({ stepIndex: target });
-          await announceCurrentStep(currentRecipe, target);
           return;
         }
         case "previous_step": {
@@ -185,7 +243,6 @@ function CookPage() {
           }
           prevStep();
           updateLatestState({ stepIndex: target });
-          await announceCurrentStep(currentRecipe, target);
           return;
         }
         case "jump_step": {
@@ -196,7 +253,6 @@ function CookPage() {
           if (target === stepIndex) return;
           jumpToStep(target);
           updateLatestState({ stepIndex: target });
-          await announceCurrentStep(currentRecipe, target);
           return;
         }
         case "pause":
@@ -244,7 +300,7 @@ function CookPage() {
           }
           cancelTimer(timer.id);
           updateLatestState({ timers: timers.filter((item) => item.id !== timer.id) });
-          await speak(language === "zh" ? `已取消${timer.label}。` : `${timer.label} cancelled.`);
+          await speak(language === "zh" ? `${timer.label}已取消。` : `${timer.label} cancelled.`);
           return;
         }
         case "extend_timer": {
@@ -305,8 +361,8 @@ function CookPage() {
       }
     },
     [
-      cancelTimer,
       announceCurrentStep,
+      cancelTimer,
       extendTimer,
       handleClose,
       jumpToStep,
@@ -338,7 +394,7 @@ function CookPage() {
     onTranscript: async (transcript) => {
       const cleaned = transcript.trim();
       if (!cleaned) return;
-      setLastTranscript(cleaned);
+      appendQaMessage("user", cleaned);
       setVoiceError(null);
       await handleTranscriptIntentRef.current(cleaned);
     },
@@ -356,9 +412,8 @@ function CookPage() {
     (targetStep: number) => {
       if (!recipe) return;
       updateLatestState({ stepIndex: targetStep });
-      void announceCurrentStep(recipe, targetStep);
     },
-    [announceCurrentStep, recipe, updateLatestState],
+    [recipe, updateLatestState],
   );
 
   const handleToggleMic = useCallback(() => {
@@ -395,18 +450,20 @@ function CookPage() {
   }, [id]);
 
   useEffect(() => {
-    if (recipe && id) {
-      startCooking(id, recipe.steps.length);
-      if (initialStep > 0) {
-        jumpToStep(initialStep);
-      }
+    if (!recipe || !id) return;
+    startCooking(id, recipe.steps.length);
+    if (initialStep > 0) {
+      jumpToStep(initialStep);
     }
   }, [id, initialStep, jumpToStep, recipe, startCooking]);
 
   useEffect(() => {
     if (!recipe) return;
-    setSpokenReply(buildStepSpeech(recipe, safeStep, language));
-  }, [language, recipe, safeStep]);
+
+    const stepKey = `${recipe.id}:${safeStep}:${language}`;
+    if (announcedStepKeyRef.current === stepKey) return;
+    void announceCurrentStep(recipe, safeStep);
+  }, [announceCurrentStep, language, recipe, safeStep]);
 
   useEffect(() => {
     updateLatestState({
@@ -493,9 +550,7 @@ function CookPage() {
   }
 
   const description = step?.description ?? "";
-  const splitIndex = Math.max(description.lastIndexOf("，"), description.lastIndexOf("。"));
-  const descMain = splitIndex > 0 ? description.slice(0, splitIndex + 1) : description;
-  const descHighlight = splitIndex > 0 ? description.slice(splitIndex + 1) : "";
+  const { main: descMain, highlight: descHighlight } = getStepDescriptionParts(description);
   const micButtonLabel = isMuted
     ? t("cook.resumeMic")
     : effectiveStatus === "recording"
@@ -503,8 +558,8 @@ function CookPage() {
       : t("cook.askNow");
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="border-b border-border/60">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
+      <header className="shrink-0 border-b border-border/60">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full border border-clay/40 bg-secondary">
@@ -512,7 +567,7 @@ function CookPage() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground">
-                {t("cook.nowNarrating")} · {t("cook.localVoiceMode")}
+                {t("cook.nowNarrating")} 路 {t("cook.localVoiceMode")}
               </div>
               <div className="font-display text-base">{recipe.title}</div>
             </div>
@@ -532,55 +587,51 @@ function CookPage() {
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col">
-        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-10">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <main className="flex min-h-0 flex-1 flex-col">
+        <div className="mx-auto flex h-full w-full max-w-5xl min-h-0 flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
+          <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               {t("cook.stepOf", { current: stepNumber, total: stepCount })}
             </div>
-            <div className="flex w-full gap-1 overflow-x-auto pb-1 sm:w-auto sm:overflow-visible sm:pb-0">
+            <div className="grid w-full min-w-0 grid-flow-col auto-cols-fr gap-1 sm:w-[18rem] md:w-[24rem]">
               {Array.from({ length: stepCount }).map((_, index) => (
                 <span
                   key={index}
                   className={`h-1 rounded-full transition-all ${
                     index < safeStep
-                      ? "bg-foreground w-6 sm:w-10"
+                      ? "w-full min-w-0 bg-foreground"
                       : index === safeStep
-                        ? "bg-clay w-6 sm:w-10"
-                        : "bg-border w-6 sm:w-10"
+                        ? "w-full min-w-0 bg-clay"
+                        : "w-full min-w-0 bg-border"
                   }`}
                 />
               ))}
             </div>
           </div>
 
-          <div className="flex flex-1 flex-col justify-center">
-            <h1 className="font-display text-[clamp(2.25rem,10vw,4.5rem)] font-medium leading-[1.1] tracking-tight md:text-7xl">
-              {descMain}
-              {descHighlight && <span className="text-clay">{descHighlight}</span>}
-            </h1>
-            {step?.tips && (
-              <p className="mt-6 inline-flex w-full items-center gap-2 rounded-full bg-accent/40 px-4 py-2 text-sm sm:w-fit">
-                <span className="font-medium">{t("cook.tip")} ·</span> {step.tips}
-              </p>
-            )}
-
-            <div className="mt-10 flex items-center gap-4">
-              <Waves className="h-8 w-8 animate-pulse text-clay" strokeWidth={1.25} />
-              <div className="flex h-10 flex-1 items-center gap-1">
-                {Array.from({ length: 80 }).map((_, index) => (
-                  <span
-                    key={index}
-                    className="flex-1 rounded-full bg-clay/40"
-                    style={{ height: `${20 + Math.abs(Math.sin(index * 0.4)) * 80}%` }}
-                  />
-                ))}
+          <div className="flex min-h-0 flex-1 flex-col gap-4 py-2 sm:gap-5 sm:py-4">
+            <div className="rounded-[2rem] border border-border bg-card p-5 sm:p-7">
+              <div className="flex items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
+                  <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
+                  {voiceStatusLabel}
+                </span>
+                <span className="text-xs text-muted-foreground">{t("cook.stepSpokenOnce")}</span>
               </div>
+              <h1 className="mt-4 max-w-full font-display text-[clamp(1.75rem,6.2vw,2.7rem)] font-medium leading-[1.12] tracking-tight md:text-[clamp(2.4rem,4vw,3.8rem)]">
+                {descMain}
+                {descHighlight && <span className="text-clay"> {descHighlight}</span>}
+              </h1>
+              {step?.tips && (
+                <p className="mt-4 inline-flex w-full items-center gap-2 rounded-full bg-accent/40 px-4 py-2 text-xs sm:w-fit sm:text-sm">
+                  <span className="font-medium">{t("cook.tip")} 路</span> {step.tips}
+                </p>
+              )}
             </div>
           </div>
 
           {activeTimers.length > 0 && (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="mt-2 grid shrink-0 gap-3 md:grid-cols-2">
               {activeTimers.map((timer) => {
                 const progress =
                   timer.totalSeconds > 0
@@ -608,7 +659,7 @@ function CookPage() {
                     </div>
                     <div className="relative flex flex-col items-start gap-1 sm:items-end">
                       <VoiceHint>
-                        {t("cook.addTime")} · {t("cook.cancel")}
+                        {t("cook.addTime")} 路 {t("cook.cancel")}
                       </VoiceHint>
                       <button
                         onClick={() => {
@@ -620,7 +671,7 @@ function CookPage() {
                           });
                           void speak(
                             language === "zh"
-                              ? `已取消${timer.label}。`
+                              ? `${timer.label}已取消。`
                               : `${timer.label} cancelled.`,
                           );
                         }}
@@ -635,23 +686,44 @@ function CookPage() {
             </div>
           )}
 
-          <div className="mt-4 rounded-2xl border border-dashed border-border bg-card p-4">
-            <div className="flex items-start gap-3">
-              <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-clay" strokeWidth={1.75} />
-              <div className="text-sm">
-                <div className="text-xs text-muted-foreground">{t("cook.voiceQa")}</div>
-                <p className="mt-0.5 text-muted-foreground">
-                  {spokenReply || lastTranscript || t("cook.voiceQaBody")}
-                </p>
-                {(voiceError || error) && (
-                  <p className="mt-1 text-xs text-destructive">{voiceError || error}</p>
-                )}
-              </div>
+          <div className="mt-3 min-h-0 shrink-0 rounded-[2rem] border border-border bg-card p-4 sm:p-5">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="h-4 w-4 text-clay" strokeWidth={1.75} />
+              <div className="text-sm font-medium">{t("cook.voiceQa")}</div>
+            </div>
+            <div className="mt-4 flex max-h-[18rem] flex-col gap-3 overflow-y-auto pr-1">
+              {qaMessages.map((message) => {
+                const isAssistant = message.speaker === "assistant";
+                return (
+                  <div
+                    key={message.id}
+                    className="rounded-[1.75rem] border-2 border-foreground/85 bg-background px-4 py-3 sm:px-5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 h-7 w-7 shrink-0 rounded-full border-2 border-foreground/85 bg-background" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-base font-semibold leading-none">
+                          {isAssistant ? "cooktalk" : t("cook.youLabel")}
+                        </div>
+                        <p className="mt-3 whitespace-pre-wrap text-sm text-foreground/90 sm:text-base">
+                          {message.text}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {(voiceError || error) && (
+                <p className="px-1 text-xs text-destructive">{voiceError || error}</p>
+              )}
+              {!voiceError && !error && qaMessages.length === 0 && (
+                <p className="px-1 text-sm text-muted-foreground">{t("cook.voiceQaBody")}</p>
+              )}
             </div>
           </div>
         </div>
 
-        <div className="border-t border-border/60 bg-card/50">
+        <div className="shrink-0 border-t border-border/60 bg-card/50">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-3 px-4 py-4 sm:px-6 sm:py-6">
             <button
               onClick={() => {
@@ -710,7 +782,7 @@ function CookPage() {
                 strokeWidth={1.75}
               />
               <span className="text-sm text-muted-foreground">
-                {voiceStatusLabel} · {micButtonLabel}
+                {voiceStatusLabel} 路 {micButtonLabel}
               </span>
             </button>
           </div>

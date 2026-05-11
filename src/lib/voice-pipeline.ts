@@ -391,9 +391,7 @@ function playAudioBlob(blob: Blob, language: AppLanguage): Promise<void> {
       playback?.release();
       settle(() =>
         reject(
-          error instanceof Error
-            ? error
-            : new Error(voiceText(language, "voice.playbackFailed")),
+          error instanceof Error ? error : new Error(voiceText(language, "voice.playbackFailed")),
         ),
       );
     });

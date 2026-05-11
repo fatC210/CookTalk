@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { GlobalVoiceController } from "@/components/global-voice-controller";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { removeSampleRecipes } from "@/lib/db";
 import { getApiKey } from "@/lib/crypto";
 import { useAppStore } from "@/stores/app-store";
@@ -175,6 +176,8 @@ function RootComponent() {
   const { initialLanguage } = Route.useLoaderData();
   const language = useAppStore((s) => s.language);
   const setHasElevenLabsKey = useAppStore((s) => s.setHasElevenLabsKey);
+  const setHasLlmKey = useAppStore((s) => s.setHasLlmKey);
+  const setHasImageGenKey = useAppStore((s) => s.setHasImageGenKey);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,15 +194,19 @@ function RootComponent() {
       await removeSampleRecipes().catch(console.error);
       if (cancelled) return;
 
-      await getApiKey("elevenlabs")
-        .then((key) => setHasElevenLabsKey(!!key))
+      await Promise.all([getApiKey("elevenlabs"), getApiKey("llm"), getApiKey("imagegen-key")])
+        .then(([elevenLabsKey, llmKey, imageGenKey]) => {
+          setHasElevenLabsKey(!!elevenLabsKey);
+          setHasLlmKey(!!llmKey);
+          setHasImageGenKey(!!imageGenKey);
+        })
         .catch(console.error);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [setHasElevenLabsKey]);
+  }, [setHasElevenLabsKey, setHasImageGenKey, setHasLlmKey]);
 
   useEffect(() => {
     document.documentElement.lang = initialLanguage === "zh" ? "zh-CN" : "en";
@@ -223,9 +230,11 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <GlobalVoiceController />
-        <Outlet />
-        <Toaster position="top-center" richColors closeButton />
+        <TooltipProvider delayDuration={120}>
+          <GlobalVoiceController />
+          <Outlet />
+          <Toaster position="top-center" richColors closeButton />
+        </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

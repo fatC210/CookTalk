@@ -47,6 +47,7 @@ function isAllowedOpenAICompatibleTarget(url: URL): boolean {
     pathname.endsWith("/chat/completions") ||
     pathname.endsWith("/images/generations") ||
     pathname.endsWith("/responses") ||
+    pathname.endsWith("/models") ||
     /\/models\/[^/]+$/.test(pathname)
   );
 }
