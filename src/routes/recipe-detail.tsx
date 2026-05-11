@@ -59,7 +59,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { useElevenLabsVoices, type ElevenLabsVoiceOption } from "@/hooks/use-elevenlabs-voices";
+import {
+  toCombinedVoiceOptions,
+  useElevenLabsVoices,
+  type ElevenLabsVoiceOption,
+} from "@/hooks/use-elevenlabs-voices";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -271,35 +275,17 @@ function DetailPage() {
 
   const voiceOptions = useMemo<RecipeVoiceOption[]>(() => {
     const clonedVoices = liveClonedVoices ?? [];
-    const elevenLabsVoiceOptionIds = new Set(elevenLabsVoiceOptions.map((option) => option.value));
-    const formatClonedVoiceDescription = (language: string, description: string) => {
-      const languageLabel = language
-        ? t(`voices.languages.${language}`, { defaultValue: language })
+    const formatClonedVoiceDescription = (voice: (typeof clonedVoices)[number]) => {
+      const languageLabel = voice.language
+        ? t(`voices.languages.${voice.language}`, { defaultValue: voice.language })
         : t("common.unknown");
       const voiceDescription =
-        description === "Cloned voice" ? t("voices.clonedVoice") : description;
+        voice.description === "Cloned voice" ? t("voices.clonedVoice") : voice.description;
 
       return `${languageLabel} · ${voiceDescription || t("voices.clonedVoice")}`;
     };
 
-    return [
-      ...elevenLabsVoiceOptions,
-      ...clonedVoices
-        .filter(
-          (voice) =>
-            voice.elevenLabsVoiceId && !elevenLabsVoiceOptionIds.has(voice.elevenLabsVoiceId),
-        )
-        .map((voice) => ({
-          label: voice.name,
-          value: voice.elevenLabsVoiceId!,
-          description: formatClonedVoiceDescription(voice.language, voice.description),
-          displayLabel: `${voice.name} - ${formatClonedVoiceDescription(
-            voice.language,
-            voice.description,
-          )}`,
-          previewUrl: null,
-        })),
-    ];
+    return toCombinedVoiceOptions(clonedVoices, elevenLabsVoiceOptions, formatClonedVoiceDescription);
   }, [liveClonedVoices, elevenLabsVoiceOptions, t]);
 
   useEffect(() => {

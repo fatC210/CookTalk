@@ -332,18 +332,7 @@ function SplitFilterButton({
   t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const [open, setOpen] = useState(false);
-  const filterLabel =
-    activeFilters.length > 0
-      ? t("recipes.filterSelected", { count: activeFilters.length })
-      : t("recipes.filter");
-
-  const filterPreview =
-    activeFilters.length > 0
-      ? activeFilters
-          .slice(0, 2)
-          .map((filter) => filter.label)
-          .join(" · ")
-      : t("recipes.filterHint");
+  const activeFilterCount = activeFilters.length;
 
   const cuisines = allOptions.filter((option) => option.group === "cuisine");
   const flavors = allOptions.filter((option) => option.group === "flavor");
@@ -368,17 +357,19 @@ function SplitFilterButton({
             aria-label={t("recipes.filter")}
           >
             <Filter className="h-3.5 w-3.5" strokeWidth={1.75} />
-            <span>{filterLabel}</span>
+            <span>{t("recipes.filter")}</span>
           </button>
         </DropdownMenuTrigger>
         <span className="w-px bg-border" aria-hidden />
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="inline-flex min-w-0 max-w-32 items-center gap-1.5 px-2.5 py-2 text-muted-foreground hover:bg-accent/60 sm:max-w-40"
+            className="inline-flex min-w-9 items-center justify-center gap-1 px-2 py-2 text-muted-foreground hover:bg-accent/60"
             aria-label={t("recipes.filterMenuTitle")}
           >
-            <span className="truncate">{filterPreview}</span>
+            {activeFilterCount > 0 && (
+              <span className="min-w-3 text-center tabular-nums">{activeFilterCount}</span>
+            )}
             <ChevronDown className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
           </button>
         </DropdownMenuTrigger>
@@ -386,7 +377,7 @@ function SplitFilterButton({
 
       <DropdownMenuContent
         align="end"
-        className="w-64"
+        className="w-48"
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
       >

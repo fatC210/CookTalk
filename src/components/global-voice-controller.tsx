@@ -30,7 +30,8 @@ export function GlobalVoiceController() {
   const setTheme = useAppStore((s) => s.setTheme);
   const setLanguage = useAppStore((s) => s.setLanguage);
 
-  const enabled = pathname !== "/cook";
+  const enabled =
+    pathname !== "/cook" && (pathname !== "/" || homeConversationActive || manualWakeActive);
   const activeListenMode =
     pathname === "/" && homeConversationActive
       ? "always"

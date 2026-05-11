@@ -10,6 +10,7 @@ import {
   formatDurationForSpeech,
   parseVoiceIntent,
   speakWithElevenLabs,
+  VoicePlaybackInterruptedError,
   type VoiceStatus,
 } from "@/lib/voice-pipeline";
 import { db, type Recipe } from "@/lib/db";
@@ -112,6 +113,7 @@ function CookPage() {
   const [recipe, setRecipe] = useState<Recipe | null | undefined>(undefined);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [spokenStepKey, setSpokenStepKey] = useState<string | null>(null);
   const [qaMessages, setQaMessages] = useState<QaMessage[]>([]);
 
   const {
@@ -138,6 +140,7 @@ function CookPage() {
   });
   const setMutedRef = useRef<((muted: boolean) => void) | null>(null);
   const announcedStepKeyRef = useRef<string | null>(null);
+  const announcingStepKeyRef = useRef<string | null>(null);
   const pendingInitialAnnounceStepRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
 
@@ -197,22 +200,25 @@ function CookPage() {
   const speak = useCallback(
     async (text: string, options?: { skipCard?: boolean }) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed) return false;
 
       if (!options?.skipCard) {
         appendQaMessage("assistant", trimmed);
       }
 
-      if (!hasElevenLabsKey) return;
+      if (!hasElevenLabsKey) return false;
 
       setIsSpeaking(true);
       setVoiceError(null);
       try {
         await speakWithElevenLabs(trimmed, resolvedVoiceId, language);
+        return true;
       } catch (error) {
+        if (error instanceof VoicePlaybackInterruptedError) return false;
         const message = error instanceof Error ? error.message : t("cook.speechFailed");
         setVoiceError(message);
         toast.error(message);
+        return false;
       } finally {
         setIsSpeaking(false);
       }
@@ -222,10 +228,25 @@ function CookPage() {
 
   const announceCurrentStep = useCallback(
     async (targetRecipe: Recipe, targetStep: number) => {
+      const stepKey = `${targetRecipe.id}:${targetStep}:${language}`;
+      if (announcedStepKeyRef.current === stepKey || announcingStepKeyRef.current === stepKey) {
+        return;
+      }
+
+      announcingStepKeyRef.current = stepKey;
       const stepSpeech = buildStepSpeech(targetRecipe, targetStep, language);
       resetQaMessagesForStep(t("cook.voiceQaPrompt"));
-      announcedStepKeyRef.current = `${targetRecipe.id}:${targetStep}:${language}`;
-      await speak(stepSpeech, { skipCard: true });
+      try {
+        const didSpeak = await speak(stepSpeech, { skipCard: true });
+        if (didSpeak) {
+          announcedStepKeyRef.current = stepKey;
+          setSpokenStepKey(stepKey);
+        }
+      } finally {
+        if (announcingStepKeyRef.current === stepKey) {
+          announcingStepKeyRef.current = null;
+        }
+      }
     },
     [language, resetQaMessagesForStep, speak, t],
   );
@@ -457,6 +478,15 @@ function CookPage() {
   }, [id, initialStep, recipe, startCooking]);
 
   useEffect(() => {
+    isClosingRef.current = false;
+
+    return () => {
+      isClosingRef.current = true;
+      stopActiveVoicePlayback();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!recipe) return;
     if (isClosingRef.current) return;
 
@@ -465,7 +495,7 @@ function CookPage() {
     if (announcedStepKeyRef.current === stepKey) return;
     pendingInitialAnnounceStepRef.current = null;
     void announceCurrentStep(recipe, targetStep);
-  }, [announceCurrentStep, language, recipe, safeStep]);
+  }, [announceCurrentStep, hasElevenLabsKey, language, recipe, resolvedVoiceId, safeStep]);
 
   useEffect(() => {
     updateLatestState({
@@ -475,13 +505,6 @@ function CookPage() {
       isPaused,
     });
   }, [activeTimers, isPaused, recipe, safeStep, updateLatestState]);
-
-  useEffect(() => {
-    return () => {
-      isClosingRef.current = true;
-      stopActiveVoicePlayback();
-    };
-  }, []);
 
   useEffect(() => {
     setOnCompleted((_, label) => {
@@ -558,6 +581,8 @@ function CookPage() {
 
   const description = step?.description ?? "";
   const { main: descMain, highlight: descHighlight } = getStepDescriptionParts(description);
+  const currentStepKey = recipe ? `${recipe.id}:${safeStep}:${language}` : null;
+  const hasSpokenCurrentStep = spokenStepKey === currentStepKey;
 
   return (
     <div className="flex h-dvh min-w-0 flex-col overflow-x-hidden overflow-y-hidden bg-background">
@@ -617,7 +642,11 @@ function CookPage() {
                     <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
                     {voiceStatusLabel}
                   </span>
-                  <span className="text-xs text-muted-foreground">{t("cook.stepSpokenOnce")}</span>
+                  {hasSpokenCurrentStep && (
+                    <span className="text-xs text-muted-foreground">
+                      {t("cook.stepSpokenOnce")}
+                    </span>
+                  )}
                 </div>
                 <h1 className="mt-5 max-w-full font-display text-[clamp(1.75rem,6.2vw,2.7rem)] font-medium leading-[1.12] tracking-tight md:text-[clamp(2.4rem,4vw,3.8rem)]">
                   {descMain}

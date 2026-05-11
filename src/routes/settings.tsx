@@ -51,7 +51,11 @@ import {
   validateOpenAIModelConfig,
 } from "@/lib/llm";
 import { ElevenLabsService } from "@/lib/elevenlabs";
-import { getSupportedElevenLabsVoices, useElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
+import {
+  getSupportedElevenLabsVoices,
+  toCombinedVoiceOptions,
+  useElevenLabsVoices,
+} from "@/hooks/use-elevenlabs-voices";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -396,32 +400,20 @@ function SettingsPage() {
     hasElevenLabsKey,
   } = useElevenLabsVoices(elevenLabsVoiceRefreshKey);
   const clonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []) ?? [];
-  const elevenLabsVoiceOptionIds = new Set(elevenLabsVoiceOptions.map((option) => option.value));
-  const formatClonedVoiceDescription = (language: string, description: string) => {
-    const languageLabel = language
-      ? t(`voices.languages.${language}`, { defaultValue: language })
+  const formatClonedVoiceDescription = (voice: (typeof clonedVoices)[number]) => {
+    const languageLabel = voice.language
+      ? t(`voices.languages.${voice.language}`, { defaultValue: voice.language })
       : t("common.unknown");
-    const voiceDescription = description === "Cloned voice" ? t("voices.clonedVoice") : description;
+    const voiceDescription =
+      voice.description === "Cloned voice" ? t("voices.clonedVoice") : voice.description;
 
     return `${languageLabel} · ${voiceDescription || t("voices.clonedVoice")}`;
   };
-  const voiceOptions = [
-    ...elevenLabsVoiceOptions,
-    ...clonedVoices
-      .filter(
-        (voice) =>
-          voice.elevenLabsVoiceId && !elevenLabsVoiceOptionIds.has(voice.elevenLabsVoiceId),
-      )
-      .map((voice) => ({
-        label: voice.name,
-        value: voice.elevenLabsVoiceId!,
-        description: formatClonedVoiceDescription(voice.language, voice.description),
-        displayLabel: `${voice.name} - ${formatClonedVoiceDescription(
-          voice.language,
-          voice.description,
-        )}`,
-      })),
-  ];
+  const voiceOptions = toCombinedVoiceOptions(
+    clonedVoices,
+    elevenLabsVoiceOptions,
+    formatClonedVoiceDescription,
+  );
   const voiceSelectDisabled = !hasElevenLabsKey || voiceOptions.length === 0;
 
   // 鈹€鈹€ API key state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

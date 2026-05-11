@@ -20,6 +20,10 @@ type ApiKeyName =
 // ── Internal crypto helpers ──────────────────────────────────────────────────
 
 async function deriveKey(): Promise<CryptoKey> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Web Crypto is not available");
+  }
+
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(SALT), "PBKDF2", false, [
     "deriveKey",
@@ -84,7 +88,11 @@ export async function decryptData(ciphertext: string): Promise<string> {
  */
 export async function storeApiKey(key: ApiKeyName, value: string): Promise<void> {
   const encrypted = await encryptData(value);
-  localStorage.setItem(`${STORAGE_PREFIX}${key}`, encrypted);
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}${key}`, encrypted);
+  } catch (error) {
+    throw new Error("Failed to store API key", { cause: error });
+  }
 }
 
 /**
@@ -92,13 +100,23 @@ export async function storeApiKey(key: ApiKeyName, value: string): Promise<void>
  * Returns `null` when the key is not present.
  */
 export async function getApiKey(key: ApiKeyName): Promise<string | null> {
-  const raw = localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+  } catch {
+    return null;
+  }
+
   if (!raw) return null;
   try {
     return await decryptData(raw);
   } catch {
     // Corrupted entry – remove it so the user can re-enter
-    localStorage.removeItem(`${STORAGE_PREFIX}${key}`);
+    try {
+      localStorage.removeItem(`${STORAGE_PREFIX}${key}`);
+    } catch {
+      // Ignore storage cleanup failures.
+    }
     return null;
   }
 }
@@ -107,7 +125,11 @@ export async function getApiKey(key: ApiKeyName): Promise<string | null> {
  * Remove an API key from localStorage.
  */
 export async function removeApiKey(key: ApiKeyName): Promise<void> {
-  localStorage.removeItem(`${STORAGE_PREFIX}${key}`);
+  try {
+    localStorage.removeItem(`${STORAGE_PREFIX}${key}`);
+  } catch {
+    // Treat unavailable storage as already empty.
+  }
 }
 
 /**
@@ -115,5 +137,9 @@ export async function removeApiKey(key: ApiKeyName): Promise<void> {
  * (does not verify that the stored value can be successfully decrypted).
  */
 export function hasApiKey(key: ApiKeyName): boolean {
-  return localStorage.getItem(`${STORAGE_PREFIX}${key}`) !== null;
+  try {
+    return localStorage.getItem(`${STORAGE_PREFIX}${key}`) !== null;
+  } catch {
+    return false;
+  }
 }

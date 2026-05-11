@@ -863,6 +863,7 @@
     "elevenLabsKeyRequiredShort": "请先在设置里配置 ElevenLabs API Key",
     "voiceSelectRequired": "请先在设置里选择音色",
     "playbackFailed": "语音播放失败",
+    "playbackInterrupted": "语音播放已中断",
     "micUnsupported": "当前浏览器不支持麦克风录音。",
     "recordingFailed": "录音失败，请检查麦克风权限。",
     "noClearSpeech": "没有检测到清晰语音，请靠近麦克风后再说一次。",

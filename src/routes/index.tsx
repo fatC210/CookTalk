@@ -337,6 +337,28 @@ type AssistantAudioReveal = {
 const CHAT_SCROLL_BOTTOM_THRESHOLD_PX = 96;
 const HOME_CONVERSATION_STORAGE_KEY = "cooktalk-home-conversation";
 
+function createClientId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeStoredDate(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    if (Number.isFinite(date.getTime())) return date.toISOString();
+  }
+
+  return new Date().toISOString();
+}
+
+function reviveStoredDate(value: string): Date {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : new Date();
+}
+
 function loadStoredHomeConversation(): StoredHomeConversation | null {
   if (typeof window === "undefined") return null;
 
@@ -351,8 +373,7 @@ function loadStoredHomeConversation(): StoredHomeConversation | null {
       version: 1,
       messages: parsed.messages.map((message) => ({
         ...message,
-        createdAt:
-          typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString(),
+        createdAt: normalizeStoredDate(message.createdAt),
       })),
       latestRecipes: parsed.latestRecipes,
       latestRecipeDraftText:
@@ -379,7 +400,11 @@ function persistHomeConversation({
     latestRecipes.length === 0 &&
     latestRecipeDraftText.trim().length === 0
   ) {
-    window.localStorage.removeItem(HOME_CONVERSATION_STORAGE_KEY);
+    try {
+      window.localStorage.removeItem(HOME_CONVERSATION_STORAGE_KEY);
+    } catch (error) {
+      console.warn("Failed to clear stored home conversation", error);
+    }
     return;
   }
 
@@ -388,13 +413,20 @@ function persistHomeConversation({
     messages: messages.map(({ createdAt, ...message }) => ({
       ...message,
       isReading: false,
-      createdAt: createdAt.toISOString(),
+      createdAt:
+        createdAt instanceof Date && Number.isFinite(createdAt.getTime())
+          ? createdAt.toISOString()
+          : new Date().toISOString(),
     })),
     latestRecipes,
     latestRecipeDraftText,
   };
 
-  window.localStorage.setItem(HOME_CONVERSATION_STORAGE_KEY, JSON.stringify(snapshot));
+  try {
+    window.localStorage.setItem(HOME_CONVERSATION_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (error) {
+    console.warn("Failed to store home conversation", error);
+  }
 }
 
 function buildRecipeLibraryContext(recipes: Recipe[], language: AppLanguage): string {
@@ -588,7 +620,7 @@ function HomePage() {
     (persistedConversation?.messages ?? []).map(({ createdAt, isReading, ...message }) => ({
       ...message,
       isReading: false,
-      createdAt: new Date(createdAt),
+      createdAt: reviveStoredDate(createdAt),
     })),
   );
   const [latestRecipes, setLatestRecipes] = useState<ChatRecipe[]>(
@@ -698,7 +730,7 @@ function HomePage() {
   const addMessage = useCallback((message: Omit<ChatMessage, "id" | "createdAt">) => {
     const nextMessage: ChatMessage = {
       ...message,
-      id: crypto.randomUUID(),
+      id: createClientId(),
       createdAt: new Date(),
     };
     setMessages((current) => [...current, nextMessage]);
@@ -967,7 +999,7 @@ function HomePage() {
     (message: Omit<ChatMessage, "id" | "createdAt" | "role">) => {
       stopAssistantPlayback(true);
 
-      const runId = crypto.randomUUID();
+      const runId = createClientId();
       assistantRunRef.current = runId;
       setAssistantLoading(hasElevenLabsKey && !!message.text);
       setAssistantStatus(hasElevenLabsKey && !!message.text ? "thinking" : "idle");
@@ -1026,7 +1058,7 @@ function HomePage() {
     async (text: string, conversationMessages: ChatMessage[]) => {
       stopAssistantPlayback(true);
 
-      const runId = crypto.randomUUID();
+      const runId = createClientId();
       assistantRunRef.current = runId;
       setAssistantLoading(true);
       setAssistantStatus("thinking");
@@ -1173,7 +1205,7 @@ function HomePage() {
         coverSource: "default",
         sourceUrl: options.sourceUrl,
         rawTranscript: draftText,
-        id: crypto.randomUUID(),
+        id: createClientId(),
         createdAt: Date.now(),
       };
 

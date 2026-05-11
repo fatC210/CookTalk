@@ -863,6 +863,7 @@
     "elevenLabsKeyRequiredShort": "Configure an ElevenLabs API key in Settings first.",
     "voiceSelectRequired": "Choose a voice in Settings first.",
     "playbackFailed": "Voice playback failed",
+    "playbackInterrupted": "Voice playback was interrupted",
     "micUnsupported": "This browser does not support microphone recording.",
     "recordingFailed": "Recording failed. Check microphone permission.",
     "noClearSpeech": "No clear speech was detected. Move closer to the microphone and try again.",

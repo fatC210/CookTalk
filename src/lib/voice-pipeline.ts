@@ -16,6 +16,13 @@ export type VoiceStatus =
   | "speaking"
   | "error";
 
+export class VoicePlaybackInterruptedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VoicePlaybackInterruptedError";
+  }
+}
+
 export type VoiceIntentType =
   | "next_step"
   | "previous_step"
@@ -420,7 +427,10 @@ function playAudioBlob(blob: Blob, language: AppLanguage): Promise<void> {
 
     playback = claimVoicePlayback(audio, {
       cleanup: () => URL.revokeObjectURL(url),
-      onStop: () => settle(resolve),
+      onStop: () =>
+        settle(() =>
+          reject(new VoicePlaybackInterruptedError(voiceText(language, "voice.playbackInterrupted"))),
+        ),
     });
 
     audio.onended = () => {

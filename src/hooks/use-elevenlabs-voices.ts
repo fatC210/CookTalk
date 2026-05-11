@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getApiKey } from "@/lib/crypto";
+import type { Voice } from "@/lib/db";
 import { ElevenLabsService, type ElevenLabsVoice } from "@/lib/elevenlabs";
 import { useAppStore } from "@/stores/app-store";
 
@@ -57,6 +58,34 @@ export function toElevenLabsVoiceOption(
     displayLabel: formatElevenLabsVoiceDisplayLabel(voice, fallbackGender),
     previewUrl: getElevenLabsVoicePreviewUrl(voice),
   };
+}
+
+export function toCombinedVoiceOptions(
+  clonedVoices: Voice[],
+  elevenLabsVoiceOptions: ElevenLabsVoiceOption[],
+  formatClonedVoiceDescription: (voice: Voice) => string,
+): ElevenLabsVoiceOption[] {
+  const clonedVoiceOptionIds = new Set<string>();
+  const clonedVoiceOptions = clonedVoices
+    .filter((voice) => voice.elevenLabsVoiceId)
+    .map((voice) => {
+      const value = voice.elevenLabsVoiceId!;
+      clonedVoiceOptionIds.add(value);
+      const description = formatClonedVoiceDescription(voice);
+
+      return {
+        label: voice.name,
+        value,
+        description,
+        displayLabel: `${voice.name} - ${description}`,
+        previewUrl: null,
+      };
+    });
+
+  return [
+    ...clonedVoiceOptions,
+    ...elevenLabsVoiceOptions.filter((option) => !clonedVoiceOptionIds.has(option.value)),
+  ];
 }
 
 export function useElevenLabsVoices(refreshKey?: unknown) {
