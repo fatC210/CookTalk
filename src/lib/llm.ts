@@ -84,12 +84,16 @@ const META_REASONING_PATTERN =
 const DURATION_HOUR_PATTERN = /(\d+(?:\.\d+)?)\s*(?:小时|hours?\b|hrs?\b|h\b)/i;
 const DURATION_MINUTE_PATTERN = /(\d+(?:\.\d+)?)\s*(?:分钟|分|minutes?\b|mins?\b|m\b)/i;
 const DURATION_SECOND_PATTERN = /(\d+(?:\.\d+)?)\s*(?:秒|seconds?\b|secs?\b|s\b)/i;
+const ISO_DURATION_PATTERN =
+  /^P(?:(\d+(?:\.\d+)?)D)?(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?)?$/i;
 const RECIPE_SCHEMA_PLACEHOLDERS = new Set([
   "recipe name",
   "ingredient",
   "amount",
   "step text",
+  "step description",
   "optional tip",
+  "optional notes",
   "cuisine name",
   "savory",
   "菜名",
@@ -98,16 +102,31 @@ const RECIPE_SCHEMA_PLACEHOLDERS = new Set([
   "用量",
   "步骤描述",
   "提示",
+  "可选提示",
   "提示（可选）",
+  "可选备注",
   "口味",
   "菜系",
   "总时间分钟",
+  "recipeingredient",
+  "recipeinstructions",
+  "reciperesult",
+  "recipeyield",
+  "recipecuisine",
+  "recipecategory",
+  "howtostep",
+  "howtosection",
+  "itemlistelement",
+  "@type",
+  "@context",
 ]);
 const INGREDIENT_NAME_LABELS = [
   "name",
   "ingredient",
   "item",
   "food",
+  "recipeIngredient",
+  "recipeIngredients",
   "食材名",
   "食材",
   "原料",
@@ -128,15 +147,28 @@ const STEP_TEXT_LABELS = [
   "steps",
   "instruction",
   "instructions",
+  "recipeInstruction",
+  "recipeInstructions",
   "direction",
   "directions",
   "description",
+  "text",
+  "itemListElement",
   "做法",
   "步骤",
   "烹饪步骤",
 ];
-const TITLE_LABELS = ["title", "name", "dishName", "recipeName", "菜名", "标题", "名称"];
-const CUISINE_LABELS = ["cuisine", "style", "菜系", "菜式"];
+const TITLE_LABELS = [
+  "title",
+  "name",
+  "dishName",
+  "recipeName",
+  "headline",
+  "菜名",
+  "标题",
+  "名称",
+];
+const CUISINE_LABELS = ["cuisine", "style", "recipeCuisine", "菜系", "菜式"];
 const RECIPE_FIELD_LABELS = [
   ...TITLE_LABELS,
   ...CUISINE_LABELS,
@@ -145,15 +177,32 @@ const RECIPE_FIELD_LABELS = [
   ...STEP_TEXT_LABELS,
   "ingredients",
   "ingredientList",
+  "recipeIngredient",
+  "recipeIngredients",
   "materials",
   "原料",
   "用料",
   "配料",
   "order",
+  "position",
   "durationSec",
+  "durationSeconds",
+  "durationMin",
+  "minutes",
   "duration",
   "tips",
   "tip",
+  "text",
+  "content",
+  "recipeInstructions",
+  "recipeInstruction",
+  "itemListElement",
+  "recipeYield",
+  "recipeCuisine",
+  "recipeCategory",
+  "keywords",
+  "@type",
+  "@context",
   "tags",
   "flavor",
   "difficulty",
@@ -180,16 +229,30 @@ const SCHEMA_ONLY_FIELDS = new Set([
   "ingredientlist",
   "ingredient",
   "materials",
+  "recipeingredient",
+  "recipeingredients",
   "steps",
   "instructions",
+  "recipeinstruction",
+  "recipeinstructions",
   "directions",
   "method",
+  "itemlistelement",
+  "howtostep",
+  "howtosection",
   "tags",
   "flavor",
   "difficulty",
   "cuisine",
+  "recipecuisine",
+  "recipecategory",
+  "keywords",
   "totaltimemin",
+  "totalminutes",
+  "cooktimemin",
+  "preptimemin",
   "servings",
+  "recipeyield",
   "spicelevel",
   "notes",
   "amount",
@@ -199,9 +262,17 @@ const SCHEMA_ONLY_FIELDS = new Set([
   "unit",
   "order",
   "description",
+  "text",
+  "content",
   "durationsec",
+  "durationseconds",
+  "durationmin",
+  "minutes",
   "duration",
+  "position",
   "tips",
+  "@type",
+  "@context",
   "菜名",
   "标题",
   "名称",
@@ -446,6 +517,7 @@ function normalizePlaceholderText(value: string): string {
     .trim()
     .toLowerCase()
     .replace(/[“”"'`]/g, "")
+    .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
 }
 
@@ -476,9 +548,21 @@ function cleanRecipeTextValue(value: string): string {
     .replace(/^`+|`+$/g, "")
     .replace(/^\*\*(.*)\*\*$/s, "$1")
     .replace(/^["“”']+|["“”']+$/g, "")
+    .replace(/\\n/g, " ")
+    .replace(/\\["'`]/g, "")
     .replace(/\s+/g, " ")
     .replace(/\s*(?:->|=>)\s*[\w\u4e00-\u9fff\s]+$/i, "")
     .replace(/\s*[,，;；.。]\s*$/g, "")
+    .trim();
+}
+
+function cleanRecipeContentText(value: string): string {
+  return cleanRecipeTextValue(value)
+    .replace(/\b(?:https?:\/\/|www\.)\S+$/i, "")
+    .replace(
+      /\s*(?:@type|@context|recipeIngredient|recipeInstructions|itemListElement)\s*[：:].*$/i,
+      "",
+    )
     .trim();
 }
 
@@ -727,6 +811,16 @@ function parseDurationToSeconds(value: unknown): number | undefined {
   const text = value.trim();
   if (!text) return undefined;
 
+  const isoMatch = text.match(ISO_DURATION_PATTERN);
+  if (isoMatch) {
+    const days = isoMatch[1] ? Number(isoMatch[1]) : 0;
+    const hours = isoMatch[2] ? Number(isoMatch[2]) : 0;
+    const minutes = isoMatch[3] ? Number(isoMatch[3]) : 0;
+    const seconds = isoMatch[4] ? Number(isoMatch[4]) : 0;
+    const total = days * 86400 + hours * 3600 + minutes * 60 + seconds;
+    if (total > 0) return Math.round(total);
+  }
+
   const hourMatch = text.match(DURATION_HOUR_PATTERN);
   const minuteMatch = text.match(DURATION_MINUTE_PATTERN);
   const secondMatch = text.match(DURATION_SECOND_PATTERN);
@@ -742,9 +836,57 @@ function parseDurationToSeconds(value: unknown): number | undefined {
   return Math.round(numeric);
 }
 
+function parseDurationValue(
+  value: unknown,
+  unit: "seconds" | "minutes" | "auto",
+): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.round(unit === "minutes" ? value * 60 : value);
+  }
+
+  if (typeof value !== "string") return undefined;
+  const parsed = parseDurationToSeconds(value);
+  if (parsed) {
+    if (
+      unit === "minutes" &&
+      !DURATION_MINUTE_PATTERN.test(value) &&
+      !DURATION_HOUR_PATTERN.test(value)
+    ) {
+      const numeric = Number(value.replace(/[^\d.]/g, ""));
+      return Number.isFinite(numeric) && numeric > 0 ? Math.round(numeric * 60) : parsed;
+    }
+    return parsed;
+  }
+
+  const numeric = Number(value.replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return Math.round(unit === "minutes" ? numeric * 60 : numeric);
+}
+
 function parseDurationToMinutes(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.round(value);
+  }
+
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return undefined;
+
+    const seconds = parseDurationToSeconds(text);
+    if (!seconds) return undefined;
+
+    if (
+      ISO_DURATION_PATTERN.test(text) ||
+      DURATION_HOUR_PATTERN.test(text) ||
+      DURATION_MINUTE_PATTERN.test(text) ||
+      DURATION_SECOND_PATTERN.test(text)
+    ) {
+      return Math.max(1, Math.round(seconds / 60));
+    }
+
+    const numeric = Number(text.replace(/[^\d.]/g, ""));
+    if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+    return Math.round(numeric);
   }
 
   const seconds = parseDurationToSeconds(value);
@@ -753,6 +895,13 @@ function parseDurationToMinutes(value: unknown): number | undefined {
 }
 
 function parseServings(value: unknown): number | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const parsed = parseServings(item);
+      if (parsed) return parsed;
+    }
+    return undefined;
+  }
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return Math.round(value);
   if (typeof value !== "string") return undefined;
   const match = value.match(/\d+/);
@@ -785,6 +934,40 @@ function splitListText(text: string): string[] {
     .filter((item) => item && !isSchemaNoiseLine(item));
 }
 
+function splitIngredientListText(text: string): string[] {
+  return splitListText(text).flatMap((item) => {
+    if (findInlineLabel(item, RECIPE_FIELD_LABELS)) return [item];
+    return item
+      .split(/[,，、]/)
+      .map((part) => cleanRecipeContentText(part))
+      .filter((part) => part && !isSchemaNoiseLine(part));
+  });
+}
+
+function joinAmountUnit(amount: string, unit: string): string {
+  if (!amount) return unit;
+  if (!unit || amount.toLowerCase().includes(unit.toLowerCase())) return amount;
+  return /[\u4e00-\u9fff]/.test(unit) ? `${amount}${unit}` : `${amount} ${unit}`;
+}
+
+function stringifyAmountValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string") return cleanRecipeContentText(value);
+  if (!isRecord(value)) return "";
+
+  const amount = readFirstString(value, ["value", "minValue", "maxValue", "amount", "quantity"]);
+  const unit = readFirstString(value, ["unitText", "unitCode", "unit", "单位"]);
+  return cleanRecipeContentText(joinAmountUnit(amount, unit));
+}
+
+function readIngredientAmount(source: Record<string, unknown>): string {
+  const amount = stringifyAmountValue(
+    readFirstValue(source, ["amount", "quantity", "qty", "measure", "用量", "份量", "数量"]),
+  );
+  const unit = readFirstString(source, ["unit", "unitText", "unitCode", "单位"]);
+  return cleanRecipeContentText(joinAmountUnit(amount, unit));
+}
+
 function splitFlavor(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
     const items = value
@@ -812,7 +995,7 @@ const HEAT_OR_TIP_PATTERN =
 
 function normalizeIngredient(value: unknown): RecipePayload["ingredients"][number] | null {
   if (typeof value === "string") {
-    const text = cleanRecipeTextValue(stripListMarker(value));
+    const text = cleanRecipeContentText(stripListMarker(value));
     if (!text) return null;
     if (isSchemaNoiseLine(text)) return null;
 
@@ -829,7 +1012,7 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
     const nameLabel = findInlineLabel(text, INGREDIENT_NAME_LABELS);
     const namePrefix =
       amountLabel && amountLabel.index > 0
-        ? cleanRecipeTextValue(text.slice(0, amountLabel.index))
+        ? cleanRecipeContentText(text.slice(0, amountLabel.index))
         : "";
     const nameFromLabel =
       namePrefix && (!nameLabel || amountLabel!.index < nameLabel.index)
@@ -846,9 +1029,9 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
 
     const parts = text.split(/\s*[：:]\s*/);
     if (parts.length >= 2) {
-      const name = omitSchemaPlaceholder(cleanRecipeTextValue(parts[0]));
+      const name = omitSchemaPlaceholder(cleanRecipeContentText(parts[0]));
       const amount = omitSchemaPlaceholder(
-        cleanRecipeTextValue(truncateRecipeFieldTail(parts.slice(1).join(":"))),
+        cleanRecipeContentText(truncateRecipeFieldTail(parts.slice(1).join(":"))),
       );
       if (!name && !amount) return null;
       return {
@@ -857,40 +1040,70 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
       };
     }
 
-    const match = text.match(/^(.+?)(?:\s+|，|,)([\d一二三四五六七八九十半少许适量大约约].*)$/);
-    return match
-      ? {
-          name: omitSchemaPlaceholder(cleanRecipeTextValue(match[1])),
-          amount: omitSchemaPlaceholder(cleanRecipeTextValue(truncateRecipeFieldTail(match[2]))),
-        }
-      : { name: text, amount: "" };
+    const quantityText = String.raw`(?:约|大约|大概|少许|适量|若干|半|\d+(?:\.\d+)?(?:/\d+)?|[一二两三四五六七八九十百]+)`;
+    const unitText = String.raw`(?:克|千克|公斤|斤|两|毫升|升|个|颗|枚|只|根|把|片|块|条|瓣|粒|朵|包|袋|罐|盒|碗|勺|大勺|小勺|汤匙|茶匙|杯|g|kg|ml|l|oz|lb|lbs|cups?|tbsp|tbsps|tablespoons?|tsp|tsps|teaspoons?)`;
+    const trailingAmount = text.match(
+      new RegExp(
+        `^(.+?)(\\s*(?:${quantityText})(?:\\s*${unitText})?(?:\\s*(?:左右|以上|以下|多|许))?)$`,
+        "i",
+      ),
+    );
+    if (trailingAmount) {
+      const name = omitSchemaPlaceholder(cleanRecipeContentText(trailingAmount[1]));
+      const amount = omitSchemaPlaceholder(cleanRecipeContentText(trailingAmount[2]));
+      if (name || amount) return { name, amount };
+    }
+
+    const delimitedAmount = text.match(
+      /^(.+?)(?:\s+|，|,)([\d一二两三四五六七八九十半少许适量大约约].*)$/,
+    );
+    if (delimitedAmount) {
+      return {
+        name: omitSchemaPlaceholder(cleanRecipeContentText(delimitedAmount[1])),
+        amount: omitSchemaPlaceholder(
+          cleanRecipeContentText(truncateRecipeFieldTail(delimitedAmount[2])),
+        ),
+      };
+    }
+
+    const leadingAmount = text.match(
+      new RegExp(`^((?:${quantityText})(?:\\s*${unitText})?)(?:\\s*(?:of\\s+)?)?(.+)$`, "i"),
+    );
+    if (leadingAmount) {
+      const amount = omitSchemaPlaceholder(cleanRecipeContentText(leadingAmount[1]));
+      const name = omitSchemaPlaceholder(cleanRecipeContentText(leadingAmount[2]));
+      if (name || amount) return { name, amount };
+    }
+
+    return { name: text, amount: "" };
   }
 
   if (!isRecord(value)) return null;
   const name = omitSchemaPlaceholder(
-    readFirstString(value, [
-      "name",
-      "ingredient",
-      "item",
-      "food",
-      "食材名",
-      "食材",
-      "原料",
-      "名称",
-    ]),
+    cleanRecipeContentText(
+      readFirstString(value, [
+        "name",
+        "ingredient",
+        "item",
+        "food",
+        "text",
+        "recipeIngredient",
+        "食材名",
+        "食材",
+        "原料",
+        "名称",
+      ]),
+    ),
   );
-  const amount = omitSchemaPlaceholder(
-    readFirstString(value, [
-      "amount",
-      "quantity",
-      "qty",
-      "measure",
-      "unit",
-      "用量",
-      "份量",
-      "数量",
-    ]),
-  );
+  const amount = omitSchemaPlaceholder(readIngredientAmount(value));
+  if (!name && amount) {
+    const parsedAmount = normalizeIngredient(amount);
+    if (parsedAmount?.name) return parsedAmount;
+  }
+  if (name && !amount) {
+    const parsedName = normalizeIngredient(name);
+    if (parsedName?.amount) return parsedName;
+  }
   if (!name && !amount) return null;
   return { name, amount };
 }
@@ -899,8 +1112,10 @@ function normalizeIngredients(value: unknown): RecipePayload["ingredients"] {
   const values = Array.isArray(value)
     ? value
     : typeof value === "string"
-      ? splitListText(value)
-      : [];
+      ? splitIngredientListText(value)
+      : isRecord(value)
+        ? [value]
+        : [];
   const seen = new Set<string>();
 
   return values
@@ -920,7 +1135,7 @@ function normalizeIngredients(value: unknown): RecipePayload["ingredients"] {
 
 function normalizeStep(value: unknown, index: number): RecipePayload["steps"][number] | null {
   if (typeof value === "string") {
-    const text = cleanRecipeTextValue(stripListMarker(value).replace(/^[\s\d.、)\]-]+/, ""));
+    const text = cleanRecipeContentText(stripListMarker(value).replace(/^[\s\d.、)\]-]+/, ""));
     if (!text || isSchemaNoiseLine(text)) return null;
     if (parseJsonCandidate(text) !== null) return null;
     if (
@@ -939,36 +1154,44 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
 
   if (!isRecord(value)) return null;
   const description = omitSchemaPlaceholder(
-    readFirstString(value, [
-      "description",
-      "text",
-      "instruction",
-      "direction",
-      "step",
-      "content",
-      "做法",
-      "步骤",
-      "内容",
-      "描述",
-    ]),
+    cleanRecipeContentText(
+      readFirstString(value, [
+        "description",
+        "text",
+        "instruction",
+        "direction",
+        "step",
+        "content",
+        "name",
+        "做法",
+        "步骤",
+        "内容",
+        "描述",
+      ]),
+    ),
   );
   if (!description) return null;
   if (containsMetaReasoning(description)) return null;
 
-  const orderValue = readFirstValue(value, ["order", "stepNumber", "index", "序号"]);
+  const orderValue = readFirstValue(value, ["order", "stepNumber", "index", "position", "序号"]);
   const order =
     typeof orderValue === "number" && Number.isFinite(orderValue) && orderValue > 0
       ? Math.round(orderValue)
       : index + 1;
   const durationSec =
-    parseDurationToSeconds(
+    parseDurationValue(
       readFirstValue(value, ["durationSec", "durationSeconds", "seconds", "秒数"]),
+      "seconds",
     ) ??
-    parseDurationToSeconds(
-      readFirstValue(value, ["duration", "durationMin", "time", "时间", "时长"]),
-    );
+    parseDurationValue(
+      readFirstValue(value, ["durationMin", "durationMinutes", "minutes", "分钟数"]),
+      "minutes",
+    ) ??
+    parseDurationValue(readFirstValue(value, ["duration", "time", "时间", "时长"]), "auto");
   const tips = omitSchemaPlaceholder(
-    readFirstString(value, ["tips", "tip", "note", "notes", "提示", "小贴士", "备注"]),
+    cleanRecipeContentText(
+      readFirstString(value, ["tips", "tip", "note", "notes", "提示", "小贴士", "备注"]),
+    ),
   );
 
   return {
@@ -979,12 +1202,44 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
   };
 }
 
+function collectStepValues(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap(collectStepValues);
+  if (!isRecord(value)) return [value];
+
+  const nested = readFirstValue(value, [
+    "itemListElement",
+    "items",
+    "steps",
+    "instructions",
+    "recipeInstructions",
+    "做法",
+    "步骤",
+  ]);
+
+  const directText = readFirstString(value, [
+    "description",
+    "text",
+    "instruction",
+    "direction",
+    "step",
+    "content",
+    "做法",
+    "步骤",
+    "内容",
+    "描述",
+  ]);
+
+  if (nested !== undefined && !directText) return collectStepValues(nested);
+  return [value];
+}
+
 function normalizeSteps(value: unknown): RecipePayload["steps"] {
-  const values = Array.isArray(value)
-    ? value
-    : typeof value === "string"
+  const values =
+    typeof value === "string"
       ? splitListText(value)
-      : [];
+      : value === undefined
+        ? []
+        : collectStepValues(value);
 
   return values
     .map(normalizeStep)
@@ -992,7 +1247,68 @@ function normalizeSteps(value: unknown): RecipePayload["steps"] {
     .map((step, index) => ({ ...step, order: index + 1 }));
 }
 
+function getTypeNames(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map((item) => (typeof item === "string" ? item.trim().toLowerCase() : ""))
+    .filter(Boolean);
+}
+
+function isRecipeLikeRecord(value: Record<string, unknown>): boolean {
+  const typeNames = getTypeNames(readFirstValue(value, ["@type", "type"]));
+  if (typeNames.some((type) => /(^|[/#:])recipe$/i.test(type))) return true;
+  return [
+    "recipeIngredient",
+    "recipeIngredients",
+    "recipeInstructions",
+    "recipeInstruction",
+    "ingredients",
+    "ingredientList",
+    "steps",
+    "instructions",
+    "做法",
+    "步骤",
+    "食材",
+    "原料",
+    "用料",
+  ].some((key) => value[key] !== undefined);
+}
+
+function findRecipeLikeRecord(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findRecipeLikeRecord(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (!isRecord(value)) return null;
+  if (isRecipeLikeRecord(value)) return value;
+
+  for (const key of [
+    "recipe",
+    "data",
+    "result",
+    "output",
+    "structuredRecipe",
+    "mainEntity",
+    "mainEntityOfPage",
+    "@graph",
+    "graph",
+    "菜谱",
+  ]) {
+    const found = findRecipeLikeRecord(value[key]);
+    if (found) return found;
+  }
+
+  return null;
+}
+
 function unwrapRecipeObject(value: unknown): Record<string, unknown> | null {
+  const foundRecipe = findRecipeLikeRecord(value);
+  if (foundRecipe) return foundRecipe;
+
   if (Array.isArray(value)) {
     const firstRecord = value.find(isRecord);
     return firstRecord ?? null;
@@ -1017,6 +1333,8 @@ function normalizeRecipePayload(value: unknown): RecipePayload | null {
     readFirstValue(recipe, [
       "ingredients",
       "ingredientList",
+      "recipeIngredient",
+      "recipeIngredients",
       "materials",
       "食材",
       "原料",
@@ -1028,6 +1346,9 @@ function normalizeRecipePayload(value: unknown): RecipePayload | null {
     readFirstValue(recipe, [
       "steps",
       "instructions",
+      "recipeInstructions",
+      "recipeInstruction",
+      "itemListElement",
       "directions",
       "method",
       "做法",
@@ -1039,25 +1360,77 @@ function normalizeRecipePayload(value: unknown): RecipePayload | null {
   if (ingredients.length === 0 && steps.length === 0) return null;
 
   const title = omitSchemaPlaceholder(
-    readFirstString(recipe, ["title", "name", "dishName", "recipeName", "菜名", "名称", "标题"]),
+    cleanRecipeContentText(
+      readFirstString(recipe, [
+        "title",
+        "name",
+        "dishName",
+        "recipeName",
+        "headline",
+        "菜名",
+        "名称",
+        "标题",
+      ]),
+    ),
   );
-  const flavor = splitFlavor(readFirstValue(tags, ["flavor", "flavors", "taste", "口味", "风味"]));
+  const flavor =
+    splitFlavor(readFirstValue(tags, ["flavor", "flavors", "taste", "口味", "风味"])) ??
+    splitFlavor(readFirstValue(recipe, ["recipeCategory", "keywords", "category", "标签", "口味"]));
   const cuisine = omitSchemaPlaceholder(
-    readFirstString(tags, ["cuisine", "style", "菜系", "菜式"]),
+    cleanRecipeContentText(
+      readFirstString(tags, ["cuisine", "style", "recipeCuisine", "菜系", "菜式"]) ||
+        readFirstString(recipe, ["recipeCuisine", "cuisine", "style", "菜系", "菜式"]),
+    ),
   );
-  const difficulty = normalizeDifficulty(readFirstValue(tags, ["difficulty", "level", "难度"]));
+  const difficulty = normalizeDifficulty(
+    readFirstValue(tags, ["difficulty", "level", "难度"]) ??
+      readFirstValue(recipe, ["difficulty", "level", "难度"]),
+  );
   const totalTimeMin =
     parseDurationToMinutes(
       readFirstValue(tags, ["totalTimeMin", "totalMinutes", "cookTimeMin", "总时间分钟"]),
     ) ??
     parseDurationToMinutes(
+      readFirstValue(recipe, [
+        "totalTimeMin",
+        "totalMinutes",
+        "cookTimeMin",
+        "prepTimeMin",
+        "总时间分钟",
+      ]),
+    ) ??
+    parseDurationToMinutes(
       readFirstValue(tags, ["totalTime", "cookTime", "time", "总时间", "烹饪时间", "耗时"]),
+    ) ??
+    parseDurationToMinutes(
+      readFirstValue(recipe, [
+        "totalTime",
+        "cookTime",
+        "prepTime",
+        "time",
+        "总时间",
+        "烹饪时间",
+        "耗时",
+      ]),
     );
   const servings = parseServings(
-    readFirstValue(tags, ["servings", "serves", "portion", "份量", "人数"]),
+    readFirstValue(tags, ["servings", "serves", "portion", "份量", "人数"]) ??
+      readFirstValue(recipe, [
+        "recipeYield",
+        "yield",
+        "servings",
+        "serves",
+        "portion",
+        "份量",
+        "人数",
+      ]),
   );
-  const spiceLevel = omitSchemaPlaceholder(readFirstString(tags, ["spiceLevel", "spicy", "辣度"]));
-  const notes = omitSchemaPlaceholder(readFirstString(tags, ["notes", "note", "备注"]));
+  const spiceLevel = omitSchemaPlaceholder(
+    cleanRecipeContentText(readFirstString(tags, ["spiceLevel", "spicy", "辣度"])),
+  );
+  const notes = omitSchemaPlaceholder(
+    cleanRecipeContentText(readFirstString(tags, ["notes", "note", "备注"])),
+  );
 
   return {
     title,
@@ -1239,14 +1612,85 @@ function enrichRecipePayload(
 
     enriched = {
       title: enriched.title || heuristic.title,
-      ingredients:
-        enriched.ingredients.length > 0 ? enriched.ingredients : heuristic.ingredients,
+      ingredients: enriched.ingredients.length > 0 ? enriched.ingredients : heuristic.ingredients,
       steps: enriched.steps.length > 0 ? enriched.steps : heuristic.steps,
       tags: mergeRecipeTags(enriched.tags, heuristic.tags),
     };
   }
 
   return enriched;
+}
+
+const ZH_TAG_TRANSLATIONS: Record<string, string> = {
+  savory: "咸鲜",
+  salty: "咸香",
+  sweet: "甜",
+  spicy: "辣",
+  mild: "清淡",
+  sour: "酸",
+  umami: "鲜味",
+  crispy: "酥脆",
+  tender: "鲜嫩",
+  homey: "家常",
+  homestyle: "家常",
+  chinese: "中式",
+  asian: "亚洲风味",
+};
+
+function localizeShortRecipeText(value: string, language: AppLanguage): string {
+  const content = cleanRecipeContentText(value);
+  if (!content) return "";
+  if (language === "zh") {
+    const translated = ZH_TAG_TRANSLATIONS[content.toLowerCase()];
+    if (translated) return translated;
+  }
+  return omitSchemaPlaceholder(content);
+}
+
+function localizeRecipePayload(recipe: RecipePayload, language: AppLanguage): RecipePayload {
+  const ingredients = recipe.ingredients
+    .map((item) => ({
+      name: localizeShortRecipeText(item.name, language),
+      amount: localizeShortRecipeText(item.amount, language),
+    }))
+    .filter((item) => item.name || item.amount);
+
+  const steps = recipe.steps
+    .map((step, index) => {
+      const description = localizeShortRecipeText(step.description, language);
+      const tips = step.tips ? localizeShortRecipeText(step.tips, language) : "";
+      return {
+        order: index + 1,
+        description,
+        ...(step.durationSec ? { durationSec: step.durationSec } : {}),
+        ...(tips ? { tips } : {}),
+      };
+    })
+    .filter((step) => step.description);
+
+  const flavor = recipe.tags.flavor
+    ?.map((item) => localizeShortRecipeText(item, language))
+    .filter(Boolean);
+  const cuisine = recipe.tags.cuisine ? localizeShortRecipeText(recipe.tags.cuisine, language) : "";
+  const spiceLevel = recipe.tags.spiceLevel
+    ? localizeShortRecipeText(recipe.tags.spiceLevel, language)
+    : "";
+  const notes = recipe.tags.notes ? localizeShortRecipeText(recipe.tags.notes, language) : "";
+
+  return {
+    title: localizeShortRecipeText(recipe.title, language),
+    ingredients,
+    steps,
+    tags: {
+      ...(flavor?.length ? { flavor } : {}),
+      ...(recipe.tags.difficulty ? { difficulty: recipe.tags.difficulty } : {}),
+      ...(cuisine ? { cuisine } : {}),
+      ...(recipe.tags.totalTimeMin ? { totalTimeMin: recipe.tags.totalTimeMin } : {}),
+      ...(recipe.tags.servings ? { servings: recipe.tags.servings } : {}),
+      ...(spiceLevel ? { spiceLevel } : {}),
+      ...(notes ? { notes } : {}),
+    },
+  };
 }
 
 export class LLMService {
@@ -1523,11 +1967,12 @@ ${trimRecipeSourceText(transcript)}`;
       { maxTokens: 1400, responseFormat: "json_object", temperature: 0 },
     );
 
-    return this.parseOrRepairRecipePayload(
+    const recipe = await this.parseOrRepairRecipePayload(
       result,
       "No usable recipe content was extracted from the transcript",
       transcript,
     );
+    return localizeRecipePayload(recipe, language);
   }
 
   private async structureRecipeFromTextInLanguage(
@@ -1574,9 +2019,17 @@ ${trimRecipeSourceText(transcript)}`;
         ? "- 把内容拆成清晰的食材列表和有顺序的步骤。"
         : "- Break the recipe into clear ingredients and ordered steps.",
       language === "zh"
+        ? "- 如果输入来自网页 JSON 或 JSON-LD，只提取实际菜谱值；不要把 @type、@context、recipeIngredient、recipeInstructions、schema 字段名写进标题、食材或步骤。"
+        : "- If the input is web JSON or JSON-LD, extract only actual recipe values; never put @type, @context, recipeIngredient, recipeInstructions, or schema field names into title, ingredients, or steps.",
+      language === "zh"
+        ? "- 食材的 name 只放食材名称，amount 只放数量和单位；不要把整段步骤或 JSON 片段塞进食材字段。"
+        : "- Put only the ingredient name in name and only quantity/unit in amount; do not place full steps or JSON fragments in ingredient fields.",
+      language === "zh"
         ? "- 步骤文字要简洁，适合做菜时朗读。"
         : "- Keep step text concise and readable for cooking playback.",
-      language === "zh" ? "- 输出语言与当前界面语言保持一致。" : "- Match the current interface language.",
+      language === "zh"
+        ? "- 标题、食材、步骤、菜系、口味、辣度、备注都用中文输出；difficulty 只能用 easy、medium、hard。"
+        : "- Match the current interface language for title, ingredients, steps, cuisine, flavor, spice level, and notes; difficulty must be easy, medium, or hard.",
       language === "zh"
         ? "- 只有在文本里有依据时，才补充可推断的可选信息。"
         : "- Infer optional metadata only when reasonably supported by the text.",
@@ -1605,11 +2058,12 @@ ${trimRecipeSourceText(recipeText)}`,
       { maxTokens: 1400, responseFormat: "json_object", temperature: 0 },
     );
 
-    return this.parseOrRepairRecipePayload(
+    const recipe = await this.parseOrRepairRecipePayload(
       result,
       "Failed to parse structured recipe JSON from text input",
       recipeText,
     );
+    return localizeRecipePayload(recipe, language);
   }
 
   async refineRecipeWithAnswers(

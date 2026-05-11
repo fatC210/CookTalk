@@ -345,6 +345,7 @@ function CookPage() {
             currentStep: stepIndex,
             question: transcript,
             language,
+            timers,
           });
           await speak(answer);
           return;
@@ -548,8 +549,8 @@ function CookPage() {
         </div>
       </header>
 
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        <div className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-5xl flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto lg:overflow-y-hidden">
+        <div className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
           <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               {t("cook.stepOf", { current: stepNumber, total: stepCount })}
@@ -570,122 +571,128 @@ function CookPage() {
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-4 py-2 sm:gap-5 sm:py-4">
-            <div className="rounded-[2rem] border border-border bg-card p-5 sm:p-7">
-              <div className="flex items-center justify-between gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
-                  <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
-                  {voiceStatusLabel}
-                </span>
-                <span className="text-xs text-muted-foreground">{t("cook.stepSpokenOnce")}</span>
+          <div className="grid min-h-0 flex-1 gap-4 py-3 sm:gap-5 sm:py-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+            <section className="flex min-h-[24rem] min-w-0 flex-col lg:min-h-0">
+              <div className="flex min-h-0 flex-1 flex-col justify-center rounded-[2rem] border border-border bg-card p-5 sm:p-7 lg:p-8">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
+                    <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
+                    {voiceStatusLabel}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{t("cook.stepSpokenOnce")}</span>
+                </div>
+                <h1 className="mt-5 max-w-full font-display text-[clamp(1.75rem,6.2vw,2.7rem)] font-medium leading-[1.12] tracking-tight md:text-[clamp(2.4rem,4vw,3.8rem)]">
+                  {descMain}
+                  {descHighlight && <span className="text-clay"> {descHighlight}</span>}
+                </h1>
+                {step?.tips && (
+                  <p className="mt-5 inline-flex w-full items-center gap-2 rounded-full bg-accent/40 px-4 py-2 text-xs sm:w-fit sm:text-sm">
+                    <span className="font-medium">{t("cook.tip")}</span> {step.tips}
+                  </p>
+                )}
               </div>
-              <h1 className="mt-4 max-w-full font-display text-[clamp(1.75rem,6.2vw,2.7rem)] font-medium leading-[1.12] tracking-tight md:text-[clamp(2.4rem,4vw,3.8rem)]">
-                {descMain}
-                {descHighlight && <span className="text-clay"> {descHighlight}</span>}
-              </h1>
-              {step?.tips && (
-                <p className="mt-4 inline-flex w-full items-center gap-2 rounded-full bg-accent/40 px-4 py-2 text-xs sm:w-fit sm:text-sm">
-                  <span className="font-medium">{t("cook.tip")}</span> {step.tips}
-                </p>
-              )}
-            </div>
-          </div>
+            </section>
 
-          {activeTimers.length > 0 && (
-            <div className="mt-2 grid shrink-0 gap-3 md:grid-cols-2">
-              {activeTimers.map((timer) => {
-                const progress =
-                  timer.totalSeconds > 0
-                    ? (1 - timer.remainingSeconds / timer.totalSeconds) * 100
-                    : 0;
+            <aside className="flex min-h-0 min-w-0 flex-col gap-4">
+              {activeTimers.length > 0 && (
+                <div className="grid shrink-0 gap-3">
+                  {activeTimers.map((timer) => {
+                    const progress =
+                      timer.totalSeconds > 0
+                        ? (1 - timer.remainingSeconds / timer.totalSeconds) * 100
+                        : 0;
 
-                return (
-                  <div
-                    key={timer.id}
-                    className="relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div
-                      className="absolute left-0 top-0 h-full bg-clay/15 transition-all"
-                      style={{ width: `${progress}%` }}
-                      aria-hidden
-                    />
-                    <div className="relative flex items-center gap-3">
-                      <Timer className="h-5 w-5 text-clay" strokeWidth={1.5} />
-                      <div>
-                        <div className="text-xs text-muted-foreground">{timer.label}</div>
-                        <div className="font-display text-3xl tabular-nums">
-                          {formatTimer(timer.remainingSeconds)}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="relative flex flex-col items-start gap-1 sm:items-end">
-                      <VoiceHint>
-                        {t("cook.addTime")} / {t("cook.cancel")}
-                      </VoiceHint>
-                      <button
-                        onClick={() => {
-                          cancelTimer(timer.id);
-                          updateLatestState({
-                            timers: latestStateRef.current.timers.filter(
-                              (item) => item.id !== timer.id,
-                            ),
-                          });
-                          void speak(
-                            language === "zh"
-                              ? `${timer.label}已取消。`
-                              : `${timer.label} cancelled.`,
-                          );
-                        }}
-                        className="mt-1 rounded-full border border-border px-3 py-1 text-xs hover:bg-foreground hover:text-background"
+                    return (
+                      <div
+                        key={timer.id}
+                        className="relative flex min-h-[7rem] flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-card p-5"
                       >
-                        {t("cook.cancel").replaceAll('"', "")}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="mt-3 min-h-0 min-w-0 shrink-0 rounded-[2rem] border border-border bg-card p-4 sm:p-5">
-            <div className="flex items-center gap-2">
-              <MessageCircle className="h-4 w-4 text-clay" strokeWidth={1.75} />
-              <div className="text-sm font-medium">{t("cook.voiceQa")}</div>
-            </div>
-            <div className="mt-4 flex min-w-0 max-h-[18rem] flex-col gap-3 overflow-x-hidden overflow-y-auto pr-1">
-              {qaMessages.map((message) => {
-                const isAssistant = message.speaker === "assistant";
-                return (
-                  <div
-                    key={message.id}
-                    className="min-w-0 overflow-hidden rounded-[1.75rem] border-2 border-foreground/85 bg-background px-4 py-3 sm:px-5"
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="mt-0.5 h-7 w-7 shrink-0 rounded-full border-2 border-foreground/85 bg-background" />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-base font-semibold leading-none">
-                          {isAssistant ? "cooktalk" : t("cook.youLabel")}
+                        <div
+                          className="absolute left-0 top-0 h-full bg-clay/15 transition-all"
+                          style={{ width: `${progress}%` }}
+                          aria-hidden
+                        />
+                        <div className="relative flex items-center gap-3">
+                          <Timer className="h-5 w-5 text-clay" strokeWidth={1.5} />
+                          <div className="min-w-0">
+                            <div className="truncate text-xs text-muted-foreground">
+                              {timer.label}
+                            </div>
+                            <div className="font-display text-3xl tabular-nums">
+                              {formatTimer(timer.remainingSeconds)}
+                            </div>
+                          </div>
                         </div>
-                        <p className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm text-foreground/90 sm:text-base">
-                          {message.text}
-                        </p>
+                        <div className="relative flex items-center justify-between gap-3">
+                          <VoiceHint>
+                            {t("cook.addTime")} / {t("cook.cancel")}
+                          </VoiceHint>
+                          <button
+                            onClick={() => {
+                              cancelTimer(timer.id);
+                              updateLatestState({
+                                timers: latestStateRef.current.timers.filter(
+                                  (item) => item.id !== timer.id,
+                                ),
+                              });
+                              void speak(
+                                language === "zh"
+                                  ? `${timer.label}已取消。`
+                                  : `${timer.label} cancelled.`,
+                              );
+                            }}
+                            className="shrink-0 rounded-full border border-border px-3 py-1 text-xs hover:bg-foreground hover:text-background"
+                          >
+                            {t("cook.cancel").replaceAll('"', "")}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {(voiceError || error) && (
-                <p className="px-1 text-xs text-destructive">{voiceError || error}</p>
+                    );
+                  })}
+                </div>
               )}
-              {!voiceError && !error && qaMessages.length === 0 && (
-                <p className="px-1 text-sm text-muted-foreground">{t("cook.voiceQaBody")}</p>
-              )}
-            </div>
+
+              <div className="flex min-h-[20rem] min-w-0 flex-1 flex-col rounded-[2rem] border border-border bg-card p-4 sm:p-5 lg:min-h-0">
+                <div className="flex shrink-0 items-center gap-2">
+                  <MessageCircle className="h-4 w-4 text-clay" strokeWidth={1.75} />
+                  <div className="text-sm font-medium">{t("cook.voiceQa")}</div>
+                </div>
+                <div className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto pr-1">
+                  {qaMessages.map((message) => {
+                    const isAssistant = message.speaker === "assistant";
+                    return (
+                      <div
+                        key={message.id}
+                        className="min-w-0 overflow-hidden rounded-[1.5rem] border-2 border-foreground/85 bg-background px-4 py-3"
+                      >
+                        <div className="flex min-w-0 items-start gap-3">
+                          <span className="mt-0.5 h-7 w-7 shrink-0 rounded-full border-2 border-foreground/85 bg-background" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-base font-semibold leading-none">
+                              {isAssistant ? "cooktalk" : t("cook.youLabel")}
+                            </div>
+                            <p className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm text-foreground/90">
+                              {message.text}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {(voiceError || error) && (
+                    <p className="px-1 text-xs text-destructive">{voiceError || error}</p>
+                  )}
+                  {!voiceError && !error && qaMessages.length === 0 && (
+                    <p className="px-1 text-sm text-muted-foreground">{t("cook.voiceQaBody")}</p>
+                  )}
+                </div>
+              </div>
+            </aside>
           </div>
         </div>
 
         <div className="shrink-0 border-t border-border/60 bg-card/50">
-          <div className="mx-auto flex max-w-5xl items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
+          <div className="mx-auto flex max-w-7xl items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
             <button
               onClick={() => {
                 const target = Math.min(safeStep + 1, Math.max(stepCount - 1, 0));

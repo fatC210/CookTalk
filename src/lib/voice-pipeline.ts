@@ -47,6 +47,12 @@ interface AnswerCookingQuestionOptions {
   currentStep: number;
   question: string;
   language?: "en" | "zh";
+  timers?: Array<{
+    label: string;
+    remainingSeconds: number;
+    totalSeconds: number;
+    isRunning: boolean;
+  }>;
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognition;
@@ -214,6 +220,7 @@ export async function answerCookingQuestion({
   currentStep,
   question,
   language = "zh",
+  timers = [],
 }: AnswerCookingQuestionOptions): Promise<string> {
   const service = await getConfiguredLLMService();
   if (!service) {
@@ -221,6 +228,8 @@ export async function answerCookingQuestion({
   }
 
   const activeStep = recipe.steps[currentStep];
+  const previousStep = currentStep > 0 ? recipe.steps[currentStep - 1] : undefined;
+  const nextStep = recipe.steps[currentStep + 1];
   const context = recipe.steps
     .map(
       (step, index) =>
@@ -229,6 +238,19 @@ export async function answerCookingQuestion({
         }`,
     )
     .join("\n");
+  const timerContext =
+    timers.length > 0
+      ? timers
+          .map((timer) =>
+            `${timer.label}: ${formatDurationForSpeech(
+              timer.remainingSeconds,
+              language,
+            )} ${timer.isRunning ? (language === "zh" ? "剩余" : "remaining") : ""}`.trim(),
+          )
+          .join(language === "zh" ? "；" : "; ")
+      : language === "zh"
+        ? "当前没有运行中的计时器"
+        : "No active timers";
 
   try {
     return await service.chat([
@@ -236,19 +258,41 @@ export async function answerCookingQuestion({
         role: "system",
         content:
           language === "zh"
-            ? "你是 CookTalk 烹饪语音助手。用中文简短回答，优先结合当前菜谱、当前步骤、食材和计时信息。不要输出 Markdown。"
-            : "You are CookTalk's cooking voice assistant. Answer briefly in English, prioritizing the current recipe, current step, ingredients, and timers. Do not output Markdown.",
+            ? "你是 CookTalk 烹饪模式里的陪伴型厨房助手，正在用户身边陪他一步一步做菜。回答必须优先围绕当前正在做的步骤，结合前后步骤、食材、火候、时间和正在运行的计时器给出可执行建议。语气自然、简短、像现场提醒，不要输出 Markdown。除非用户明确问整道菜，否则不要跳开当前步骤泛泛解释。"
+            : "You are CookTalk's companion-style kitchen assistant in cooking mode, staying beside the user while they cook step by step. Always anchor the answer in the current active step, using nearby steps, ingredients, heat, timing, and active timers to give practical guidance. Keep it brief and natural, like an in-the-moment kitchen prompt. Do not output Markdown. Unless the user asks about the whole recipe, do not drift away from the current step.",
       },
       {
         role: "user",
         content:
           language === "zh"
-            ? `菜谱：${recipe.title}\n当前步骤：第 ${currentStep + 1} 步，${activeStep?.description ?? ""}\n食材：${recipe.ingredients
+            ? `菜谱：${recipe.title}
+用户当前正在做：第 ${currentStep + 1} 步，共 ${recipe.steps.length} 步
+当前步骤：${activeStep?.description ?? ""}
+当前步骤提示：${activeStep?.tips ?? "无"}
+上一步：${previousStep?.description ?? "无"}
+下一步：${nextStep?.description ?? "无"}
+计时器：${timerContext}
+食材：${recipe.ingredients
                 .map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
-                .join("、")}\n全部步骤：\n${context}\n\n用户问题：${question}`
-            : `Recipe: ${recipe.title}\nCurrent step: step ${currentStep + 1}, ${activeStep?.description ?? ""}\nIngredients: ${recipe.ingredients
+                .join("、")}
+全部步骤：
+${context}
+
+用户问题：${question}`
+            : `Recipe: ${recipe.title}
+User is currently doing: step ${currentStep + 1} of ${recipe.steps.length}
+Current step: ${activeStep?.description ?? ""}
+Current step tip: ${activeStep?.tips ?? "none"}
+Previous step: ${previousStep?.description ?? "none"}
+Next step: ${nextStep?.description ?? "none"}
+Timers: ${timerContext}
+Ingredients: ${recipe.ingredients
                 .map((item) => `${item.name}${item.amount ? ` ${item.amount}` : ""}`)
-                .join(", ")}\nAll steps:\n${context}\n\nUser question: ${question}`,
+                .join(", ")}
+All steps:
+${context}
+
+User question: ${question}`,
       },
     ]);
   } catch {
