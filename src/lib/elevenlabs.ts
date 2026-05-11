@@ -38,8 +38,8 @@ export class ElevenLabsService {
     });
 
     if (!response.ok) throw new Error(await buildElevenLabsError("STT failed", response));
-    const data = (await response.json()) as { text: string };
-    return data.text;
+    const data = (await response.json()) as { text?: string };
+    return data.text ?? "";
   }
 
   async textToSpeech(text: string, voiceId: string): Promise<Blob> {

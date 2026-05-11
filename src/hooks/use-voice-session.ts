@@ -96,8 +96,7 @@ export function useVoiceSession({
     !!navigator.mediaDevices?.getUserMedia;
 
   const voiceT = useCallback(
-    (key: string, options?: Record<string, unknown>) =>
-      i18n.t(key, { lng: language, ...options }),
+    (key: string, options?: Record<string, unknown>) => i18n.t(key, { lng: language, ...options }),
     [language],
   );
 
@@ -352,8 +351,8 @@ export function useVoiceSession({
       if (["no-speech", "aborted"].includes(event.error)) return;
       const message =
         event.error === "not-allowed"
-          ? voiceT("voice.micDenied")
-          : voiceT("voice.listeningError", { error: event.error });
+          ? i18n.t("voice.micDenied", { lng: language })
+          : i18n.t("voice.listeningError", { error: event.error, lng: language });
       setError(message);
       onErrorRef.current?.(message);
     };

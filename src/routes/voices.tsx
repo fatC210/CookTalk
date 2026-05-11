@@ -33,7 +33,13 @@ import {
   useElevenLabsVoices,
 } from "@/hooks/use-elevenlabs-voices";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useTranslation } from "react-i18next";
 import { claimVoicePlayback, type VoicePlaybackHandle } from "@/lib/voice-playback";
 import { useAppStore } from "@/stores/app-store";
@@ -881,6 +887,7 @@ function VoicesPage() {
             <DialogTitle className="font-display text-xl sm:text-2xl">
               {t("voices.cloneDialogTitle")}
             </DialogTitle>
+            <DialogDescription>{t("voices.cloneDialogDescription")}</DialogDescription>
           </DialogHeader>
 
           {/* Step 1: Record or upload */}

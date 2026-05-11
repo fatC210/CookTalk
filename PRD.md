@@ -506,9 +506,17 @@ LLM 结构化为 Recipe JSON
 - 设置页配置生图 API（**自定义 OpenAI 兼容 endpoint** + Key + Model）
 - 默认 Prompt 模板：
   ```
-  A high-quality, appetizing top-down food photography of {dish_name}, 
-  on a clean ceramic plate, natural lighting, shallow depth of field, 
-  professional food magazine style, no text, no watermark.
+  Create a mouthwatering, realistic cover photo of the finished dish: {dish_name}.
+  The dish should look freshly cooked, hot, juicy, glossy, and ready to eat,
+  with visible texture, sauce, herbs, garnish, steam, and rich natural color.
+  Use professional restaurant food photography with warm side lighting,
+  shallow depth of field, crisp focus on the food, a clean ceramic plate or bowl,
+  and a simple elegant tabletop.
+  Frame it as an app cover image: square 1:1 composition, the plated dish is
+  the clear hero and fills most of the frame, no people, no hands, no utensils
+  blocking the dish.
+  Do not show raw ingredients as the main subject. No text, no logo, no watermark,
+  no menu card, no packaging, no distorted food, no unappetizing colors.
   ```
 - 语音"重新生成封面" → 用默认 prompt
 - 语音"用复古风格生成封面" → 用自然语言定制 prompt

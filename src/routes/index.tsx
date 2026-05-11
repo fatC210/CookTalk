@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
-import { ChefHat, Clock, Mic, Send, Trash2, Volume2, VolumeX, Waves } from "lucide-react";
+import { CheckCircle2, ChefHat, Clock, Loader2, Mic, Send, Trash2, Volume2, VolumeX, Waves } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -72,6 +72,25 @@ type WebRecipeSearchResponse = {
   }>;
 };
 
+type WebRecipeContentResponse = {
+  title?: unknown;
+  url?: unknown;
+  text?: unknown;
+  error?: unknown;
+};
+
+type RecipeImportProgressStep = {
+  id: "fetching" | "structuring" | "saving" | "opening";
+  label: string;
+  status: "pending" | "active" | "done";
+};
+
+type RecipeImportProgress = {
+  title: string;
+  detail: string;
+  steps: RecipeImportProgressStep[];
+};
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -80,6 +99,7 @@ type ChatMessage = {
   displayText?: string;
   createdAt: Date;
   recipes?: ChatRecipe[];
+  progress?: RecipeImportProgress;
   isReading?: boolean;
 };
 
@@ -131,6 +151,16 @@ const ASSISTANT_COPY: Record<
     recommendations: string;
     recipeSaved: (title: string) => string;
     recipeSaveFailed: string;
+    webRecipeImportTitle: (title: string) => string;
+    webRecipeImportStarted: string;
+    webRecipeImportFetching: string;
+    webRecipeImportStructuring: string;
+    webRecipeImportSaving: string;
+    webRecipeImportOpeningDetail: string;
+    webRecipeImportOpeningCook: string;
+    webRecipeImportDone: (title: string) => string;
+    webRecipeDetailDone: (title: string) => string;
+    webRecipeImportFailed: string;
     noRecipeDraft: string;
     stayHere: string;
     emptyReply: string;
@@ -168,6 +198,16 @@ const ASSISTANT_COPY: Record<
     recommendations: "根据你的菜谱库和当前口味，我推荐这几道：",
     recipeSaved: (title) => `已整理并上传到菜谱「${title}」。`,
     recipeSaveFailed: "整理并上传菜谱失败，请稍后再试。",
+    webRecipeImportTitle: (title) => `正在整理「${title}」`,
+    webRecipeImportStarted: "我会先读取网页菜谱，整理步骤，保存到你的菜谱库，然后进入烹饪模式。",
+    webRecipeImportFetching: "读取网页内容",
+    webRecipeImportStructuring: "整理食材和步骤",
+    webRecipeImportSaving: "保存到我的菜谱",
+    webRecipeImportOpeningDetail: "打开菜谱详情",
+    webRecipeImportOpeningCook: "进入烹饪模式",
+    webRecipeImportDone: (title) => `已保存「${title}」，正在进入烹饪模式。`,
+    webRecipeDetailDone: (title) => `已保存「${title}」，正在打开菜谱详情。`,
+    webRecipeImportFailed: "网页菜谱整理失败。你可以先打开网页查看，或换一个搜索结果再试。",
     noRecipeDraft: "我还没有可上传或开始烹饪的做菜方案。请先让我生成一道菜的做法。",
     stayHere: "好的，我会留在这里。需要时直接说菜名、口味，或让我从网页搜索菜谱。",
     emptyReply: "我刚才没组织好回答，你可以换个说法再问一次，我会按做菜场景继续帮你。",
@@ -211,6 +251,18 @@ const ASSISTANT_COPY: Record<
     recommendations: "Based on your recipe library and current taste, I recommend these:",
     recipeSaved: (title) => `Structured and saved “${title}” to your recipes.`,
     recipeSaveFailed: "Failed to structure and save the recipe. Please try again.",
+    webRecipeImportTitle: (title) => `Preparing “${title}”`,
+    webRecipeImportStarted:
+      "I'll read the web recipe, structure the steps, save it to your recipes, then open cooking mode.",
+    webRecipeImportFetching: "Reading the web page",
+    webRecipeImportStructuring: "Structuring ingredients and steps",
+    webRecipeImportSaving: "Saving to your recipes",
+    webRecipeImportOpeningDetail: "Opening recipe details",
+    webRecipeImportOpeningCook: "Opening cooking mode",
+    webRecipeImportDone: (title) => `Saved “${title}” and opening cooking mode.`,
+    webRecipeDetailDone: (title) => `Saved “${title}” and opening recipe details.`,
+    webRecipeImportFailed:
+      "Failed to structure this web recipe. Open the page directly or try another result.",
     noRecipeDraft:
       "I don't have a recipe plan to save or start yet. Ask me to create a dish plan first.",
     stayHere:
@@ -251,6 +303,8 @@ type AssistantAudioReveal = {
   baseText: string;
   segmentText: string;
 };
+
+const CHAT_SCROLL_BOTTOM_THRESHOLD_PX = 96;
 
 function buildRecipeLibraryContext(recipes: Recipe[], language: AppLanguage): string {
   if (recipes.length === 0) {
@@ -451,6 +505,7 @@ function HomePage() {
   const assistantRunRef = useRef<string | null>(null);
   const commandTurnRef = useRef(0);
   const mutedMessageIdRef = useRef<string | null>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   const currentStatus = isAssistantLoading
     ? "thinking"
@@ -496,9 +551,29 @@ function HomePage() {
     return () => window.removeEventListener("cooktalk:voice-status", handleVoiceStatus);
   }, [assistantStatus]);
 
+  const scrollConversationToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+
+    scrollElement.scrollTo({
+      top: scrollElement.scrollHeight,
+      behavior,
+    });
+  }, []);
+
+  const handleConversationScroll = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+
+    const distanceFromBottom =
+      scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom <= CHAT_SCROLL_BOTTOM_THRESHOLD_PX;
+  }, []);
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [isAssistantLoading, messages]);
+    if (!shouldAutoScrollRef.current) return;
+    scrollConversationToBottom();
+  }, [isAssistantLoading, messages, scrollConversationToBottom]);
 
   useEffect(() => {
     mutedMessageIdRef.current = mutedMessageId;
@@ -950,12 +1025,15 @@ function HomePage() {
   );
 
   const structureAndSaveRecipeDraft = useCallback(
-    async (draftText: string): Promise<Recipe> => {
+    async (draftText: string, options: { sourceUrl?: string; fallbackTitle?: string } = {}): Promise<Recipe> => {
       const service = await getConfiguredLLMService();
       if (!service) throw new Error(assistantCopy.llmKeyRequired);
 
       const draft = (await service.structureRecipeFromText(draftText)) as StructuredRecipeDraft;
-      const title = draft.title?.trim() || i18n.t("import.untitledRecipe", { lng: language });
+      const title =
+        draft.title?.trim() ||
+        options.fallbackTitle?.trim() ||
+        i18n.t("import.untitledRecipe", { lng: language });
       const ingredients = (draft.ingredients ?? [])
         .map((ingredient) => ({
           name: ingredient.name?.trim() ?? "",
@@ -979,6 +1057,7 @@ function HomePage() {
         steps,
         tags: draft.tags ?? {},
         coverSource: "default",
+        sourceUrl: options.sourceUrl,
         rawTranscript: draftText,
         id: crypto.randomUUID(),
         createdAt: Date.now(),
@@ -988,6 +1067,152 @@ function HomePage() {
       return recipe;
     },
     [assistantCopy.llmKeyRequired, assistantCopy.recipeSaveFailed, language],
+  );
+
+  const createWebRecipeProgress = useCallback(
+    (
+      title: string,
+      activeStep: RecipeImportProgressStep["id"],
+      detail = assistantCopy.webRecipeImportStarted,
+    ): RecipeImportProgress => {
+      const stepIds: RecipeImportProgressStep["id"][] = [
+        "fetching",
+        "structuring",
+        "saving",
+        "opening",
+      ];
+      const labels: Record<RecipeImportProgressStep["id"], string> = {
+        fetching: assistantCopy.webRecipeImportFetching,
+        structuring: assistantCopy.webRecipeImportStructuring,
+        saving: assistantCopy.webRecipeImportSaving,
+        opening: assistantCopy.webRecipeImportOpeningCook,
+      };
+      const activeIndex = stepIds.indexOf(activeStep);
+
+      return {
+        title: assistantCopy.webRecipeImportTitle(title),
+        detail,
+        steps: stepIds.map((id, index) => ({
+          id,
+          label: labels[id],
+          status: index < activeIndex ? "done" : index === activeIndex ? "active" : "pending",
+        })),
+      };
+    },
+    [assistantCopy],
+  );
+
+  const importWebRecipe = useCallback(
+    async (
+      chatRecipe: ChatRecipe,
+      options: { startCooking?: boolean; openDetail?: boolean } = {},
+    ) => {
+      if (!chatRecipe.sourceUrl) {
+        pushAssistant({ kind: "guide", text: assistantCopy.webResultOnly(chatRecipe.title) });
+        return;
+      }
+
+      if (!hasLlmKey) {
+        promptConfigureLlmKey();
+        return;
+      }
+
+      stopAssistantPlayback(true);
+      setAssistantLoading(false);
+      setAssistantStatus("thinking");
+
+      const progressMessage = addMessage({
+        role: "assistant",
+        kind: "text",
+        text: assistantCopy.webRecipeImportStarted,
+        displayText: assistantCopy.webRecipeImportStarted,
+        progress: createWebRecipeProgress(chatRecipe.title, "fetching"),
+      });
+
+      const setProgress = (
+        step: RecipeImportProgressStep["id"],
+        detail = assistantCopy.webRecipeImportStarted,
+      ) => {
+        updateMessage(progressMessage.id, {
+          text: detail,
+          displayText: detail,
+          progress: createWebRecipeProgress(chatRecipe.title, step, detail),
+        });
+      };
+
+      try {
+        setProgress("fetching");
+        const page = await fetchWebRecipeContent(chatRecipe.sourceUrl);
+        const sourceTitle = page.title || chatRecipe.title;
+        const sourceUrl = page.url || chatRecipe.sourceUrl;
+        const sourceText = [
+          `Source title: ${sourceTitle}`,
+          `Source URL: ${sourceUrl}`,
+          "",
+          page.text,
+        ].join("\n");
+
+        setProgress("structuring");
+        const recipe = await structureAndSaveRecipeDraft(sourceText, {
+          sourceUrl,
+          fallbackTitle: sourceTitle,
+        });
+
+        setProgress("saving");
+        setLatestRecipes([recipeToChatRecipe(recipe)]);
+
+        const doneText = options.startCooking
+          ? assistantCopy.webRecipeImportDone(recipe.title)
+          : assistantCopy.webRecipeDetailDone(recipe.title);
+        const openingProgress = createWebRecipeProgress(chatRecipe.title, "opening", doneText);
+        openingProgress.steps = openingProgress.steps.map((step) =>
+          step.id === "opening"
+            ? {
+                ...step,
+                label: options.startCooking
+                  ? assistantCopy.webRecipeImportOpeningCook
+                  : assistantCopy.webRecipeImportOpeningDetail,
+              }
+            : step,
+        );
+        updateMessage(progressMessage.id, {
+          text: doneText,
+          displayText: doneText,
+          kind: "confirm",
+          progress: openingProgress,
+        });
+
+        window.setTimeout(() => {
+          stopAssistantPlayback(true);
+          void navigate({
+            to: options.startCooking ? "/cook" : "/recipe-detail",
+            search: { id: recipe.id },
+          });
+        }, 500);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : assistantCopy.webRecipeImportFailed;
+        updateMessage(progressMessage.id, {
+          text: assistantCopy.webRecipeImportFailed,
+          displayText: assistantCopy.webRecipeImportFailed,
+          kind: "guide",
+          progress: undefined,
+        });
+        toast.error(message);
+        setAssistantStatus("idle");
+      }
+    },
+    [
+      addMessage,
+      assistantCopy,
+      createWebRecipeProgress,
+      hasLlmKey,
+      navigate,
+      promptConfigureLlmKey,
+      pushAssistant,
+      stopAssistantPlayback,
+      structureAndSaveRecipeDraft,
+      updateMessage,
+    ],
   );
 
   const handleSaveLatestRecipeDraft = useCallback(
@@ -1040,11 +1265,7 @@ function HomePage() {
       }
 
       if (chatRecipe.sourceUrl) {
-        window.open(chatRecipe.sourceUrl, "_blank", "noopener,noreferrer");
-        pushAssistant({
-          kind: "confirm",
-          text: assistantCopy.openedWebResult(chatRecipe.title),
-        });
+        void importWebRecipe(chatRecipe, { openDetail: true });
         return;
       }
 
@@ -1053,7 +1274,7 @@ function HomePage() {
         text: assistantCopy.webResultOnly(chatRecipe.title),
       });
     },
-    [assistantCopy, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
+    [assistantCopy, importWebRecipe, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
   );
 
   const handleStartCooking = useCallback(
@@ -1068,11 +1289,7 @@ function HomePage() {
       }
 
       if (chatRecipe.sourceUrl) {
-        window.open(chatRecipe.sourceUrl, "_blank", "noopener,noreferrer");
-        pushAssistant({
-          kind: "guide",
-          text: assistantCopy.openedWebCookGuide(chatRecipe.title),
-        });
+        void importWebRecipe(chatRecipe, { startCooking: true });
         return;
       }
 
@@ -1081,7 +1298,7 @@ function HomePage() {
         text: assistantCopy.webCookGuide(chatRecipe.title),
       });
     },
-    [assistantCopy, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
+    [assistantCopy, importWebRecipe, navigate, pushAssistant, recipeLookup, stopAssistantPlayback],
   );
 
   const handleAwakeReady = useCallback(() => {
@@ -1142,6 +1359,7 @@ function HomePage() {
 
       const turnId = commandTurnRef.current + 1;
       commandTurnRef.current = turnId;
+      shouldAutoScrollRef.current = true;
       const userMessage = addMessage({ role: "user", kind: "text", text });
       const conversationMessages = [...messages, userMessage];
       setAssistantLoading(true);
@@ -1150,6 +1368,19 @@ function HomePage() {
       window.setTimeout(() => {
         void (async () => {
           if (commandTurnRef.current !== turnId) return;
+
+          const selectedIndex = findRecipeNumber(text);
+          const selectedRecipe = selectedIndex == null ? null : latestRecipes[selectedIndex];
+
+          if (selectedRecipe && /(看|查看|详情|打开|介绍)/i.test(text)) {
+            handleOpenRecipe(selectedRecipe);
+            return;
+          }
+
+          if (selectedRecipe && /(开始|做|烹饪|煮)/i.test(text)) {
+            handleStartCooking(selectedRecipe);
+            return;
+          }
 
           if (
             /(网页|网上|联网|搜索|搜一下|查一下|web|online|internet)/i.test(text) &&
@@ -1176,10 +1407,9 @@ function HomePage() {
           }
 
           if (/(开始|进入).*(烹饪|烹调|做菜|cooking)|start cooking|cooking mode/i.test(text)) {
-            const selectedIndex = findRecipeNumber(text);
-            const selectedRecipe = selectedIndex == null ? latestRecipes[0] : latestRecipes[selectedIndex];
-            if (selectedRecipe?.source === "local") {
-              handleStartCooking(selectedRecipe);
+            const targetRecipe = selectedRecipe ?? latestRecipes[0];
+            if (targetRecipe) {
+              handleStartCooking(targetRecipe);
               return;
             }
             if (!hasLlmKey) {
@@ -1245,18 +1475,6 @@ function HomePage() {
               stopAssistantPlayback(true);
               void navigate({ to: "/recipes" });
             }, 450);
-            return;
-          }
-
-          const selectedIndex = findRecipeNumber(text);
-          const selectedRecipe = selectedIndex == null ? null : latestRecipes[selectedIndex];
-          if (selectedRecipe && /(开始|做|烹饪|煮)/i.test(text)) {
-            handleStartCooking(selectedRecipe);
-            return;
-          }
-
-          if (selectedRecipe && /(看|详情|打开|介绍)/i.test(text)) {
-            handleOpenRecipe(selectedRecipe);
             return;
           }
 
@@ -1400,7 +1618,11 @@ function HomePage() {
             </div>
           )}
 
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto py-3 sm:py-4">
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain py-3 sm:py-4"
+            onScroll={handleConversationScroll}
+          >
             {messages.length === 0 ? (
               <WelcomePanel />
             ) : (
@@ -1575,7 +1797,7 @@ function MessageBubble({
     );
   }
 
-  if (!hasAssistantText && !message.recipes?.length) {
+  if (!hasAssistantText && !message.recipes?.length && !message.progress) {
     return null;
   }
 
@@ -1588,8 +1810,15 @@ function MessageBubble({
           </p>
         )}
 
+        {message.progress && (
+          <RecipeImportProgressPanel
+            progress={message.progress}
+            className={cn(hasAssistantText && "mt-4")}
+          />
+        )}
+
         {message.recipes && message.recipes.length > 0 && (
-          <div className={cn("space-y-3", hasAssistantText && "mt-4")}>
+          <div className={cn("space-y-3", (hasAssistantText || message.progress) && "mt-4")}>
             {message.recipes.map((recipe, index) => (
               <RecipeResultCard
                 key={`${recipe.id}-${index}`}
@@ -1615,6 +1844,62 @@ function MessageBubble({
         {formatTime(message.createdAt, activeI18n.language)}
       </time>
     </article>
+  );
+}
+
+function RecipeImportProgressPanel({
+  progress,
+  className,
+}: {
+  progress: RecipeImportProgress;
+  className?: string;
+}) {
+  const completed = progress.steps.filter((step) => step.status === "done").length;
+  const activeIndex = progress.steps.findIndex((step) => step.status === "active");
+  const visualProgress =
+    ((activeIndex >= 0 ? activeIndex + 0.45 : completed) / progress.steps.length) * 100;
+
+  return (
+    <div className={cn("rounded-2xl border border-border bg-background/70 p-3", className)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-foreground">{progress.title}</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{progress.detail}</p>
+        </div>
+        <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-clay" />
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div
+          className="h-full rounded-full bg-clay transition-all duration-300"
+          style={{ width: `${Math.max(8, Math.min(100, visualProgress))}%` }}
+        />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        {progress.steps.map((step) => (
+          <div
+            key={step.id}
+            className={cn(
+              "flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px]",
+              step.status === "done" &&
+                "border-clay/20 bg-accent/35 font-medium text-clay",
+              step.status === "active" &&
+                "border-clay/35 bg-background font-medium text-foreground shadow-sm",
+              step.status === "pending" &&
+                "border-border/70 bg-secondary/50 text-muted-foreground",
+            )}
+          >
+            {step.status === "done" ? (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+            ) : step.status === "active" ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-current opacity-40" />
+            )}
+            <span className="truncate">{step.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1694,16 +1979,14 @@ function RecipeResultCard({
             >
               {t("home.chat.open")}
             </Button>
-            {recipe.source === "local" && (
-              <Button
-                type="button"
-                size="sm"
-                className="h-8 rounded-full px-3 sm:min-w-[72px]"
-                onClick={onStart}
-              >
-                {t("home.chat.startCooking")}
-              </Button>
-            )}
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-full px-3 sm:min-w-[72px]"
+              onClick={onStart}
+            >
+              {t("home.chat.startCooking")}
+            </Button>
           </div>
         </div>
       </div>
@@ -1792,6 +2075,33 @@ async function fetchWebRecipeCards(query: string, language: AppLanguage): Promis
   } catch {
     return [];
   }
+}
+
+async function fetchWebRecipeContent(sourceUrl: string): Promise<{
+  title: string;
+  url: string;
+  text: string;
+}> {
+  const url = new URL("/api/web-recipe-content", window.location.origin);
+  url.searchParams.set("url", sourceUrl);
+
+  const response = await fetch(url);
+  const data = (await response.json().catch(() => ({}))) as WebRecipeContentResponse;
+
+  if (!response.ok) {
+    const message = typeof data.error === "string" ? data.error : "Failed to fetch recipe page";
+    throw new Error(message);
+  }
+
+  if (typeof data.text !== "string" || !data.text.trim()) {
+    throw new Error("Recipe page did not contain readable recipe text");
+  }
+
+  return {
+    title: typeof data.title === "string" ? data.title.trim() : "",
+    url: typeof data.url === "string" ? data.url : sourceUrl,
+    text: data.text.trim(),
+  };
 }
 
 function cleanRecipeSearchKeyword(query: string): string {

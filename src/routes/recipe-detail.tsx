@@ -148,6 +148,10 @@ function DetailPage() {
   const [editSteps, setEditSteps] = useState<EditStep[]>([createEmptyStep()]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [expandedCoverPreview, setExpandedCoverPreview] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   useEffect(() => {
     document.title = recipe?.title ? `${recipe.title} - CookTalk` : t("recipeDetail.metaTitle");
@@ -336,7 +340,10 @@ function DetailPage() {
       await db.recipes.update(id, { coverImage: cover, coverSource: "ai" });
       toast.success(t("import.coverGenerated"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("import.coverGenerationWarning"));
+      const status =
+        error instanceof Error ? error.message.match(/Image gen failed:\s*(\d+)/i)?.[1] : null;
+      console.warn("Cover generation failed", status ? { status } : undefined);
+      toast.error(t("import.coverGenerationFailed"));
     } finally {
       setIsGeneratingCover(false);
     }
@@ -680,11 +687,15 @@ function DetailPage() {
                   onChange={handleCoverInputChange}
                 />
                 {coverUrl ? (
-                  <img
-                    src={coverUrl}
-                    alt={title}
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
+                  <button
+                    type="button"
+                    aria-label={t("recipeDetail.coverPreviewOpen")}
+                    title={t("recipeDetail.coverPreviewOpen")}
+                    onClick={() => setExpandedCoverPreview({ src: coverUrl, alt: title })}
+                    className="absolute inset-0 cursor-zoom-in overflow-hidden text-left"
+                  >
+                    <img src={coverUrl} alt={title} className="h-full w-full object-cover" />
+                  </button>
                 ) : (
                   <>
                     <div className="absolute inset-0 grain opacity-50" aria-hidden />
@@ -694,12 +705,15 @@ function DetailPage() {
                     />
                   </>
                 )}
-                <div className="absolute right-4 top-4 flex gap-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/cover:opacity-100">
+                <div className="pointer-events-none absolute right-4 top-4 z-20 flex gap-2 opacity-0 transition-opacity group-hover/cover:pointer-events-auto group-hover/cover:opacity-100 group-focus-within/cover:pointer-events-auto group-focus-within/cover:opacity-100">
                   <button
                     type="button"
                     aria-label={t("recipeDetail.uploadCover")}
                     title={t("recipeDetail.uploadCover")}
-                    onClick={() => coverInputRef.current?.click()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      coverInputRef.current?.click();
+                    }}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background"
                   >
                     <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
@@ -708,7 +722,10 @@ function DetailPage() {
                     type="button"
                     aria-label={t("recipeDetail.aiGenerateCover")}
                     title={t("recipeDetail.aiGenerateCover")}
-                    onClick={() => void handleGenerateCover()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleGenerateCover();
+                    }}
                     disabled={isGeneratingCover}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
                   >
@@ -719,7 +736,7 @@ function DetailPage() {
                     )}
                   </button>
                 </div>
-                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between rounded-2xl bg-background/80 px-4 py-3 backdrop-blur">
+                <div className="pointer-events-none absolute bottom-4 left-4 right-4 z-10 flex items-center justify-between rounded-2xl bg-background/80 px-4 py-3 backdrop-blur">
                   <div className="text-xs">
                     <div className="text-muted-foreground">{coverLabel}</div>
                   </div>
@@ -1026,6 +1043,27 @@ function DetailPage() {
               {isSavingEdit ? t("import.saving") : t("common.save")}
             </button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(expandedCoverPreview)}
+        onOpenChange={(open) => {
+          if (!open) setExpandedCoverPreview(null);
+        }}
+      >
+        <DialogContent className="max-h-[92vh] max-w-5xl border-0 bg-transparent p-0 shadow-none">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{t("recipeDetail.coverPreviewTitle")}</DialogTitle>
+            <DialogDescription>{t("recipeDetail.coverPreviewDescription")}</DialogDescription>
+          </DialogHeader>
+          {expandedCoverPreview && (
+            <img
+              src={expandedCoverPreview.src}
+              alt={expandedCoverPreview.alt}
+              className="max-h-[88vh] w-full rounded-2xl object-contain"
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

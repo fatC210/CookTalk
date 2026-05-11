@@ -50,6 +50,18 @@ import { v4 as uuid } from "uuid";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/app-store";
+import {
+  createEmptyIngredient,
+  createEmptyManualStep,
+  createEmptyRecipeStep,
+  type FollowUpAnswers,
+  type FollowUpField,
+  type ManualDifficulty,
+  type ManualIngredient,
+  type PipelineStage,
+  type StructuredRecipe,
+  useImportDraftStore,
+} from "@/stores/import-draft-store";
 
 export const Route = createFileRoute("/import")({
   head: () => ({
@@ -63,40 +75,6 @@ export const Route = createFileRoute("/import")({
   }),
   component: ImportPage,
 });
-
-type PipelineStage =
-  | "idle"
-  | "transcribing"
-  | "structuring"
-  | "generating-cover"
-  | "preview"
-  | "saving"
-  | "done"
-  | "error";
-
-type ImportMode = "video" | "manual";
-type FollowUpField = "servings" | "spiceLevel" | "notes";
-type FollowUpStatus = "idle" | "speaking" | "listening" | "transcribing" | "refining" | "done";
-type FollowUpProgressState = "pending" | "answered" | "skipped";
-
-type StructuredRecipe = {
-  title: string;
-  ingredients: { name: string; amount: string }[];
-  steps: { order: number; description: string; durationSec?: number; tips?: string }[];
-  tags: Recipe["tags"];
-};
-
-type FollowUpAnswers = Record<FollowUpField, string>;
-type FollowUpProgress = Record<FollowUpField, FollowUpProgressState>;
-type ManualIngredient = StructuredRecipe["ingredients"][number];
-type ManualDifficulty = Exclude<Recipe["tags"]["difficulty"], undefined> | "";
-type ManualStep = {
-  description: string;
-  durationMin: string;
-  tips: string;
-};
-
-type ManualTextImportStatus = "idle" | "structuring";
 
 const EMPTY_MANUAL_DIFFICULTY_VALUE = "__empty__";
 
@@ -142,34 +120,6 @@ const stageLabelKeys: Partial<Record<PipelineStage, string>> = {
   done: "import.saved",
 };
 
-function createEmptyIngredient(): ManualIngredient {
-  return { name: "", amount: "" };
-}
-
-function createEmptyManualStep(): ManualStep {
-  return { description: "", durationMin: "", tips: "" };
-}
-
-function createEmptyRecipeStep(order = 1): StructuredRecipe["steps"][number] {
-  return { order, description: "", durationSec: undefined, tips: "" };
-}
-
-function createEmptyFollowUpAnswers(): FollowUpAnswers {
-  return {
-    servings: "",
-    spiceLevel: "",
-    notes: "",
-  };
-}
-
-function createEmptyFollowUpProgress(): FollowUpProgress {
-  return {
-    servings: "pending",
-    spiceLevel: "pending",
-    notes: "pending",
-  };
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -183,17 +133,98 @@ function formatImportError(err: unknown, fallback: string, t: TFunction): string
     return t("import.llmTimeout");
   }
 
+  if (/empty transcript/i.test(rawMessage)) {
+    return t("import.emptyTranscript");
+  }
+
+  if (/No usable recipe content was extracted/i.test(rawMessage)) {
+    return t("import.recipeStructureEmpty");
+  }
+
   if (/LLM failed:\s*502|Upstream request failed|fetch failed/i.test(rawMessage)) {
     return t("import.llmConnectionFailed", { detail: rawMessage });
   }
 
+  if (/Failed to parse .*recipe JSON/i.test(rawMessage)) {
+    return fallback;
+  }
+
   return rawMessage;
+}
+
+function formatCoverGenerationError(err: unknown, t: TFunction): string {
+  const status = err instanceof Error ? err.message.match(/Image gen failed:\s*(\d+)/i)?.[1] : null;
+  console.warn("Cover generation failed", status ? { status } : undefined);
+  return t("import.coverGenerationFailed");
 }
 
 function parsePositiveInt(value: string): number | undefined {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return parsed;
+}
+
+function formatDurationMinutesInput(durationSec?: number): string {
+  if (!durationSec || durationSec <= 0) return "";
+  return String(Math.max(1, Math.round(durationSec / 60)));
+}
+
+function parseDurationMinutesInput(value: string): number | undefined {
+  const minutes = parsePositiveInt(value);
+  return minutes ? minutes * 60 : undefined;
+}
+
+type StepMetadataFieldsProps = {
+  t: TFunction;
+  durationValue: string;
+  tipsValue: string;
+  onDurationChange: (value: string) => void;
+  onTipsChange: (value: string) => void;
+  disabled?: boolean;
+};
+
+function StepMetadataFields({
+  t,
+  durationValue,
+  tipsValue,
+  onDurationChange,
+  onTipsChange,
+  disabled,
+}: StepMetadataFieldsProps) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+      <label className="space-y-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
+          {t("import.manualStepDuration")}
+        </span>
+        <div className="flex rounded-xl border border-border bg-card transition-colors focus-within:border-clay">
+          <input
+            className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            value={durationValue}
+            onChange={(e) => onDurationChange(e.target.value)}
+            placeholder={t("import.manualStepDurationPlaceholder")}
+            inputMode="numeric"
+            disabled={disabled}
+          />
+          <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
+            {t("import.manualStepDurationUnit")}
+          </span>
+        </div>
+      </label>
+      <label className="space-y-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
+          {t("import.manualStepTips")}
+        </span>
+        <input
+          className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay disabled:cursor-not-allowed disabled:opacity-60"
+          value={tipsValue}
+          onChange={(e) => onTipsChange(e.target.value)}
+          placeholder={t("import.manualStepTipsPlaceholder")}
+          disabled={disabled}
+        />
+      </label>
+    </div>
+  );
 }
 
 function parseServingsAnswer(value: string): number | undefined {
@@ -261,55 +292,92 @@ function ImportPage() {
     document.title = t("import.metaTitle");
   }, [t, language]);
 
-  const [mode, setMode] = useState<ImportMode>("video");
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedMediaFile, setSelectedMediaFile] = useState<File | null>(null);
-  const [stage, setStage] = useState<PipelineStage>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState("");
-  const [structuredRecipe, setStructuredRecipe] = useState<StructuredRecipe | null>(null);
-  const [coverImage, setCoverImage] = useState<Blob | null>(null);
+  const {
+    mode,
+    setMode,
+    isDragging,
+    setIsDragging,
+    selectedMediaFile,
+    setSelectedMediaFile,
+    stage,
+    setStage,
+    error,
+    setError,
+    transcript,
+    setTranscript,
+    structuredRecipe,
+    setStructuredRecipe,
+    coverImage,
+    setCoverImage,
+    videoCoverSource,
+    setVideoCoverSource,
+    editTitle,
+    setEditTitle,
+    editSteps,
+    setEditSteps,
+    editIngredients,
+    setEditIngredients,
+    editDifficulty,
+    setEditDifficulty,
+    editTotalTime,
+    setEditTotalTime,
+    followUpAnswers,
+    setFollowUpAnswers,
+    followUpProgress,
+    setFollowUpProgress,
+    followUpIndex,
+    setFollowUpIndex,
+    followUpInput,
+    setFollowUpInput,
+    setFollowUpPrompt,
+    followUpStatus,
+    setFollowUpStatus,
+    followUpError,
+    setFollowUpError,
+    followUpStarted,
+    setFollowUpStarted,
+    followUpCompleted,
+    setFollowUpCompleted,
+    manualTitle,
+    setManualTitle,
+    manualCuisine,
+    setManualCuisine,
+    manualDifficulty,
+    setManualDifficulty,
+    manualTotalTime,
+    setManualTotalTime,
+    manualFlavors,
+    setManualFlavors,
+    manualIngredients,
+    setManualIngredients,
+    manualSteps,
+    setManualSteps,
+    manualRawText,
+    setManualRawText,
+    isManualTextDialogOpen,
+    setIsManualTextDialogOpen,
+    manualTextImportStatus,
+    setManualTextImportStatus,
+    manualTextImportError,
+    setManualTextImportError,
+    manualCoverImage,
+    setManualCoverImage,
+    manualCoverSource,
+    setManualCoverSource,
+    isManualGeneratingCover,
+    setIsManualGeneratingCover,
+    isManualSaving,
+    setIsManualSaving,
+    clearFollowUpDraft,
+    clearVideoDraft,
+    clearManualDraft,
+  } = useImportDraftStore();
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
-  const [videoCoverSource, setVideoCoverSource] = useState<Recipe["coverSource"]>("default");
-  const [editTitle, setEditTitle] = useState("");
-  const [editSteps, setEditSteps] = useState<StructuredRecipe["steps"]>([]);
-  const [editIngredients, setEditIngredients] = useState<StructuredRecipe["ingredients"]>([]);
-  const [editDifficulty, setEditDifficulty] = useState<ManualDifficulty>("");
-  const [editTotalTime, setEditTotalTime] = useState("");
-
-  const [followUpAnswers, setFollowUpAnswers] = useState<FollowUpAnswers>(
-    createEmptyFollowUpAnswers(),
-  );
-  const [followUpProgress, setFollowUpProgress] = useState<FollowUpProgress>(
-    createEmptyFollowUpProgress(),
-  );
-  const [followUpIndex, setFollowUpIndex] = useState(0);
-  const [followUpInput, setFollowUpInput] = useState("");
-  const [followUpPrompt, setFollowUpPrompt] = useState("");
-  const [followUpStatus, setFollowUpStatus] = useState<FollowUpStatus>("idle");
-  const [followUpError, setFollowUpError] = useState<string | null>(null);
-  const [followUpStarted, setFollowUpStarted] = useState(false);
-  const [followUpCompleted, setFollowUpCompleted] = useState(false);
-
-  const [manualTitle, setManualTitle] = useState("");
-  const [manualCuisine, setManualCuisine] = useState("");
-  const [manualDifficulty, setManualDifficulty] = useState<ManualDifficulty>("");
-  const [manualTotalTime, setManualTotalTime] = useState("");
-  const [manualFlavors, setManualFlavors] = useState("");
-  const [manualIngredients, setManualIngredients] = useState<ManualIngredient[]>([
-    createEmptyIngredient(),
-  ]);
-  const [manualSteps, setManualSteps] = useState<ManualStep[]>([createEmptyManualStep()]);
-  const [manualRawText, setManualRawText] = useState("");
-  const [isManualTextDialogOpen, setIsManualTextDialogOpen] = useState(false);
-  const [manualTextImportStatus, setManualTextImportStatus] =
-    useState<ManualTextImportStatus>("idle");
-  const [manualTextImportError, setManualTextImportError] = useState<string | null>(null);
-  const [manualCoverImage, setManualCoverImage] = useState<Blob | null>(null);
   const [manualCoverPreviewUrl, setManualCoverPreviewUrl] = useState<string | null>(null);
-  const [manualCoverSource, setManualCoverSource] = useState<Recipe["coverSource"]>("default");
-  const [isManualGeneratingCover, setIsManualGeneratingCover] = useState(false);
-  const [isManualSaving, setIsManualSaving] = useState(false);
+  const [expandedCoverPreview, setExpandedCoverPreview] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -426,52 +494,19 @@ function ImportPage() {
   };
 
   const resetFollowUpFlow = () => {
-    setFollowUpAnswers(createEmptyFollowUpAnswers());
-    setFollowUpProgress(createEmptyFollowUpProgress());
-    setFollowUpIndex(0);
-    setFollowUpInput("");
-    setFollowUpPrompt("");
-    setFollowUpStatus("idle");
-    setFollowUpError(null);
-    setFollowUpStarted(false);
-    setFollowUpCompleted(false);
     cleanupAnswerRecording();
+    clearFollowUpDraft();
   };
 
   const resetVideoDraft = () => {
     stopAnswerRecording();
     cleanupAnswerRecording();
-    setSelectedMediaFile(null);
-    setStage("idle");
-    setError(null);
-    setTranscript("");
-    setStructuredRecipe(null);
-    setCoverImage(null);
-    setVideoCoverSource("default");
-    setEditTitle("");
-    setEditIngredients([]);
-    setEditSteps([]);
-    setEditDifficulty("");
-    setEditTotalTime("");
-    resetFollowUpFlow();
+    clearVideoDraft();
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const resetManualDraft = () => {
-    setManualTitle("");
-    setManualCuisine("");
-    setManualDifficulty("");
-    setManualTotalTime("");
-    setManualFlavors("");
-    setManualIngredients([createEmptyIngredient()]);
-    setManualSteps([createEmptyManualStep()]);
-    setManualRawText("");
-    setIsManualTextDialogOpen(false);
-    setManualTextImportStatus("idle");
-    setManualTextImportError(null);
-    setManualCoverImage(null);
-    setManualCoverSource("default");
-    setIsManualGeneratingCover(false);
+    clearManualDraft();
     if (manualCoverInputRef.current) manualCoverInputRef.current.value = "";
   };
 
@@ -750,6 +785,16 @@ function ImportPage() {
     if (!selectedMediaFile) return;
 
     resetFollowUpFlow();
+    setError(null);
+    setTranscript("");
+    setStructuredRecipe(null);
+    setCoverImage(null);
+    setVideoCoverSource("default");
+    setEditTitle("");
+    setEditIngredients([]);
+    setEditSteps([]);
+    setEditDifficulty("");
+    setEditTotalTime("");
 
     try {
       setStage("transcribing");
@@ -758,7 +803,10 @@ function ImportPage() {
         throw new Error(t("import.elevenLabsKeyMissing"));
       }
       const sttService = new ElevenLabsService(elevenLabsKey);
-      const rawTranscript = await sttService.speechToText(selectedMediaFile);
+      const rawTranscript = (await sttService.speechToText(selectedMediaFile)).trim();
+      if (!rawTranscript) {
+        throw new Error("Cannot structure recipe from empty transcript");
+      }
       setTranscript(rawTranscript);
 
       setStage("structuring");
@@ -796,7 +844,7 @@ function ImportPage() {
         .map((step, index) => ({
           order: index + 1,
           description: step.description.trim(),
-          durationSec: step.durationSec,
+          durationSec: step.durationSec && step.durationSec > 0 ? step.durationSec : undefined,
           tips: step.tips?.trim() || undefined,
         }))
         .filter((step) => step.description);
@@ -819,7 +867,10 @@ function ImportPage() {
 
       setStage("done");
       toast.success(t("import.recipeSaved"));
-      window.setTimeout(() => navigate({ to: "/recipes" }), 900);
+      window.setTimeout(() => {
+        void navigate({ to: "/recipes" });
+        clearVideoDraft();
+      }, 900);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("import.saveFailed");
       setError(message);
@@ -882,7 +933,10 @@ function ImportPage() {
       });
 
       toast.success(t("import.manualSaved"));
-      window.setTimeout(() => navigate({ to: "/recipes" }), 900);
+      window.setTimeout(() => {
+        void navigate({ to: "/recipes" });
+        clearManualDraft();
+      }, 900);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("import.saveFailed");
       toast.error(message);
@@ -913,10 +967,7 @@ function ImportPage() {
       recipe.steps.length > 0
         ? recipe.steps.map((step) => ({
             description: step.description ?? "",
-            durationMin:
-              step.durationSec && step.durationSec > 0
-                ? String(Math.max(1, Math.round(step.durationSec / 60)))
-                : "",
+            durationMin: formatDurationMinutesInput(step.durationSec),
             tips: step.tips ?? "",
           }))
         : [createEmptyManualStep()],
@@ -957,10 +1008,12 @@ function ImportPage() {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       toast.error(t("import.invalidCover"));
+      e.target.value = "";
       return;
     }
     setCoverImage(file);
     setVideoCoverSource("user");
+    e.target.value = "";
   };
 
   const handleManualCoverInputChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -968,10 +1021,12 @@ function ImportPage() {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       toast.error(t("import.invalidCover"));
+      e.target.value = "";
       return;
     }
     setManualCoverImage(file);
     setManualCoverSource("user");
+    e.target.value = "";
   };
 
   const handleRegenerateCover = async () => {
@@ -1001,7 +1056,7 @@ function ImportPage() {
       setStage("preview");
       toast.success(t("import.coverGenerated"));
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("import.coverGenerationWarning");
+      const message = formatCoverGenerationError(err, t);
       setStage("preview");
       toast.error(message);
     }
@@ -1038,7 +1093,7 @@ function ImportPage() {
       setManualCoverSource("ai");
       toast.success(t("import.coverGenerated"));
     } catch (err) {
-      const message = err instanceof Error ? err.message : t("import.coverGenerationWarning");
+      const message = formatCoverGenerationError(err, t);
       toast.error(message);
     } finally {
       setIsManualGeneratingCover(false);
@@ -1190,6 +1245,7 @@ function ImportPage() {
               {guidedSteps.map((item, index) => {
                 const isCurrent = guidedStepIndex === index;
                 const isDone = index < guidedStepIndex || (index === 3 && stage === "done");
+                const isLineActive = index > 0 && index <= guidedStepIndex;
 
                 return (
                   <div key={item.label} className="import-stepper-item">
@@ -1197,7 +1253,7 @@ function ImportPage() {
                       <div
                         aria-hidden="true"
                         className={`import-stepper-line ${
-                          isDone ? "border-t border-dashed border-clay" : "bg-border/80"
+                          isLineActive ? "border-t border-dashed border-primary" : "bg-border/80"
                         }`}
                       />
                     ) : null}
@@ -1345,7 +1401,7 @@ function ImportPage() {
                   <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">{error}</p>
                   <button
                     className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
-                    onClick={resetVideoDraft}
+                    onClick={() => void startPipeline()}
                   >
                     {t("import.retry")}
                   </button>
@@ -1563,11 +1619,18 @@ function ImportPage() {
                                 }
                                 placeholder={t("import.manualStepDescription")}
                               />
-                              <input
-                                className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
-                                value={editSteps[index]?.tips ?? ""}
-                                onChange={(e) => updateEditStep(index, { tips: e.target.value })}
-                                placeholder={t("import.manualStepTips")}
+                              <StepMetadataFields
+                                t={t}
+                                durationValue={formatDurationMinutesInput(
+                                  editSteps[index]?.durationSec,
+                                )}
+                                tipsValue={editSteps[index]?.tips ?? ""}
+                                onDurationChange={(value) =>
+                                  updateEditStep(index, {
+                                    durationSec: parseDurationMinutesInput(value),
+                                  })
+                                }
+                                onTipsChange={(value) => updateEditStep(index, { tips: value })}
                               />
                             </div>
                           </div>
@@ -1716,13 +1779,22 @@ function ImportPage() {
                                   updateEditStep(index, { description: e.target.value })
                                 }
                               />
-                              <div className="flex gap-3">
-                                <input
-                                  className="flex-1 rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
-                                  value={editSteps[index]?.tips ?? ""}
-                                  onChange={(e) => updateEditStep(index, { tips: e.target.value })}
-                                  placeholder={t("import.manualStepTips")}
-                                />
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                                <div className="flex-1">
+                                  <StepMetadataFields
+                                    t={t}
+                                    durationValue={formatDurationMinutesInput(
+                                      editSteps[index]?.durationSec,
+                                    )}
+                                    tipsValue={editSteps[index]?.tips ?? ""}
+                                    onDurationChange={(value) =>
+                                      updateEditStep(index, {
+                                        durationSec: parseDurationMinutesInput(value),
+                                      })
+                                    }
+                                    onTipsChange={(value) => updateEditStep(index, { tips: value })}
+                                  />
+                                </div>
                                 <button
                                   className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
                                   onClick={() => removeEditStep(index)}
@@ -1770,18 +1842,93 @@ function ImportPage() {
                     </div>
 
                     <div className="mt-8 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-                      <div className="overflow-hidden rounded-[1.75rem] border border-border bg-background aspect-[4/3]">
+                      <div
+                        className={`group/guided-cover relative aspect-[4/3] overflow-hidden rounded-[1.75rem] border border-border bg-background transition-colors ${
+                          coverPreviewUrl
+                            ? "cursor-zoom-in hover:border-foreground"
+                            : stage === "saving"
+                              ? "cursor-not-allowed opacity-60"
+                              : "cursor-pointer hover:border-foreground"
+                        }`}
+                        role="button"
+                        tabIndex={stage === "saving" ? -1 : 0}
+                        aria-disabled={stage === "saving"}
+                        aria-label={
+                          coverPreviewUrl ? t("import.coverPreviewOpen") : t("import.uploadCover")
+                        }
+                        onClick={() => {
+                          if (coverPreviewUrl) {
+                            setExpandedCoverPreview({
+                              src: coverPreviewUrl,
+                              alt: previewRecipe.title,
+                            });
+                            return;
+                          }
+                          if (stage !== "saving") coverInputRef.current?.click();
+                        }}
+                        onKeyDown={(event) => {
+                          if (stage === "saving") return;
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            if (coverPreviewUrl) {
+                              setExpandedCoverPreview({
+                                src: coverPreviewUrl,
+                                alt: previewRecipe.title,
+                              });
+                              return;
+                            }
+                            coverInputRef.current?.click();
+                          }
+                        }}
+                      >
                         {coverPreviewUrl ? (
-                          <img
-                            src={coverPreviewUrl}
-                            alt={previewRecipe.title}
-                            className="h-full w-full object-cover"
-                          />
+                          <>
+                            <img
+                              src={coverPreviewUrl}
+                              alt={previewRecipe.title}
+                              className="h-full w-full object-cover"
+                            />
+                          </>
                         ) : (
-                          <div className="flex h-full items-center justify-center text-muted-foreground">
+                          <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
                             <ImageIcon className="h-10 w-10" strokeWidth={1.25} />
+                            <span className="text-sm">{t("import.coverMissing")}</span>
                           </div>
                         )}
+                        <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity group-hover/guided-cover:pointer-events-auto group-hover/guided-cover:opacity-100 group-focus-within/guided-cover:pointer-events-auto group-focus-within/guided-cover:opacity-100">
+                          <button
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (stage !== "saving") coverInputRef.current?.click();
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            disabled={stage === "saving"}
+                            type="button"
+                            aria-label={t("import.uploadCover")}
+                            title={t("import.uploadCover")}
+                          >
+                            <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
+                          </button>
+                          <button
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (stage !== "saving") void handleRegenerateCover();
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            disabled={isGeneratingCover || stage === "saving"}
+                            type="button"
+                            aria-label={t("import.aiGenerateCover")}
+                            title={t("import.aiGenerateCover")}
+                          >
+                            {isGeneratingCover ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <div className="space-y-4">
@@ -1790,33 +1937,6 @@ function ImportPage() {
                           <p className="mt-2 text-sm text-muted-foreground">
                             {coverImage ? t("import.coverReady") : t("import.coverMissing")}
                           </p>
-                        </div>
-
-                        <div className="flex flex-wrap gap-3">
-                          <button
-                            className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground"
-                            onClick={() => coverInputRef.current?.click()}
-                          >
-                            <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
-                            {t("import.uploadCover")}
-                          </button>
-                          <button
-                            className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground disabled:opacity-50"
-                            onClick={() => void handleRegenerateCover()}
-                            disabled={isGeneratingCover || stage === "saving"}
-                          >
-                            {isGeneratingCover ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                {t("import.generatingCover")}
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                                {t("import.regenerateCover")}
-                              </>
-                            )}
-                          </button>
                         </div>
 
                         <VoiceHint>{t("import.coverVoiceHint")}</VoiceHint>
@@ -1953,7 +2073,11 @@ function ImportPage() {
 
                         <div className="mt-5 flex justify-end">
                           <button
-                            className="inline-flex items-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
+                            className={`inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm text-background disabled:opacity-50 ${
+                              isManualTextStructuring
+                                ? "bg-foreground"
+                                : "bg-foreground hover:bg-clay"
+                            }`}
                             onClick={() => void handleStructureManualText()}
                             disabled={isManualTextStructuring || isManualSaving}
                             type="button"
@@ -2177,33 +2301,26 @@ function ImportPage() {
                             placeholder={t("import.manualStepDescription")}
                           />
 
-                          <div className="mt-3 grid gap-3 sm:grid-cols-[160px_1fr]">
-                            <input
-                              className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
-                              value={step.durationMin}
-                              onChange={(e) =>
+                          <div className="mt-3">
+                            <StepMetadataFields
+                              t={t}
+                              durationValue={step.durationMin}
+                              tipsValue={step.tips}
+                              onDurationChange={(value) =>
                                 setManualSteps((current) =>
                                   current.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, durationMin: e.target.value }
-                                      : item,
+                                    itemIndex === index ? { ...item, durationMin: value } : item,
                                   ),
                                 )
                               }
-                              placeholder={t("import.manualStepDuration")}
-                              inputMode="numeric"
-                            />
-                            <input
-                              className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
-                              value={step.tips}
-                              onChange={(e) =>
+                              onTipsChange={(value) =>
                                 setManualSteps((current) =>
                                   current.map((item, itemIndex) =>
-                                    itemIndex === index ? { ...item, tips: e.target.value } : item,
+                                    itemIndex === index ? { ...item, tips: value } : item,
                                   ),
                                 )
                               }
-                              placeholder={t("import.manualStepTips")}
+                              disabled={isManualSaving}
                             />
                           </div>
                         </div>
@@ -2511,22 +2628,43 @@ function ImportPage() {
                       </div>
 
                       <div
-                        className={`group relative mt-4 flex aspect-[4/3] w-full overflow-hidden rounded-2xl border border-border bg-background transition-colors ${
+                        className={`group/manual-cover relative mt-4 flex aspect-[4/3] w-full overflow-hidden rounded-2xl border border-border bg-background transition-colors ${
                           isManualSaving
                             ? "cursor-not-allowed opacity-60"
-                            : "cursor-pointer hover:border-foreground"
+                            : manualCoverPreviewUrl
+                              ? "cursor-zoom-in hover:border-foreground"
+                              : "cursor-pointer hover:border-foreground"
                         }`}
                         role="button"
                         tabIndex={isManualSaving ? -1 : 0}
                         aria-disabled={isManualSaving}
-                        aria-label={t("import.uploadCover")}
+                        aria-label={
+                          manualCoverPreviewUrl
+                            ? t("import.coverPreviewOpen")
+                            : t("import.uploadCover")
+                        }
                         onClick={() => {
-                          if (!isManualSaving) manualCoverInputRef.current?.click();
+                          if (isManualSaving) return;
+                          if (manualCoverPreviewUrl) {
+                            setExpandedCoverPreview({
+                              src: manualCoverPreviewUrl,
+                              alt: manualTitle.trim() || t("import.untitledRecipe"),
+                            });
+                            return;
+                          }
+                          manualCoverInputRef.current?.click();
                         }}
                         onKeyDown={(event) => {
                           if (isManualSaving) return;
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
+                            if (manualCoverPreviewUrl) {
+                              setExpandedCoverPreview({
+                                src: manualCoverPreviewUrl,
+                                alt: manualTitle.trim() || t("import.untitledRecipe"),
+                              });
+                              return;
+                            }
                             manualCoverInputRef.current?.click();
                           }
                         }}
@@ -2538,11 +2676,6 @@ function ImportPage() {
                               alt={manualTitle.trim() || t("import.untitledRecipe")}
                               className="h-full w-full object-cover"
                             />
-                            <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/45 via-black/10 to-transparent p-4 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                              <span className="rounded-full bg-white/90 px-3 py-1 text-xs text-foreground">
-                                {t("import.manualCoverChangePlaceholder")}
-                              </span>
-                            </div>
                           </>
                         ) : (
                           <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
@@ -2550,30 +2683,42 @@ function ImportPage() {
                             <span className="text-sm">
                               {t("import.manualCoverUploadPlaceholder")}
                             </span>
-                            <button
-                              className="inline-flex min-h-10 items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors hover:border-foreground disabled:opacity-50"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void handleRegenerateManualCover();
-                              }}
-                              onKeyDown={(event) => event.stopPropagation()}
-                              disabled={isManualGeneratingCover || isManualSaving}
-                              type="button"
-                            >
-                              {isManualGeneratingCover ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                  {t("import.generatingCover")}
-                                </>
-                              ) : (
-                                <>
-                                  <Sparkles className="h-4 w-4" strokeWidth={1.75} />
-                                  {t("import.manualCoverAiPlaceholder")}
-                                </>
-                              )}
-                            </button>
                           </div>
                         )}
+                        <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity group-hover/manual-cover:pointer-events-auto group-hover/manual-cover:opacity-100 group-focus-within/manual-cover:pointer-events-auto group-focus-within/manual-cover:opacity-100">
+                          <button
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!isManualSaving) manualCoverInputRef.current?.click();
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            disabled={isManualSaving}
+                            type="button"
+                            aria-label={t("import.uploadCover")}
+                            title={t("import.uploadCover")}
+                          >
+                            <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
+                          </button>
+                          <button
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!isManualSaving) void handleRegenerateManualCover();
+                            }}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            disabled={isManualGeneratingCover || isManualSaving}
+                            type="button"
+                            aria-label={t("import.aiGenerateCover")}
+                            title={t("import.aiGenerateCover")}
+                          >
+                            {isManualGeneratingCover ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -2628,6 +2773,27 @@ function ImportPage() {
           </div>
         </div>
       </section>
+
+      <Dialog
+        open={Boolean(expandedCoverPreview)}
+        onOpenChange={(open) => {
+          if (!open) setExpandedCoverPreview(null);
+        }}
+      >
+        <DialogContent className="max-h-[92vh] max-w-5xl border-0 bg-transparent p-0 shadow-none">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{t("import.coverPreviewTitle")}</DialogTitle>
+            <DialogDescription>{t("import.coverPreviewDescription")}</DialogDescription>
+          </DialogHeader>
+          {expandedCoverPreview && (
+            <img
+              src={expandedCoverPreview.src}
+              alt={expandedCoverPreview.alt}
+              className="max-h-[88vh] w-full rounded-2xl object-contain"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
