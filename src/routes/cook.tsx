@@ -480,6 +480,10 @@ function CookPage() {
     () => getVoiceStatusLabel(effectiveStatus, isMuted, t),
     [effectiveStatus, isMuted, t],
   );
+  const voiceModeLabel = useMemo(
+    () => getVoiceModeLabel(effectiveStatus, isMuted, t),
+    [effectiveStatus, isMuted, t],
+  );
 
   const voiceDotClass = useMemo(() => {
     if (effectiveStatus === "error" || effectiveStatus === "unsupported") return "bg-destructive";
@@ -525,9 +529,7 @@ function CookPage() {
               <Volume2 className="h-5 w-5 text-clay" strokeWidth={1.5} />
             </div>
             <div>
-              <div className="text-xs text-muted-foreground">
-                {t("cook.nowNarrating")} 路 {t("cook.localVoiceMode")}
-              </div>
+              <div className="text-xs text-muted-foreground">{voiceModeLabel}</div>
               <div className="font-display text-base">{recipe.title}</div>
             </div>
           </div>
@@ -583,7 +585,7 @@ function CookPage() {
               </h1>
               {step?.tips && (
                 <p className="mt-4 inline-flex w-full items-center gap-2 rounded-full bg-accent/40 px-4 py-2 text-xs sm:w-fit sm:text-sm">
-                  <span className="font-medium">{t("cook.tip")} 路</span> {step.tips}
+                  <span className="font-medium">{t("cook.tip")}</span> {step.tips}
                 </p>
               )}
             </div>
@@ -618,7 +620,7 @@ function CookPage() {
                     </div>
                     <div className="relative flex flex-col items-start gap-1 sm:items-end">
                       <VoiceHint>
-                        {t("cook.addTime")} 路 {t("cook.cancel")}
+                        {t("cook.addTime")} / {t("cook.cancel")}
                       </VoiceHint>
                       <button
                         onClick={() => {
@@ -718,4 +720,21 @@ function getVoiceStatusLabel(
   if (status === "awake") return t("cook.awake");
   if (status === "listening") return t("cook.alwaysListening");
   return t("cook.voiceReady");
+}
+
+function getVoiceModeLabel(
+  status: VoiceStatus,
+  isMuted: boolean,
+  t: (key: string) => string,
+): string {
+  if (status === "speaking") {
+    return `${t("cook.nowNarrating")} · ${t("cook.localVoiceMode")}`;
+  }
+  if (isMuted) {
+    return t("cook.localVoiceMode");
+  }
+  if (status === "listening" || status === "awake") {
+    return `${t("cook.alwaysListening")} · ${t("cook.localVoiceMode")}`;
+  }
+  return t("cook.localVoiceMode");
 }
