@@ -3,7 +3,7 @@ import { getApiKey } from "./crypto";
 import i18n from "./i18n";
 import type { AppLanguage } from "./language";
 
-type RecipePayload = Omit<
+export type RecipePayload = Omit<
   Recipe,
   | "id"
   | "coverImage"
@@ -80,7 +80,11 @@ const API_VALIDATION_TIMEOUT_MS = 10_000;
 const OPENAI_COMPATIBLE_PROXY_PATH = "/api/openai-compatible";
 const MAX_RECIPE_SOURCE_CHARS = 8_000;
 const META_REASONING_PATTERN =
-  /\b(?:prompt|json|schema|field|fields|mapping|map to schema|infer|invent|optional|respond with|return valid|markdown|refine the json|failed response|repair malformed|rule|rules|assistant|model)\b|(?:我应该|我会|让我|等等|先|再|提示词|字段|结构化|返回|输出|省略|编造|推断|修复|让我们|我想|我不能)/i;
+  /\b(?:prompt|json|schema|field|fields|mapping|map to schema|infer(?:red|ence)?|invent|optional|respond with|return valid|markdown|refine the json|failed response|repair malformed|rule|rules|assistant|model|chain[-\s]*of[-\s]*thought|reasoning|mentioned\/inferred|primary step description|let'?s|i(?:'ll| will| should| can)|we (?:can|should|will))\b|(?:我应该|我会|让我|等等|先|再|提示词|字段|结构化|返回|输出|省略|编造|推断|修复|让我们|我想|我不能)/i;
+const META_FRAGMENT_CUE_PATTERN =
+  /\b(?:let'?s|i(?:'ll| will| should| can)|we (?:can|should|will)|or (?:mention|combine|use|write|describe|pan[-\s]*fry)|tags mentioned|mentioned\/inferred|primary step description|common and detailed|prominent|specific times|chain[-\s]*of[-\s]*thought|reasoning|field mapping|schema|json)\b/i;
+const COOKING_CONTENT_CUE_PATTERN =
+  /[\u4e00-\u9fff]|(?:\b(?:add|mix|stir|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve|preheat|brush|fill|wrap)\b)/i;
 const DURATION_HOUR_PATTERN = /(\d+(?:\.\d+)?)\s*(?:小时|hours?\b|hrs?\b|h\b)/i;
 const DURATION_MINUTE_PATTERN = /(\d+(?:\.\d+)?)\s*(?:分钟|分|minutes?\b|mins?\b|m\b)/i;
 const DURATION_SECOND_PATTERN = /(\d+(?:\.\d+)?)\s*(?:秒|seconds?\b|secs?\b|s\b)/i;
@@ -516,8 +520,9 @@ function normalizePlaceholderText(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/[“”"'`]/g, "")
+    .replace(/[“”"'`\\]/g, "")
     .replace(/[_-]+/g, " ")
+    .replace(/[{}[\],:：]/g, " ")
     .replace(/\s+/g, " ");
 }
 
@@ -528,6 +533,74 @@ function isRecipeSchemaPlaceholder(value: string): boolean {
 function omitSchemaPlaceholder(value: string): string {
   const trimmed = value.trim();
   return trimmed && !isRecipeSchemaPlaceholder(trimmed) ? trimmed : "";
+}
+
+function countCookingContentCues(value: string): number {
+  const text = cleanRecipeTextValue(value);
+  const zhCues = text.match(
+    /(?:加入|放入|倒入|下入|撒入|切|切成|切好|剁|拍|腌|拌|搅拌|翻炒|炒|煎|炸|烤|蒸|煮|炖|焖|焯|爆香|收汁|勾芡|出锅|盛出|装盘|备用|浸泡|清洗|冲洗|去皮|预热|刷|填充|封口|包|上色)/g,
+  );
+  const enCues = text.match(
+    /\b(?:add|mix|stir|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve|preheat|brush|fill|wrap)\b/gi,
+  );
+  return (zhCues?.length ?? 0) + (enCues?.length ?? 0);
+}
+
+function isSchemaOnlyRecord(value: Record<string, unknown>): boolean {
+  const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== undefined);
+  if (entries.length === 0) return true;
+
+  return entries.every(([key, entryValue]) => {
+    if (!SCHEMA_ONLY_FIELDS.has(normalizePlaceholderText(key))) return false;
+    if (entryValue == null) return true;
+    if (typeof entryValue === "string") {
+      const text = cleanRecipeTextValue(entryValue);
+      return !text || isRecipeSchemaPlaceholder(text) || isSchemaNoiseLine(text);
+    }
+    if (typeof entryValue === "number") return true;
+    if (Array.isArray(entryValue)) {
+      return entryValue.length === 0 || entryValue.every((item) => isSchemaOnlyValue(item));
+    }
+    return isRecord(entryValue) ? isSchemaOnlyRecord(entryValue) : true;
+  });
+}
+
+function isSchemaOnlyValue(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === "string") {
+    const text = cleanRecipeTextValue(value);
+    return !text || isRecipeSchemaPlaceholder(text) || isSchemaNoiseLine(text);
+  }
+  if (typeof value === "number") return true;
+  if (Array.isArray(value)) return value.length === 0 || value.every(isSchemaOnlyValue);
+  return isRecord(value) ? isSchemaOnlyRecord(value) : true;
+}
+
+function isGenericSchemaRecipePayload(recipe: RecipePayload): boolean {
+  const titleGeneric = !recipe.title || isRecipeSchemaPlaceholder(recipe.title);
+  const ingredientsGeneric =
+    recipe.ingredients.length === 0 ||
+    recipe.ingredients.every(
+      (item) =>
+        isRecipeSchemaPlaceholder(item.name) ||
+        isRecipeSchemaPlaceholder(item.amount) ||
+        (!item.name && !item.amount),
+    );
+  const stepsGeneric =
+    recipe.steps.length === 0 ||
+    recipe.steps.every(
+      (step) =>
+        isRecipeSchemaPlaceholder(step.description) ||
+        isSchemaNoiseLine(step.description) ||
+        countCookingContentCues(step.description) === 0,
+    );
+
+  return titleGeneric && ingredientsGeneric && stepsGeneric;
+}
+
+function hasUsableRecipePayload(recipe: RecipePayload): boolean {
+  if (isGenericSchemaRecipePayload(recipe)) return false;
+  return recipe.steps.length > 0 || recipe.ingredients.length > 0;
 }
 
 function escapeRegExp(value: string): string {
@@ -564,6 +637,36 @@ function cleanRecipeContentText(value: string): string {
       "",
     )
     .trim();
+}
+
+function stripMetaReasoningFragments(value: string): string {
+  const text = cleanRecipeContentText(value);
+  if (!text) return "";
+
+  const withoutParentheticalMeta = text
+    .replace(
+      /\s*[（(][^）)]*(?:let'?s|i(?:'ll| will| should| can)|we (?:can|should|will)|or (?:mention|combine|use|write|describe|pan[-\s]*fry)|common and detailed|primary step description|schema|json|reasoning)[^）)]*[）)]/gi,
+      "",
+    )
+    .trim();
+  const source = withoutParentheticalMeta || text;
+  const sentenceParts = source
+    .split(/(?<=[。！？!?])\s+|(?<=\.)\s+(?=[A-Z(I])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (sentenceParts.length <= 1) {
+    return META_FRAGMENT_CUE_PATTERN.test(source) && countCookingContentCues(source) === 0
+      ? ""
+      : source;
+  }
+
+  const kept = sentenceParts.filter((part) => {
+    if (!META_FRAGMENT_CUE_PATTERN.test(part)) return true;
+    return COOKING_CONTENT_CUE_PATTERN.test(part) && countCookingContentCues(part) >= 2;
+  });
+
+  return kept.join(" ").trim();
 }
 
 function truncateRecipeFieldTail(value: string): string {
@@ -615,6 +718,10 @@ function isSchemaNoiseLine(value: string): boolean {
   if (!stripped) return true;
   if (isRecipeSchemaPlaceholder(stripped)) return true;
   if (/^(?:map\s+to\s+schema|schema|json|```)/i.test(stripped)) return true;
+  if (/^"?[\w\u4e00-\u9fff]+"?\s*:\s*\[?\{?["“]?[\w\u4e00-\u9fff\s]+["”]?/i.test(stripped)) {
+    const left = stripped.split(/[：:]/, 1)[0] ?? "";
+    if (SCHEMA_ONLY_FIELDS.has(normalizePlaceholderText(left))) return true;
+  }
   if (/^[{}[\],:]+$/.test(stripped)) return true;
 
   const normalized = normalizePlaceholderText(
@@ -631,7 +738,9 @@ function isSchemaNoiseLine(value: string): boolean {
 }
 
 function containsMetaReasoning(value: string): boolean {
-  return META_REASONING_PATTERN.test(cleanRecipeTextValue(value));
+  const text = cleanRecipeTextValue(value);
+  if (!META_REASONING_PATTERN.test(text)) return false;
+  return countCookingContentCues(text) < 2;
 }
 
 function readFirstRecord(
@@ -800,6 +909,30 @@ function parseJsonCandidate(candidate: string): unknown | null {
   }
 
   return null;
+}
+
+function getRecipePayloadQuality(recipe: RecipePayload): number {
+  if (!hasUsableRecipePayload(recipe)) return 0;
+
+  const cookingStepCount = recipe.steps.filter(
+    (step) =>
+      countCookingContentCues(step.description) > 0 ||
+      Boolean(parseDurationToSeconds(step.description)),
+  ).length;
+  const ingredientCount = recipe.ingredients.filter((item) => item.name || item.amount).length;
+  const titleScore = recipe.title ? 2 : 0;
+  const metadataScore =
+    (recipe.tags.totalTimeMin ? 1 : 0) +
+    (recipe.tags.servings ? 1 : 0) +
+    (recipe.tags.cuisine ? 1 : 0);
+
+  return (
+    titleScore +
+    ingredientCount * 2 +
+    recipe.steps.length * 3 +
+    cookingStepCount * 4 +
+    metadataScore
+  );
 }
 
 function parseDurationToSeconds(value: unknown): number | undefined {
@@ -973,6 +1106,7 @@ function splitFlavor(value: unknown): string[] | undefined {
     const items = value
       .map((item) => (typeof item === "string" ? item.trim() : ""))
       .filter((item) => item && !isRecipeSchemaPlaceholder(item))
+      .filter((item) => !containsMetaReasoning(item))
       .filter(Boolean);
     return items.length > 0 ? items : undefined;
   }
@@ -982,6 +1116,7 @@ function splitFlavor(value: unknown): string[] | undefined {
     .split(/[,，、/|;；\s]+/)
     .map((item) => item.trim())
     .filter((item) => item && !isRecipeSchemaPlaceholder(item))
+    .filter((item) => !containsMetaReasoning(item))
     .filter(Boolean);
   return items.length > 0 ? items : undefined;
 }
@@ -998,6 +1133,7 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
     const text = cleanRecipeContentText(stripListMarker(value));
     if (!text) return null;
     if (isSchemaNoiseLine(text)) return null;
+    if (containsMetaReasoning(text)) return null;
 
     const parsedInlineJson = parseJsonCandidate(text);
     if (parsedInlineJson !== null && parsedInlineJson !== text) {
@@ -1020,8 +1156,8 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
         : readInlineLabeledValue(text, INGREDIENT_NAME_LABELS);
     const amountFromLabel = readInlineLabeledValue(text, INGREDIENT_AMOUNT_LABELS);
     if (nameFromLabel || amountFromLabel) {
-      const name = omitSchemaPlaceholder(nameFromLabel);
-      const amount = omitSchemaPlaceholder(amountFromLabel);
+      const name = omitSchemaPlaceholder(stripMetaReasoningFragments(nameFromLabel));
+      const amount = omitSchemaPlaceholder(stripMetaReasoningFragments(amountFromLabel));
       return name || amount ? { name, amount } : null;
     }
 
@@ -1029,9 +1165,9 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
 
     const parts = text.split(/\s*[：:]\s*/);
     if (parts.length >= 2) {
-      const name = omitSchemaPlaceholder(cleanRecipeContentText(parts[0]));
+      const name = omitSchemaPlaceholder(stripMetaReasoningFragments(parts[0]));
       const amount = omitSchemaPlaceholder(
-        cleanRecipeContentText(truncateRecipeFieldTail(parts.slice(1).join(":"))),
+        stripMetaReasoningFragments(truncateRecipeFieldTail(parts.slice(1).join(":"))),
       );
       if (!name && !amount) return null;
       return {
@@ -1049,8 +1185,8 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
       ),
     );
     if (trailingAmount) {
-      const name = omitSchemaPlaceholder(cleanRecipeContentText(trailingAmount[1]));
-      const amount = omitSchemaPlaceholder(cleanRecipeContentText(trailingAmount[2]));
+      const name = omitSchemaPlaceholder(stripMetaReasoningFragments(trailingAmount[1]));
+      const amount = omitSchemaPlaceholder(stripMetaReasoningFragments(trailingAmount[2]));
       if (name || amount) return { name, amount };
     }
 
@@ -1059,9 +1195,9 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
     );
     if (delimitedAmount) {
       return {
-        name: omitSchemaPlaceholder(cleanRecipeContentText(delimitedAmount[1])),
+        name: omitSchemaPlaceholder(stripMetaReasoningFragments(delimitedAmount[1])),
         amount: omitSchemaPlaceholder(
-          cleanRecipeContentText(truncateRecipeFieldTail(delimitedAmount[2])),
+          stripMetaReasoningFragments(truncateRecipeFieldTail(delimitedAmount[2])),
         ),
       };
     }
@@ -1070,8 +1206,8 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
       new RegExp(`^((?:${quantityText})(?:\\s*${unitText})?)(?:\\s*(?:of\\s+)?)?(.+)$`, "i"),
     );
     if (leadingAmount) {
-      const amount = omitSchemaPlaceholder(cleanRecipeContentText(leadingAmount[1]));
-      const name = omitSchemaPlaceholder(cleanRecipeContentText(leadingAmount[2]));
+      const amount = omitSchemaPlaceholder(stripMetaReasoningFragments(leadingAmount[1]));
+      const name = omitSchemaPlaceholder(stripMetaReasoningFragments(leadingAmount[2]));
       if (name || amount) return { name, amount };
     }
 
@@ -1080,7 +1216,7 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
 
   if (!isRecord(value)) return null;
   const name = omitSchemaPlaceholder(
-    cleanRecipeContentText(
+    stripMetaReasoningFragments(
       readFirstString(value, [
         "name",
         "ingredient",
@@ -1095,7 +1231,7 @@ function normalizeIngredient(value: unknown): RecipePayload["ingredients"][numbe
       ]),
     ),
   );
-  const amount = omitSchemaPlaceholder(readIngredientAmount(value));
+  const amount = omitSchemaPlaceholder(stripMetaReasoningFragments(readIngredientAmount(value)));
   if (!name && amount) {
     const parsedAmount = normalizeIngredient(amount);
     if (parsedAmount?.name) return parsedAmount;
@@ -1133,6 +1269,31 @@ function normalizeIngredients(value: unknown): RecipePayload["ingredients"] {
     });
 }
 
+function sanitizeRecipeIngredients(
+  ingredients: RecipePayload["ingredients"],
+): RecipePayload["ingredients"] {
+  const seen = new Set<string>();
+
+  return ingredients
+    .map((item) => ({
+      name: omitSchemaPlaceholder(stripMetaReasoningFragments(item.name)),
+      amount: omitSchemaPlaceholder(stripMetaReasoningFragments(item.amount)),
+    }))
+    .filter((item) => {
+      if (!item.name && !item.amount) return false;
+      if (item.name && isSchemaNoiseLine(item.name)) return false;
+      if (item.amount && isSchemaNoiseLine(item.amount)) return false;
+      if (containsMetaReasoning(`${item.name} ${item.amount}`)) return false;
+
+      const key = `${normalizePlaceholderText(item.name)}\u0000${normalizePlaceholderText(
+        item.amount,
+      )}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 function normalizeStep(value: unknown, index: number): RecipePayload["steps"][number] | null {
   if (typeof value === "string") {
     const text = cleanRecipeContentText(stripListMarker(value).replace(/^[\s\d.、)\]-]+/, ""));
@@ -1146,15 +1307,20 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
       return null;
     }
 
-    const description = readInlineLabeledValue(text, STEP_TEXT_LABELS) || text;
+    const description = stripMetaReasoningFragments(
+      readInlineLabeledValue(text, STEP_TEXT_LABELS) || text,
+    );
     if (isRecipeSchemaPlaceholder(description) || isSchemaNoiseLine(description)) return null;
     if (containsMetaReasoning(description)) return null;
-    return description ? { order: index + 1, description } : null;
+    const durationSec = parseDurationToSeconds(description);
+    return description
+      ? { order: index + 1, description, ...(durationSec ? { durationSec } : {}) }
+      : null;
   }
 
   if (!isRecord(value)) return null;
   const description = omitSchemaPlaceholder(
-    cleanRecipeContentText(
+    stripMetaReasoningFragments(
       readFirstString(value, [
         "description",
         "text",
@@ -1189,7 +1355,7 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
     ) ??
     parseDurationValue(readFirstValue(value, ["duration", "time", "时间", "时长"]), "auto");
   const tips = omitSchemaPlaceholder(
-    cleanRecipeContentText(
+    stripMetaReasoningFragments(
       readFirstString(value, ["tips", "tip", "note", "notes", "提示", "小贴士", "备注"]),
     ),
   );
@@ -1244,6 +1410,35 @@ function normalizeSteps(value: unknown): RecipePayload["steps"] {
   return values
     .map(normalizeStep)
     .filter((step): step is RecipePayload["steps"][number] => Boolean(step))
+    .map((step, index) => ({ ...step, order: index + 1 }));
+}
+
+function sanitizeRecipeSteps(steps: RecipePayload["steps"]): RecipePayload["steps"] {
+  const seen = new Set<string>();
+  return steps
+    .map((step) => {
+      const description = stripMetaReasoningFragments(step.description);
+      const tips = step.tips ? stripMetaReasoningFragments(step.tips) : "";
+      const durationSec = step.durationSec ?? parseDurationToSeconds(description);
+      return {
+        ...step,
+        description,
+        ...(durationSec ? { durationSec } : {}),
+        ...(tips ? { tips } : {}),
+      };
+    })
+    .filter((step) => {
+      if (!step.description) return false;
+      if (isSchemaNoiseLine(step.description) || isRecipeSchemaPlaceholder(step.description)) {
+        return false;
+      }
+      if (containsMetaReasoning(step.description)) return false;
+
+      const key = normalizePlaceholderText(step.description);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .map((step, index) => ({ ...step, order: index + 1 }));
 }
 
@@ -1327,34 +1522,39 @@ function unwrapRecipeObject(value: unknown): Record<string, unknown> | null {
 function normalizeRecipePayload(value: unknown): RecipePayload | null {
   const recipe = unwrapRecipeObject(value);
   if (!recipe) return null;
+  if (isSchemaOnlyRecord(recipe)) return null;
 
   const tags = readFirstRecord(recipe, ["tags", "tag", "metadata", "meta", "labels", "标签"]) ?? {};
-  const ingredients = normalizeIngredients(
-    readFirstValue(recipe, [
-      "ingredients",
-      "ingredientList",
-      "recipeIngredient",
-      "recipeIngredients",
-      "materials",
-      "食材",
-      "原料",
-      "用料",
-      "配料",
-    ]),
+  const ingredients = sanitizeRecipeIngredients(
+    normalizeIngredients(
+      readFirstValue(recipe, [
+        "ingredients",
+        "ingredientList",
+        "recipeIngredient",
+        "recipeIngredients",
+        "materials",
+        "食材",
+        "原料",
+        "用料",
+        "配料",
+      ]),
+    ),
   );
-  const steps = normalizeSteps(
-    readFirstValue(recipe, [
-      "steps",
-      "instructions",
-      "recipeInstructions",
-      "recipeInstruction",
-      "itemListElement",
-      "directions",
-      "method",
-      "做法",
-      "步骤",
-      "烹饪步骤",
-    ]),
+  const steps = sanitizeRecipeSteps(
+    normalizeSteps(
+      readFirstValue(recipe, [
+        "steps",
+        "instructions",
+        "recipeInstructions",
+        "recipeInstruction",
+        "itemListElement",
+        "directions",
+        "method",
+        "做法",
+        "步骤",
+        "烹饪步骤",
+      ]),
+    ),
   );
 
   if (ingredients.length === 0 && steps.length === 0) return null;
@@ -1432,7 +1632,7 @@ function normalizeRecipePayload(value: unknown): RecipePayload | null {
     cleanRecipeContentText(readFirstString(tags, ["notes", "note", "备注"])),
   );
 
-  return {
+  const normalized: RecipePayload = {
     title,
     ingredients,
     steps,
@@ -1446,6 +1646,8 @@ function normalizeRecipePayload(value: unknown): RecipePayload | null {
       ...(notes ? { notes } : {}),
     },
   };
+
+  return hasUsableRecipePayload(normalized) ? normalized : null;
 }
 
 function parseLabeledRecipeText(text: string): RecipePayload | null {
@@ -1463,15 +1665,16 @@ function parseLabeledRecipeText(text: string): RecipePayload | null {
       /(?:^|\n)\s*(?:#+\s*)?(?:\*\*)?(?:步骤|做法|instructions?|steps?)(?:\*\*)?\s*[：:]\s*([\s\S]*?)(?=\n\s*(?:#+\s*)?(?:\*\*)?(?:map\s+to\s+schema|schema|tags?|metadata|标签)(?:\*\*)?\s*[：:]?|$)/i,
     )?.[1] ?? "";
 
-  const ingredients = normalizeIngredients(ingredientBlock);
-  const steps = normalizeSteps(stepBlock);
+  const ingredients = sanitizeRecipeIngredients(normalizeIngredients(ingredientBlock));
+  const steps = sanitizeRecipeSteps(normalizeSteps(stepBlock));
   if (ingredients.length === 0 && steps.length === 0) return null;
 
-  return { title, ingredients, steps, tags: cuisine ? { cuisine } : {} };
+  const recipe = { title, ingredients, steps, tags: cuisine ? { cuisine } : {} };
+  return hasUsableRecipePayload(recipe) ? recipe : null;
 }
 
 function normalizeHeuristicSentence(value: string): string {
-  return cleanRecipeTextValue(
+  return stripMetaReasoningFragments(
     value
       .replace(/^[,，。；;:：\s]+/, "")
       .replace(
@@ -1484,6 +1687,11 @@ function normalizeHeuristicSentence(value: string): string {
 function splitHeuristicSegments(text: string): string[] {
   const normalized = text
     .replace(/\r/g, "\n")
+    .replace(
+      /(?:Source title|Source URL|Title|Yield|Cuisine|Category|Total time|Cook time|Prep time)\s*:\s*/gi,
+      "\n",
+    )
+    .replace(/(?:Instructions|步骤|做法)\s*:\s*/gi, "\n")
     .replace(/[。！？!?；;]/g, "\n")
     .replace(/([，,])\s*(然后|再|接着|随后|最后|最后再|下一步)/g, "\n$2")
     .replace(/(?:\n|^)\s*(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*/g, "\n");
@@ -1508,6 +1716,14 @@ function isLikelyRecipeStep(text: string): boolean {
 
 function inferRecipeTitleFromText(text: string): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
+  const labeledTitle = text.match(/(?:Source title|Title|菜名|标题|名称)\s*[：:]\s*([^\n]+)/i)?.[1];
+  const normalizedLabeledTitle = omitSchemaPlaceholder(
+    stripMetaReasoningFragments(labeledTitle ?? ""),
+  );
+  if (normalizedLabeledTitle && !HEURISTIC_FILLER_PATTERN.test(normalizedLabeledTitle)) {
+    return normalizedLabeledTitle;
+  }
+
   const patterns = [
     /(?:今天(?:给大家)?(?:分享|做|教大家做|来做)|这次做|我们做|来做一道|教你做|做一道|做一个)\s*["“]?([^"，。！？,.!?\n]{2,24})["”]?/i,
     /([^"，。！？,.!?\n]{2,24})(?:的做法|教程|怎么做)/i,
@@ -1525,7 +1741,7 @@ function inferRecipeTitleFromText(text: string): string {
 function inferIngredientsFromText(text: string): RecipePayload["ingredients"] {
   const matches = [
     ...text.matchAll(
-      /(?:食材|配料|用料|准备|材料)[:：]?\s*([^\n]+(?:\n(?!.*(?:步骤|做法|开始|先|然后|接着|最后)).+)*)/gi,
+      /(?:Ingredients?|食材|配料|用料|准备|材料)[:：]?\s*([^\n]+(?:\n(?!.*(?:Instructions?|步骤|做法|开始|先|然后|接着|最后|Source URL|Title)).+)*)/gi,
     ),
   ];
   const candidates = matches
@@ -1535,7 +1751,7 @@ function inferIngredientsFromText(text: string): RecipePayload["ingredients"] {
     .map((item) => cleanRecipeTextValue(item))
     .filter(Boolean);
 
-  return normalizeIngredients(candidates);
+  return sanitizeRecipeIngredients(normalizeIngredients(candidates));
 }
 
 function inferStepsFromText(text: string): RecipePayload["steps"] {
@@ -1564,7 +1780,9 @@ function inferStepsFromText(text: string): RecipePayload["steps"] {
     });
   }
 
-  return steps.slice(0, 20).map((step, index) => ({ ...step, order: index + 1 }));
+  return sanitizeRecipeSteps(steps)
+    .slice(0, 20)
+    .map((step, index) => ({ ...step, order: index + 1 }));
 }
 
 function buildHeuristicRecipePayload(text: string): RecipePayload | null {
@@ -1575,12 +1793,13 @@ function buildHeuristicRecipePayload(text: string): RecipePayload | null {
   const steps = inferStepsFromText(source);
   if (ingredients.length === 0 && steps.length === 0) return null;
 
-  return {
+  const recipe = {
     title: inferRecipeTitleFromText(source),
     ingredients,
     steps,
     tags: {},
   };
+  return hasUsableRecipePayload(recipe) ? recipe : null;
 }
 
 function mergeRecipeTags(
@@ -1599,9 +1818,9 @@ function enrichRecipePayload(
   ...fallbackTexts: Array<string | undefined>
 ): RecipePayload {
   let enriched: RecipePayload = {
-    title: recipe.title,
-    ingredients: recipe.ingredients,
-    steps: recipe.steps,
+    title: omitSchemaPlaceholder(stripMetaReasoningFragments(recipe.title)),
+    ingredients: sanitizeRecipeIngredients(recipe.ingredients),
+    steps: sanitizeRecipeSteps(recipe.steps),
     tags: { ...recipe.tags, flavor: recipe.tags.flavor ? [...recipe.tags.flavor] : undefined },
   };
 
@@ -1612,8 +1831,11 @@ function enrichRecipePayload(
 
     enriched = {
       title: enriched.title || heuristic.title,
-      ingredients: enriched.ingredients.length > 0 ? enriched.ingredients : heuristic.ingredients,
-      steps: enriched.steps.length > 0 ? enriched.steps : heuristic.steps,
+      ingredients:
+        enriched.ingredients.length > 0
+          ? enriched.ingredients
+          : sanitizeRecipeIngredients(heuristic.ingredients),
+      steps: enriched.steps.length > 0 ? enriched.steps : sanitizeRecipeSteps(heuristic.steps),
       tags: mergeRecipeTags(enriched.tags, heuristic.tags),
     };
   }
@@ -1648,14 +1870,14 @@ function localizeShortRecipeText(value: string, language: AppLanguage): string {
 }
 
 function localizeRecipePayload(recipe: RecipePayload, language: AppLanguage): RecipePayload {
-  const ingredients = recipe.ingredients
+  const ingredients = sanitizeRecipeIngredients(recipe.ingredients)
     .map((item) => ({
       name: localizeShortRecipeText(item.name, language),
       amount: localizeShortRecipeText(item.amount, language),
     }))
     .filter((item) => item.name || item.amount);
 
-  const steps = recipe.steps
+  const steps = sanitizeRecipeSteps(recipe.steps)
     .map((step, index) => {
       const description = localizeShortRecipeText(step.description, language);
       const tips = step.tips ? localizeShortRecipeText(step.tips, language) : "";
@@ -1670,6 +1892,7 @@ function localizeRecipePayload(recipe: RecipePayload, language: AppLanguage): Re
 
   const flavor = recipe.tags.flavor
     ?.map((item) => localizeShortRecipeText(item, language))
+    .filter((item) => item && !containsMetaReasoning(item))
     .filter(Boolean);
   const cuisine = recipe.tags.cuisine ? localizeShortRecipeText(recipe.tags.cuisine, language) : "";
   const spiceLevel = recipe.tags.spiceLevel
@@ -1690,6 +1913,38 @@ function localizeRecipePayload(recipe: RecipePayload, language: AppLanguage): Re
       ...(spiceLevel ? { spiceLevel } : {}),
       ...(notes ? { notes } : {}),
     },
+  };
+}
+
+export function cleanStructuredRecipePayload(
+  recipe: RecipePayload,
+  language?: AppLanguage,
+  fallbackText?: string,
+): RecipePayload {
+  const cleaned = enrichRecipePayload(recipe, fallbackText);
+  const localized = localizeRecipePayload(cleaned, resolveRecipeLanguage(language));
+  const heuristic = fallbackText ? buildHeuristicRecipePayload(fallbackText) : null;
+
+  const result = {
+    ...localized,
+    title: localized.title || heuristic?.title || "",
+    ingredients:
+      localized.ingredients.length > 0
+        ? localized.ingredients
+        : heuristic
+          ? sanitizeRecipeIngredients(heuristic.ingredients)
+          : [],
+    steps:
+      localized.steps.length > 0
+        ? localized.steps
+        : heuristic
+          ? sanitizeRecipeSteps(heuristic.steps)
+          : [],
+  };
+
+  return {
+    ...result,
+    steps: result.steps.map((step, index) => ({ ...step, order: index + 1 })),
   };
 }
 
@@ -1837,17 +2092,33 @@ export class LLMService {
   }
 
   private parseRecipePayload(result: string, errorMessage: string): RecipePayload | null {
+    let bestRecipe: RecipePayload | null = null;
+    let bestScore = 0;
+
     for (const candidate of collectJsonCandidates(result)) {
       const parsed = parseJsonCandidate(candidate);
       if (parsed === null) continue;
 
       const normalized = normalizeRecipePayload(parsed);
-      if (normalized) {
-        return normalized;
+      if (!normalized || !hasUsableRecipePayload(normalized)) continue;
+
+      const score = getRecipePayloadQuality(normalized);
+      if (score > bestScore) {
+        bestRecipe = normalized;
+        bestScore = score;
       }
     }
 
-    return parseLabeledRecipeText(result);
+    const labeled = parseLabeledRecipeText(result);
+    if (labeled) {
+      const score = getRecipePayloadQuality(labeled);
+      if (score > bestScore) {
+        bestRecipe = labeled;
+        bestScore = score;
+      }
+    }
+
+    return bestRecipe;
   }
 
   private async parseOrRepairRecipePayload(
@@ -1857,7 +2128,12 @@ export class LLMService {
   ): Promise<RecipePayload> {
     const parsed = this.parseRecipePayload(result, errorMessage);
     if (parsed) {
-      return enrichRecipePayload(parsed, result, fallbackSourceText);
+      const cleaned = cleanStructuredRecipePayload(
+        parsed,
+        undefined,
+        [result, fallbackSourceText].filter(Boolean).join("\n\n"),
+      );
+      if (hasUsableRecipePayload(cleaned)) return cleaned;
     }
 
     const repairPrompt = [
@@ -1888,7 +2164,12 @@ export class LLMService {
 
     const repairedParsed = this.parseRecipePayload(repaired, errorMessage);
     if (repairedParsed) {
-      return enrichRecipePayload(repairedParsed, repaired, fallbackSourceText, result);
+      const cleaned = cleanStructuredRecipePayload(
+        repairedParsed,
+        undefined,
+        [repaired, fallbackSourceText, result].filter(Boolean).join("\n\n"),
+      );
+      if (hasUsableRecipePayload(cleaned)) return cleaned;
     }
 
     const heuristic =
@@ -1972,7 +2253,11 @@ ${trimRecipeSourceText(transcript)}`;
       "No usable recipe content was extracted from the transcript",
       transcript,
     );
-    return localizeRecipePayload(recipe, language);
+    const cleaned = cleanStructuredRecipePayload(recipe, language, transcript);
+    if (!hasUsableRecipePayload(cleaned)) {
+      throw new Error("No usable recipe content was extracted from the transcript");
+    }
+    return cleaned;
   }
 
   private async structureRecipeFromTextInLanguage(
@@ -2063,7 +2348,11 @@ ${trimRecipeSourceText(recipeText)}`,
       "Failed to parse structured recipe JSON from text input",
       recipeText,
     );
-    return localizeRecipePayload(recipe, language);
+    const cleaned = cleanStructuredRecipePayload(recipe, language, recipeText);
+    if (!hasUsableRecipePayload(cleaned)) {
+      throw new Error("Failed to parse structured recipe JSON from text input");
+    }
+    return cleaned;
   }
 
   async refineRecipeWithAnswers(
@@ -2100,10 +2389,11 @@ ${trimRecipeSourceText(recipeText)}`,
       { maxTokens: 1600, responseFormat: "json_object", temperature: 0 },
     );
 
-    return this.parseOrRepairRecipePayload(
+    const parsedRecipe = await this.parseOrRepairRecipePayload(
       result,
       "Failed to parse refined recipe JSON from LLM response",
     );
+    return cleanStructuredRecipePayload(parsedRecipe, undefined, JSON.stringify(parsedRecipe));
   }
 
   async generateCoverPrompt(dishName: string, customStyle?: string): Promise<string> {

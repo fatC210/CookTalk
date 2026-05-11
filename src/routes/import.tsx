@@ -26,7 +26,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import type { TFunction } from "i18next";
 import { ElevenLabsService } from "@/lib/elevenlabs";
-import { DEFAULT_IMAGE_MODEL, ImageGenService, getConfiguredLLMService } from "@/lib/llm";
+import {
+  DEFAULT_IMAGE_MODEL,
+  ImageGenService,
+  cleanStructuredRecipePayload,
+  getConfiguredLLMService,
+} from "@/lib/llm";
 import { getApiKey } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { deleteVideoImportTask, saveVideoImportTask, type Recipe } from "@/lib/db";
@@ -429,6 +434,14 @@ function mergeFollowUpRefinedRecipe(
       notes: baseRecipe.tags.notes,
     },
   };
+}
+
+function cleanStructuredImportRecipe(
+  recipe: StructuredRecipe,
+  language: "en" | "zh",
+  fallbackText?: string,
+): StructuredRecipe {
+  return cleanStructuredRecipePayload(recipe, language, fallbackText) as StructuredRecipe;
 }
 
 function ImportPage() {
@@ -997,7 +1010,11 @@ function ImportPage() {
             answers,
           )) as StructuredRecipe)
         : null;
-      const nextRecipe = mergeFollowUpRefinedRecipe(structuredRecipe, answers, refinedRecipe);
+      const nextRecipe = cleanStructuredImportRecipe(
+        mergeFollowUpRefinedRecipe(structuredRecipe, answers, refinedRecipe),
+        language,
+        transcript,
+      );
 
       syncRecipeEditor(nextRecipe);
       setFollowUpCompleted(Boolean(options?.markCompleted));
@@ -1129,7 +1146,11 @@ function ImportPage() {
       if (!llmService) {
         toast.warning(t("import.llmKeyWarning"));
       } else {
-        recipe = (await llmService.structureRecipe(rawTranscript, language)) as StructuredRecipe;
+        recipe = cleanStructuredImportRecipe(
+          (await llmService.structureRecipe(rawTranscript, language)) as StructuredRecipe,
+          language,
+          rawTranscript,
+        );
         syncRecipeEditor(recipe);
       }
 
@@ -1145,15 +1166,29 @@ function ImportPage() {
   const handleSaveVideo = async () => {
     setStage("saving");
     try {
+      const cleaned = cleanStructuredImportRecipe(
+        {
+          title: editTitle.trim() || structuredRecipe?.title?.trim() || "",
+          ingredients: editIngredients.map((item) => ({ ...item })),
+          steps: editSteps.map((item) => ({ ...item })),
+          tags: {
+            ...(structuredRecipe?.tags ?? {}),
+            difficulty: editDifficulty || undefined,
+            totalTimeMin: parsePositiveInt(editTotalTime),
+          },
+        },
+        language,
+        transcript,
+      );
       const title =
-        editTitle.trim() || structuredRecipe?.title?.trim() || t("import.untitledRecipe");
-      const ingredients = editIngredients
+        cleaned.title.trim() || structuredRecipe?.title?.trim() || t("import.untitledRecipe");
+      const ingredients = cleaned.ingredients
         .map((item) => ({
           name: item.name.trim(),
           amount: item.amount.trim(),
         }))
         .filter((item) => item.name);
-      const steps = editSteps
+      const steps = cleaned.steps
         .map((step, index) => ({
           order: index + 1,
           description: step.description.trim(),
@@ -1162,14 +1197,14 @@ function ImportPage() {
         }))
         .filter((step) => step.description);
 
-      const totalTimeMin = parsePositiveInt(editTotalTime);
+      const totalTimeMin = cleaned.tags.totalTimeMin ?? parsePositiveInt(editTotalTime);
 
       await persistRecipe({
         title,
         ingredients,
         steps,
         tags: {
-          ...(structuredRecipe?.tags ?? {}),
+          ...(cleaned.tags ?? {}),
           difficulty: editDifficulty || undefined,
           totalTimeMin,
         },
@@ -1199,44 +1234,55 @@ function ImportPage() {
       return;
     }
 
-    const ingredients = manualIngredients
-      .map((item) => ({
-        name: item.name.trim(),
-        amount: item.amount.trim(),
-      }))
-      .filter((item) => item.name);
+    const manualRecipe = cleanStructuredImportRecipe(
+      {
+        title,
+        ingredients: manualIngredients.map((item) => ({
+          name: item.name.trim(),
+          amount: item.amount.trim(),
+        })),
+        steps: manualSteps.map((step, index) => {
+          const durationMin = parsePositiveInt(step.durationMin);
+          return {
+            order: index + 1,
+            description: step.description.trim(),
+            durationSec: durationMin ? durationMin * 60 : undefined,
+            tips: step.tips.trim() || undefined,
+          };
+        }),
+        tags: {
+          cuisine: manualCuisine.trim() || undefined,
+          difficulty: manualDifficulty || undefined,
+          flavor: manualFlavors
+            .split(/[\uFF0C,]/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+          totalTimeMin: parsePositiveInt(manualTotalTime),
+        },
+      },
+      language,
+      manualRawText,
+    );
 
-    const steps = manualSteps
-      .map((step, index) => {
-        const durationMin = parsePositiveInt(step.durationMin);
-        return {
-          order: index + 1,
-          description: step.description.trim(),
-          durationSec: durationMin ? durationMin * 60 : undefined,
-          tips: step.tips.trim() || undefined,
-        };
-      })
-      .filter((step) => step.description);
+    const ingredients = manualRecipe.ingredients.filter((item) => item.name);
+    const steps = manualRecipe.steps.filter((step) => step.description);
 
     if (steps.length === 0) {
       toast.error(t("import.manualStepRequired"));
       return;
     }
 
-    const flavors = manualFlavors
-      .split(/[\uFF0C,]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-    const totalTimeMin = parsePositiveInt(manualTotalTime);
+    const flavors = manualRecipe.tags.flavor ?? [];
+    const totalTimeMin = manualRecipe.tags.totalTimeMin ?? parsePositiveInt(manualTotalTime);
 
     setIsManualSaving(true);
     try {
       await persistRecipe({
-        title,
+        title: manualRecipe.title.trim() || title,
         ingredients,
         steps,
         tags: {
-          cuisine: manualCuisine.trim() || undefined,
+          cuisine: manualRecipe.tags.cuisine ?? (manualCuisine.trim() || undefined),
           difficulty: manualDifficulty || undefined,
           flavor: flavors.length > 0 ? flavors : undefined,
           totalTimeMin,
@@ -1318,7 +1364,7 @@ function ImportPage() {
         rawText,
         language,
       )) as StructuredRecipe;
-      applyStructuredRecipeToManualForm(recipe);
+      applyStructuredRecipeToManualForm(cleanStructuredImportRecipe(recipe, language, rawText));
       resetManualTextDialog();
       toast.success(t("import.manualTextStructured"));
     } catch (err) {

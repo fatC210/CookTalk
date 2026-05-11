@@ -14,6 +14,7 @@ import {
 } from "@/lib/voice-pipeline";
 import { db, type Recipe } from "@/lib/db";
 import i18n from "@/lib/i18n";
+import { cleanStructuredRecipePayload } from "@/lib/llm";
 import { stopActiveVoicePlayback } from "@/lib/voice-playback";
 import { useVoiceSession } from "@/hooks/use-voice-session";
 import { useTimers, type TimerInfo } from "@/hooks/use-timers";
@@ -48,6 +49,26 @@ type QaMessage = {
   speaker: "assistant" | "user";
   text: string;
 };
+
+function cleanRecipeForCooking(recipe: Recipe, language: AppLanguage): Recipe {
+  const cleaned = cleanStructuredRecipePayload(recipe, language, recipe.rawTranscript);
+  return {
+    ...recipe,
+    title: cleaned.title || recipe.title,
+    ingredients: cleaned.ingredients.length > 0 ? cleaned.ingredients : recipe.ingredients,
+    steps: cleaned.steps.length > 0 ? cleaned.steps : recipe.steps,
+    tags: cleaned.tags,
+  };
+}
+
+function recipeNeedsContentUpdate(current: Recipe, cleaned: Recipe): boolean {
+  return (
+    current.title !== cleaned.title ||
+    JSON.stringify(current.ingredients) !== JSON.stringify(cleaned.ingredients) ||
+    JSON.stringify(current.steps) !== JSON.stringify(cleaned.steps) ||
+    JSON.stringify(current.tags) !== JSON.stringify(cleaned.tags)
+  );
+}
 
 function formatTimer(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
@@ -407,8 +428,25 @@ function CookPage() {
       setRecipe(null);
       return;
     }
-    void db.recipes.get(id).then((result) => setRecipe(result ?? null));
-  }, [id]);
+    void db.recipes.get(id).then((result) => {
+      if (!result) {
+        setRecipe(null);
+        return;
+      }
+
+      const cleaned = cleanRecipeForCooking(result, language);
+      setRecipe(cleaned);
+
+      if (recipeNeedsContentUpdate(result, cleaned)) {
+        void db.recipes.update(id, {
+          title: cleaned.title,
+          ingredients: cleaned.ingredients,
+          steps: cleaned.steps,
+          tags: cleaned.tags,
+        });
+      }
+    });
+  }, [id, language]);
 
   useEffect(() => {
     if (!recipe || !id) return;

@@ -20,7 +20,11 @@ import { Input } from "@/components/ui/input";
 import { SiteHeader } from "@/components/site-header";
 import { db, type Recipe } from "@/lib/db";
 import i18n from "@/lib/i18n";
-import { getConfiguredLLMService } from "@/lib/llm";
+import {
+  cleanStructuredRecipePayload,
+  getConfiguredLLMService,
+  type RecipePayload,
+} from "@/lib/llm";
 import { synthesizeWithElevenLabs } from "@/lib/voice-pipeline";
 import { cn } from "@/lib/utils";
 import {
@@ -136,6 +140,14 @@ type StructuredRecipeDraft = Omit<
   | "createdAt"
   | "lastCookedAt"
 >;
+
+function cleanRecipeDraftForSave(
+  draft: StructuredRecipeDraft,
+  language: AppLanguage,
+  fallbackText: string,
+): RecipePayload {
+  return cleanStructuredRecipePayload(draft, language, fallbackText);
+}
 
 const NUMBER_SYMBOLS = ["①", "②", "③", "④", "⑤", "⑥"];
 const EMPTY_RECIPES: Recipe[] = [];
@@ -1131,17 +1143,18 @@ function HomePage() {
         draftText,
         language,
       )) as StructuredRecipeDraft;
+      const cleanedDraft = cleanRecipeDraftForSave(draft, language, draftText);
       const title =
-        draft.title?.trim() ||
+        cleanedDraft.title?.trim() ||
         options.fallbackTitle?.trim() ||
         i18n.t("import.untitledRecipe", { lng: language });
-      const ingredients = (draft.ingredients ?? [])
+      const ingredients = (cleanedDraft.ingredients ?? [])
         .map((ingredient) => ({
           name: ingredient.name?.trim() ?? "",
           amount: ingredient.amount?.trim() ?? "",
         }))
         .filter((ingredient) => ingredient.name);
-      const steps = (draft.steps ?? [])
+      const steps = (cleanedDraft.steps ?? [])
         .map((step, index) => ({
           order: index + 1,
           description: step.description?.trim() ?? "",
@@ -1156,7 +1169,7 @@ function HomePage() {
         title,
         ingredients,
         steps,
-        tags: draft.tags ?? {},
+        tags: cleanedDraft.tags ?? {},
         coverSource: "default",
         sourceUrl: options.sourceUrl,
         rawTranscript: draftText,

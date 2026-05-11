@@ -23,7 +23,12 @@ import {
 } from "lucide-react";
 import { db, deleteRecipe, type Recipe } from "@/lib/db";
 import { getApiKey } from "@/lib/crypto";
-import { DEFAULT_IMAGE_MODEL, ImageGenService, getConfiguredLLMService } from "@/lib/llm";
+import {
+  DEFAULT_IMAGE_MODEL,
+  ImageGenService,
+  cleanStructuredRecipePayload,
+  getConfiguredLLMService,
+} from "@/lib/llm";
 import appI18n from "@/lib/i18n";
 import {
   AlertDialog,
@@ -78,6 +83,26 @@ type RecipeVoiceOption = ElevenLabsVoiceOption;
 type EditIngredient = { name: string; amount: string };
 type EditStep = { description: string; durationMin: string; tips: string };
 type EditDifficulty = Recipe["tags"]["difficulty"] | "";
+
+function cleanEditedRecipe(recipe: Recipe, language: "en" | "zh", fallbackText?: string): Recipe {
+  const cleaned = cleanStructuredRecipePayload(recipe, language, fallbackText);
+  return {
+    ...recipe,
+    title: cleaned.title || recipe.title,
+    ingredients: cleaned.ingredients.length > 0 ? cleaned.ingredients : recipe.ingredients,
+    steps: cleaned.steps.length > 0 ? cleaned.steps : recipe.steps,
+    tags: cleaned.tags,
+  };
+}
+
+function recipeNeedsContentUpdate(current: Recipe, cleaned: Recipe): boolean {
+  return (
+    current.title !== cleaned.title ||
+    JSON.stringify(current.ingredients) !== JSON.stringify(cleaned.ingredients) ||
+    JSON.stringify(current.steps) !== JSON.stringify(cleaned.steps) ||
+    JSON.stringify(current.tags) !== JSON.stringify(cleaned.tags)
+  );
+}
 
 function formatTimeAgo(
   ts: number | undefined,
@@ -282,8 +307,29 @@ function DetailPage() {
       setRecipe(null);
       return;
     }
-    db.recipes.get(id).then((r) => setRecipe(r ?? null));
-  }, [id]);
+    db.recipes.get(id).then((r) => {
+      if (!r) {
+        setRecipe(null);
+        return;
+      }
+
+      const cleaned = cleanEditedRecipe(
+        r,
+        i18n.language.startsWith("zh") ? "zh" : "en",
+        r.rawTranscript,
+      );
+      setRecipe(cleaned);
+
+      if (recipeNeedsContentUpdate(r, cleaned)) {
+        void db.recipes.update(id, {
+          title: cleaned.title,
+          ingredients: cleaned.ingredients,
+          steps: cleaned.steps,
+          tags: cleaned.tags,
+        });
+      }
+    });
+  }, [id, i18n.language]);
 
   useEffect(() => {
     if (recipe?.coverImage) {
@@ -506,19 +552,22 @@ function DetailPage() {
       .map((item) => item.trim())
       .filter(Boolean);
     const totalTimeMin = parsePositiveInt(editTotalTime);
-    const updatedRecipe: Recipe = {
-      ...recipe,
-      title,
-      ingredients,
-      steps,
-      tags: {
-        ...recipe.tags,
-        cuisine: editCuisine.trim() || undefined,
-        difficulty: editDifficulty || undefined,
-        flavor: flavors.length > 0 ? flavors : undefined,
-        totalTimeMin,
+    const updatedRecipe = cleanEditedRecipe(
+      {
+        ...recipe,
+        title,
+        ingredients,
+        steps,
+        tags: {
+          ...recipe.tags,
+          cuisine: editCuisine.trim() || undefined,
+          difficulty: editDifficulty || undefined,
+          flavor: flavors.length > 0 ? flavors : undefined,
+          totalTimeMin,
+        },
       },
-    };
+      i18n.language.startsWith("zh") ? "zh" : "en",
+    );
 
     setIsSavingEdit(true);
     try {
@@ -545,6 +594,7 @@ function DetailPage() {
     editTitle,
     editTotalTime,
     id,
+    i18n.language,
     recipe,
     t,
   ]);
