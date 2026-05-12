@@ -245,19 +245,10 @@
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
     gap: 1rem;
   }
-  .import-stepper {
+  .recipe-compact-list {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem 0.5rem;
-    align-items: start;
-  }
-  .import-stepper-item {
-    position: relative;
-    display: flex;
-    justify-content: center;
-  }
-  .import-stepper-line {
-    display: none;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
   }
   @media (min-width: 640px) {
     .page-hero-container {
@@ -270,25 +261,13 @@
       grid-template-columns: repeat(auto-fill, minmax(15rem, 18.5rem));
       justify-content: start;
     }
+    .recipe-compact-list {
+      max-width: 48rem;
+    }
   }
   @media (min-width: 1024px) {
     .page-hero-container {
       padding-block: 2rem;
-    }
-    .import-stepper {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 0;
-    }
-    .import-stepper-item {
-      align-items: flex-start;
-    }
-    .import-stepper-line {
-      position: absolute;
-      left: calc(-50% + 2.25rem);
-      right: calc(50% + 2.25rem);
-      top: 1.25rem;
-      display: block;
-      height: 1px;
     }
   }
   .grain {

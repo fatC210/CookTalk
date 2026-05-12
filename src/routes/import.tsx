@@ -1906,28 +1906,6 @@ function ImportPage() {
       }
     : null;
 
-  const guidedStepIndex =
-    stage === "idle"
-      ? 0
-      : stage === "transcribing" || stage === "structuring" || stage === "error"
-        ? 1
-        : 2;
-
-  const guidedSteps = [
-    {
-      label: t("import.guided.step1Label"),
-      title: t("import.guided.step1Title"),
-    },
-    {
-      label: t("import.guided.step2Label"),
-      title: t("import.guided.step2Title"),
-    },
-    {
-      label: t("import.guided.step3Label"),
-      title: t("import.guided.step3Title"),
-    },
-  ];
-
   const isPreviewStage = stage === "preview" || stage === "saving" || stage === "done";
   const isGeneratingCover = stage === "generating-cover";
   const showGuidedFollowUp = Boolean(
@@ -2114,49 +2092,6 @@ function ImportPage() {
             </div>
           </div>
 
-          {mode === "video" && (
-            <div className="import-stepper mt-8">
-              {guidedSteps.map((item, index) => {
-                const isCurrent = guidedStepIndex === index;
-                const isDone =
-                  index < guidedStepIndex || (index === guidedSteps.length - 1 && stage === "done");
-                const isLineActive = index > 0 && index <= guidedStepIndex;
-
-                return (
-                  <div key={item.label} className="import-stepper-item">
-                    {index > 0 ? (
-                      <div
-                        aria-hidden="true"
-                        className={`import-stepper-line ${
-                          isLineActive ? "border-t border-dashed border-primary" : "bg-border/80"
-                        }`}
-                      />
-                    ) : null}
-                    <div className="flex flex-col items-center text-center">
-                      <span
-                        className={`inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors ${
-                          isCurrent
-                            ? "border-clay bg-clay/10 text-clay shadow-[0_10px_24px_-16px_oklch(0.48_0.04_55_/_0.35)]"
-                            : isDone
-                              ? "border-clay bg-clay text-background"
-                              : "border-border bg-card/70 text-muted-foreground"
-                        }`}
-                      >
-                        {isDone ? <CheckCircle2 className="h-4 w-4" strokeWidth={2} /> : index + 1}
-                      </span>
-                      <span
-                        className={`mt-3 text-sm transition-colors ${
-                          isCurrent ? "text-clay" : "text-foreground"
-                        }`}
-                      >
-                        {item.title}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       </section>
 
@@ -2486,13 +2421,15 @@ function ImportPage() {
                                 <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                                   {t("import.manualIngredients")}
                                 </span>
-                                <button
-                                  className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                  onClick={() => removeEditIngredient(index)}
-                                  type="button"
-                                >
-                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                                </button>
+                                {previewRecipe.ingredients.length > 1 && (
+                                  <button
+                                    className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                    onClick={() => removeEditIngredient(index)}
+                                    type="button"
+                                  >
+                                    <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                  </button>
+                                )}
                               </div>
                               <input
                                 ref={(node) => {
@@ -2576,13 +2513,15 @@ function ImportPage() {
                                   {t("import.step", { count: index + 1 })}
                                 </span>
                               </div>
-                              <button
-                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                onClick={() => removeEditStep(index)}
-                                type="button"
-                              >
-                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                              </button>
+                              {previewRecipe.steps.length > 1 && (
+                                <button
+                                  className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                  onClick={() => removeEditStep(index)}
+                                  type="button"
+                                >
+                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                </button>
+                              )}
                             </div>
 
                             <div className="mt-3">
@@ -2623,13 +2562,15 @@ function ImportPage() {
                       stepsLabel={t("import.manualSteps")}
                       jumpLabel={t("import.editShortcutsJump")}
                       itemPlaceholder={t("import.editShortcutsItemPlaceholder")}
-                      saveLabel={t("import.saveToRecipes")}
+                      saveLabel={t("import.nextStep")}
                       savingLabel={t("import.saving")}
                       onJumpIngredient={jumpToEditIngredient}
                       onJumpStep={jumpToEditStep}
                       onSave={() => void handleSaveVideo()}
                       disabled={stage === "saving" || stage === "done"}
                       saving={stage === "saving"}
+                      saveIcon={<ArrowRight className="h-4 w-4" strokeWidth={1.75} />}
+                      saveVoiceAliases="下一步 继续 next step continue"
                       actions={[
                         {
                           label: t("import.restructure"),
@@ -2773,13 +2714,15 @@ function ImportPage() {
                                 }
                                 placeholder={t("import.manualIngredientAmount")}
                               />
-                              <button
-                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                onClick={() => removeEditIngredient(index)}
-                                type="button"
-                              >
-                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                              </button>
+                              {previewRecipe.ingredients.length > 1 && (
+                                <button
+                                  className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                  onClick={() => removeEditIngredient(index)}
+                                  type="button"
+                                >
+                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -2843,13 +2786,15 @@ function ImportPage() {
                                   {t("import.step", { count: index + 1 })}
                                 </span>
                               </div>
-                              <button
-                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                onClick={() => removeEditStep(index)}
-                                type="button"
-                              >
-                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                              </button>
+                              {previewRecipe.steps.length > 1 && (
+                                <button
+                                  className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                  onClick={() => removeEditStep(index)}
+                                  type="button"
+                                >
+                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                </button>
+                              )}
                             </div>
 
                             <div className="mt-3">
@@ -2890,13 +2835,15 @@ function ImportPage() {
                       stepsLabel={t("import.manualSteps")}
                       jumpLabel={t("import.editShortcutsJump")}
                       itemPlaceholder={t("import.editShortcutsItemPlaceholder")}
-                      saveLabel={t("import.saveToRecipes")}
+                      saveLabel={t("import.nextStep")}
                       savingLabel={t("import.saving")}
                       onJumpIngredient={jumpToEditIngredient}
                       onJumpStep={jumpToEditStep}
                       onSave={() => void handleSaveVideo()}
                       disabled={stage === "saving" || stage === "done"}
                       saving={stage === "saving"}
+                      saveIcon={<ArrowRight className="h-4 w-4" strokeWidth={1.75} />}
+                      saveVoiceAliases="下一步 继续 next step continue"
                       actions={[
                         {
                           label: t("import.restructure"),
@@ -3362,20 +3309,22 @@ function ImportPage() {
                             <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                               {t("import.manualIngredients")}
                             </span>
-                            <button
-                              className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                              onClick={() =>
-                                setManualIngredients((current) =>
-                                  current.length > 1
-                                    ? current.filter((_, itemIndex) => itemIndex !== index)
-                                    : [createEmptyIngredient()],
-                                )
-                              }
-                              disabled={isManualSaving}
-                              type="button"
-                            >
-                              <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                            </button>
+                            {manualIngredients.length > 1 && (
+                              <button
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                onClick={() =>
+                                  setManualIngredients((current) =>
+                                    current.length > 1
+                                      ? current.filter((_, itemIndex) => itemIndex !== index)
+                                      : [createEmptyIngredient()],
+                                  )
+                                }
+                                disabled={isManualSaving}
+                                type="button"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                            )}
                           </div>
 
                           <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_180px]">
@@ -3475,20 +3424,22 @@ function ImportPage() {
                                 {t("import.step", { count: index + 1 })}
                               </span>
                             </div>
-                            <button
-                              className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                              onClick={() =>
-                                setManualSteps((current) =>
-                                  current.length > 1
-                                    ? current.filter((_, itemIndex) => itemIndex !== index)
-                                    : [createEmptyManualStep()],
-                                )
-                              }
-                              disabled={isManualSaving}
-                              type="button"
-                            >
-                              <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                            </button>
+                            {manualSteps.length > 1 && (
+                              <button
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                onClick={() =>
+                                  setManualSteps((current) =>
+                                    current.length > 1
+                                      ? current.filter((_, itemIndex) => itemIndex !== index)
+                                      : [createEmptyManualStep()],
+                                  )
+                                }
+                                disabled={isManualSaving}
+                                type="button"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                            )}
                           </div>
 
                           <div className="mt-3">

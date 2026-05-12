@@ -2,7 +2,18 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { CheckCircle2, MessageCircle, Timer, Volume2, X } from "lucide-react";
+import {
+  ChefHat,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  MessageCircle,
+  Send,
+  Timer,
+  Waves,
+  X,
+} from "lucide-react";
 import { VoiceHint } from "@/components/voice-badge";
 import {
   answerCookingQuestion,
@@ -162,6 +173,7 @@ function CookPage() {
     isPaused: false,
   });
   const setMutedRef = useRef<((muted: boolean) => void) | null>(null);
+  const autoAnnouncedStepKeysRef = useRef<Set<string>>(new Set());
   const announcedStepKeysRef = useRef<Set<string>>(new Set());
   const announcingStepKeyRef = useRef<string | null>(null);
   const pendingInitialAnnounceStepRef = useRef<number | null>(null);
@@ -294,12 +306,15 @@ function CookPage() {
     async (targetRecipe: Recipe, targetStep: number, options?: { force?: boolean }) => {
       const stepKey = `${targetRecipe.id}:${targetStep}:${language}`;
       if (
-        (!options?.force && announcedStepKeysRef.current.has(stepKey)) ||
+        (!options?.force && autoAnnouncedStepKeysRef.current.has(stepKey)) ||
         announcingStepKeyRef.current === stepKey
       ) {
         return;
       }
 
+      if (!options?.force) {
+        autoAnnouncedStepKeysRef.current.add(stepKey);
+      }
       announcingStepKeyRef.current = stepKey;
       const stepSpeech = buildStepSpeech(targetRecipe, targetStep, language);
       try {
@@ -420,7 +435,10 @@ function CookPage() {
         case "set_timer": {
           const seconds = Math.max(1, intent.seconds ?? 60);
           const label =
-            intent.label?.trim() || (language === "zh" ? "烹饪计时器" : "Cooking timer");
+            intent.label?.trim() ||
+            (language === "zh"
+              ? `${formatDurationForSpeech(seconds, language)}计时器`
+              : `${formatDurationForSpeech(seconds, language)} timer`);
           startTimer(label, seconds);
           await speak(
             language === "zh"
@@ -590,6 +608,7 @@ function CookPage() {
 
   useEffect(() => {
     if (!recipeId) return;
+    autoAnnouncedStepKeysRef.current = new Set();
     announcedStepKeysRef.current = new Set();
     setSpokenStepKeys(new Set());
     resetQaMessagesForRecipe(t("cook.voiceQaPrompt"));
@@ -710,235 +729,250 @@ function CookPage() {
   const { main: descMain, highlight: descHighlight } = getStepDescriptionParts(description);
   const currentStepKey = recipe ? `${recipe.id}:${safeStep}:${language}` : null;
   const hasSpokenCurrentStep = currentStepKey ? spokenStepKeys.has(currentStepKey) : false;
+  const displayedTimers = activeTimers;
+  const hasTimerCards = displayedTimers.length > 0 || Boolean(step?.durationSec);
 
   return (
-    <div className="flex h-dvh min-w-0 flex-col overflow-x-hidden overflow-y-hidden bg-background">
-      <header className="shrink-0 border-b border-border/60">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-clay/40 bg-secondary">
-              <Volume2 className="h-5 w-5 text-clay" strokeWidth={1.5} />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">{voiceModeLabel}</div>
-              <div className="font-display text-base">{recipe.title}</div>
-            </div>
+    <div className="min-h-dvh overflow-x-hidden bg-background px-3 py-3 text-foreground sm:px-5 sm:py-6">
+      <main className="mx-auto flex min-h-[calc(100dvh-1.5rem)] w-full max-w-5xl flex-col rounded-[1.75rem] border border-border bg-card/70 shadow-[0_22px_70px_-45px_oklch(0.28_0.02_60/0.7)] sm:min-h-[calc(100dvh-3rem)] sm:rounded-[2.25rem]">
+        <header className="flex shrink-0 items-start gap-3 px-4 pb-4 pt-4 sm:items-center sm:px-8 sm:pb-5 sm:pt-7">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-clay/35 bg-background text-clay sm:h-14 sm:w-14">
+            <ChefHat className="h-5 w-5 sm:h-6 sm:w-6" strokeWidth={1.65} />
           </div>
-          <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs">
-              <span className={`h-1.5 w-1.5 rounded-full ${voiceDotClass}`} />
-              {voiceStatusLabel}
-            </span>
-            <button
-              onClick={handleClose}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent bg-transparent text-foreground hover:border-border hover:text-clay focus-visible:border-border"
-            >
-              <X className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto lg:overflow-y-hidden">
-        <div className="mx-auto flex h-full min-h-0 w-full min-w-0 max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
-          <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              {t("cook.stepOf", { current: stepNumber, total: stepCount })}
-            </div>
-            <div className="grid w-full min-w-0 grid-flow-col auto-cols-fr gap-1 sm:w-[18rem] md:w-[24rem]">
-              {Array.from({ length: stepCount }).map((_, index) => (
-                <span
-                  key={index}
-                  className={`h-1 rounded-full transition-all ${
-                    index < safeStep
-                      ? "w-full min-w-0 bg-foreground"
-                      : index === safeStep
-                        ? "w-full min-w-0 bg-clay"
-                        : "w-full min-w-0 bg-border"
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="grid min-h-0 flex-1 gap-4 py-3 sm:gap-5 sm:py-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
-            <section className="flex min-h-[18rem] min-w-0 flex-col sm:min-h-[24rem] lg:min-h-0">
-              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-border bg-card p-5 sm:p-7 lg:p-8">
-                <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-clay/10 blur-3xl" />
-                <div className="pointer-events-none absolute bottom-8 left-8 h-24 w-24 rounded-full bg-accent/40 blur-3xl" />
-                <div className="relative flex items-start justify-between gap-4">
-                  <div className="space-y-3">
-                    <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
-                      <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
-                      {voiceStatusLabel}
-                    </span>
-                  </div>
-                  {hasSpokenCurrentStep && (
-                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/50 px-3 py-1.5 text-xs text-muted-foreground">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
-                      {t("cook.stepSpokenOnce")}
-                    </span>
-                  )}
+          <div className="min-w-0 flex-1 pt-0.5">
+            <div className="flex min-w-0 items-start gap-2 sm:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-display text-xl leading-tight sm:text-2xl">
+                  {language === "zh" ? "正在烹饪" : "Now cooking"}
                 </div>
-                <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto py-5 sm:py-8 lg:py-6 [@media(max-height:900px)]:justify-start">
-                  <div className="mb-3 h-px w-16 bg-clay/50 sm:mb-4" />
-                  <h1 className="w-full font-display text-[clamp(1.75rem,min(5.8vw,8.5vh),3.75rem)] font-medium leading-[1.08] tracking-tight lg:text-[clamp(2.25rem,min(4.4vw,7.5vh),4.25rem)]">
-                    {descMain}
-                    {descHighlight && <span className="text-clay"> {descHighlight}</span>}
-                  </h1>
-                </div>
-                <div className="relative min-h-12">
-                  {step?.tips && (
-                    <p className="inline-flex w-full items-center gap-2 rounded-2xl bg-accent/45 px-4 py-3 text-sm leading-6 text-foreground/85 sm:w-fit">
-                      <span className="shrink-0 font-medium text-clay">{t("cook.tip")}</span>
-                      <span>{step.tips}</span>
-                    </p>
-                  )}
+                <div className="mt-0.5 truncate text-sm text-muted-foreground sm:text-base">
+                  {recipe.title} · {t("cook.stepOf", { current: stepNumber, total: stepCount })}
                 </div>
               </div>
-            </section>
+              <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-xs text-foreground sm:inline-flex">
+                <span className={`h-1.5 w-1.5 rounded-full ${voiceDotClass}`} />
+                {voiceStatusLabel}
+              </span>
+            </div>
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
+              <span className={`h-1.5 w-1.5 rounded-full ${voiceDotClass}`} />
+              <span className="truncate">{voiceStatusLabel}</span>
+            </div>
+          </div>
+          <button
+            onClick={handleClose}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={t("cook.backToRecipeButton")}
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </header>
 
-            <aside className="flex min-h-0 min-w-0 flex-col gap-4">
-              {activeTimers.length > 0 && (
-                <div className="grid shrink-0 gap-3">
-                  {activeTimers.map((timer) => {
-                    const progress =
-                      timer.totalSeconds > 0
-                        ? (1 - timer.remainingSeconds / timer.totalSeconds) * 100
-                        : 0;
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4 sm:gap-5 sm:px-8 sm:pb-7">
+          <section className="overflow-hidden rounded-[1.6rem] bg-background/78 px-5 py-5 sm:rounded-[1.85rem] sm:px-8 sm:py-7">
+            <div className="text-sm text-muted-foreground sm:text-base">
+              CookTalk · {voiceModeLabel}
+            </div>
+            <h1 className="mt-4 max-h-[14rem] overflow-y-auto break-words font-display text-[clamp(1.8rem,8vw,2.45rem)] font-medium leading-[1.22] sm:mt-5 sm:max-h-[18rem] sm:text-[clamp(2.35rem,5vw,4.05rem)] sm:leading-[1.14]">
+              <span>“</span>
+              {descMain}
+              {descHighlight && <span className="text-clay"> {descHighlight}</span>}
+              <span>”</span>
+            </h1>
+            {step?.tips && (
+              <p className="mt-4 rounded-2xl bg-secondary/60 px-4 py-3 text-sm leading-6 text-foreground/85 sm:text-base">
+                <span className="font-medium text-clay">{t("cook.tip")}</span>
+                <span className="ml-2">{step.tips}</span>
+              </p>
+            )}
+            <div className="mt-5 flex items-center gap-4 text-muted-foreground">
+              <Waves className="h-7 w-7 shrink-0 text-clay/55" strokeWidth={1.6} />
+              <div className="grid min-w-0 flex-1 grid-flow-col auto-cols-fr gap-1.5">
+                {Array.from({ length: stepCount }).map((_, index) => (
+                  <span
+                    key={index}
+                    className={cn(
+                      "h-0.5 min-w-0 rounded-full transition-all sm:h-1",
+                      index < safeStep
+                        ? "bg-foreground/65"
+                        : index === safeStep
+                          ? "bg-clay"
+                          : "bg-border",
+                    )}
+                  />
+                ))}
+                {stepCount === 0 && <span className="h-0.5 rounded-full bg-border sm:h-1" />}
+              </div>
+              {hasSpokenCurrentStep && (
+                <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-xs text-muted-foreground sm:inline-flex">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
+                  {t("cook.stepSpokenOnce")}
+                </span>
+              )}
+            </div>
+          </section>
 
-                    return (
-                      <div
-                        key={timer.id}
-                        className="relative flex min-h-[7rem] flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-card p-5"
-                      >
-                        <div
-                          className="absolute left-0 top-0 h-full bg-clay/15 transition-all"
-                          style={{ width: `${progress}%` }}
-                          aria-hidden
-                        />
-                        <div className="relative flex items-center gap-3">
-                          <Timer className="h-5 w-5 text-clay" strokeWidth={1.5} />
-                          <div className="min-w-0">
-                            <div className="truncate text-xs text-muted-foreground">
-                              {timer.label}
-                            </div>
-                            <div className="font-display text-3xl tabular-nums">
-                              {formatTimer(timer.remainingSeconds)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="relative flex items-center justify-between gap-3">
-                          <VoiceHint>
-                            {t("cook.addTime")} / {t("cook.cancel")}
-                          </VoiceHint>
-                          <button
-                            onClick={() => {
-                              cancelTimer(timer.id);
-                              updateLatestState({
-                                timers: latestStateRef.current.timers.filter(
-                                  (item) => item.id !== timer.id,
-                                ),
-                              });
-                              void speak(
-                                language === "zh"
-                                  ? `${timer.label}已取消。`
-                                  : `${timer.label} cancelled.`,
-                              );
-                            }}
-                            className="shrink-0 rounded-full border border-border px-3 py-1 text-xs hover:bg-foreground hover:text-background"
-                          >
-                            {t("cook.cancel").replaceAll('"', "")}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+          {hasTimerCards && (
+            <section className="grid grid-cols-2 gap-3 sm:gap-4">
+              {step?.durationSec && displayedTimers.length === 0 && (
+                <div className="col-span-2 rounded-[1.35rem] border border-border bg-background/70 p-4 sm:rounded-[1.5rem] sm:p-5">
+                  <div className="flex items-start justify-between gap-2 text-sm text-muted-foreground">
+                    <span className="truncate">
+                      {t("cook.stepOf", { current: stepNumber, total: stepCount })}
+                    </span>
+                    <Clock3 className="h-4 w-4 shrink-0 text-foreground" strokeWidth={1.65} />
+                  </div>
+                  <div className="mt-3 font-display text-3xl leading-none tabular-nums sm:text-5xl">
+                    {formatTimer(step.durationSec)}
+                  </div>
                 </div>
               )}
+              {displayedTimers.map((timer) => {
+                const progress =
+                  timer.totalSeconds > 0
+                    ? (1 - timer.remainingSeconds / timer.totalSeconds) * 100
+                    : 0;
 
-              <div className="flex min-h-[20rem] min-w-0 flex-1 flex-col rounded-[2rem] border border-border bg-card p-4 sm:p-5 lg:min-h-0">
-                <div className="flex shrink-0 items-center gap-2">
-                  <MessageCircle className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                  <div className="text-sm font-medium">{t("cook.voiceQa")}</div>
-                </div>
+                return (
+                  <div
+                    key={timer.id}
+                    className="relative overflow-hidden rounded-[1.35rem] border border-border bg-background/70 p-4 sm:rounded-[1.5rem] sm:p-5"
+                  >
+                    <div
+                      className="absolute inset-y-0 left-0 bg-clay/12 transition-all"
+                      style={{ width: `${progress}%` }}
+                      aria-hidden
+                    />
+                    <div className="relative flex items-start justify-between gap-2 text-sm text-muted-foreground">
+                      <span className="min-w-0 truncate">{timer.label}</span>
+                      <Timer className="h-4 w-4 shrink-0 text-foreground" strokeWidth={1.65} />
+                    </div>
+                    <div className="relative mt-3 font-display text-3xl leading-none tabular-nums sm:text-5xl">
+                      {formatTimer(timer.remainingSeconds)}
+                    </div>
+                    <div className="relative mt-3 flex items-center justify-between gap-2">
+                      <VoiceHint>
+                        {t("cook.addTime")} / {t("cook.cancel")}
+                      </VoiceHint>
+                      <button
+                        onClick={() => {
+                          cancelTimer(timer.id);
+                          updateLatestState({
+                            timers: latestStateRef.current.timers.filter(
+                              (item) => item.id !== timer.id,
+                            ),
+                          });
+                          void speak(
+                            language === "zh"
+                              ? `${timer.label}已取消。`
+                              : `${timer.label} cancelled.`,
+                          );
+                        }}
+                        className="shrink-0 rounded-full border border-border bg-card/60 px-3 py-1 text-xs hover:bg-foreground hover:text-background"
+                      >
+                        {t("cook.cancel").replaceAll('"', "")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+
+          <section className="rounded-[1.35rem] border border-dashed border-border bg-background/45 p-4 sm:rounded-[1.5rem] sm:p-5">
+            <div className="flex items-start gap-3">
+              <MessageCircle className="mt-0.5 h-5 w-5 shrink-0 text-clay" strokeWidth={1.65} />
+              <div className="min-w-0 flex-1">
                 <div
                   ref={qaScrollRef}
-                  className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto pr-1"
+                  className="flex max-h-32 min-h-0 min-w-0 flex-col gap-2 overflow-y-auto sm:max-h-44"
                 >
                   {qaMessages.map((message) => {
                     const isUser = message.speaker === "user";
                     return (
-                      <div
+                      <p
                         key={message.id}
-                        className={cn("flex min-w-0", isUser ? "justify-end" : "justify-start")}
+                        className={cn(
+                          "whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere] sm:text-base",
+                          isUser ? "text-foreground" : "text-muted-foreground",
+                        )}
                       >
-                        <p
-                          className={cn(
-                            "max-w-[86%] whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6 text-foreground/90",
-                            isUser && "text-right",
-                          )}
-                        >
-                          {message.text}
-                        </p>
-                      </div>
+                        {isUser ? (
+                          <>
+                            <span className="text-muted-foreground">{t("cook.youAsked")} </span>
+                            <span>“{message.text}”</span>
+                          </>
+                        ) : (
+                          message.text
+                        )}
+                      </p>
                     );
                   })}
                   {isQaSubmitting && <QaLoadingDots />}
                   {(voiceError || error) && (
-                    <p className="px-1 text-xs text-destructive">{voiceError || error}</p>
+                    <p className="text-xs text-destructive">{voiceError || error}</p>
                   )}
                   {!voiceError && !error && qaMessages.length === 0 && (
-                    <p className="px-1 text-sm text-muted-foreground">{t("cook.voiceQaBody")}</p>
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      {t("cook.voiceQaBody")}
+                    </p>
                   )}
                 </div>
-                <form onSubmit={handleQaSubmit} className="mt-4 flex shrink-0 gap-2">
+                <form
+                  onSubmit={handleQaSubmit}
+                  className="mt-3 flex items-center gap-2 rounded-full border border-clay/30 bg-card/70 px-3 py-2 shadow-[0_1px_0_oklch(1_0_0/0.4)_inset] transition-colors focus-within:border-clay/70 focus-within:bg-card focus-within:ring-2 focus-within:ring-ring/15"
+                >
                   <input
                     value={qaInput}
                     onChange={(event) => setQaInput(event.target.value)}
                     placeholder={t("cook.voiceQaPlaceholder")}
-                    className="min-w-0 flex-1 rounded-full border border-border bg-background px-4 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-clay"
+                    className="min-w-0 flex-1 bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground sm:text-base"
                   />
                   <button
                     type="submit"
                     disabled={!qaInput.trim()}
-                    className="shrink-0 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-clay disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-clay disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+                    aria-label={t("cook.voiceQaSend")}
                   >
-                    {t("cook.voiceQaSend")}
+                    <Send className="h-4 w-4" strokeWidth={1.75} />
                   </button>
                 </form>
               </div>
-            </aside>
-          </div>
-        </div>
+            </div>
+          </section>
 
-        <div className="shrink-0 border-t border-border/60 bg-card/50">
-          <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:px-6 sm:py-6">
-            <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+          <footer className="mt-auto space-y-4 pb-[max(env(safe-area-inset-bottom),0px)]">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={handlePreviousStep}
                 disabled={isFirstStep}
-                className="inline-flex min-w-[12rem] items-center justify-center rounded-full border border-border bg-background px-8 py-3 text-base font-medium text-foreground transition-colors hover:border-clay hover:text-clay disabled:cursor-not-allowed disabled:border-border disabled:bg-muted/50 disabled:text-muted-foreground"
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:border-clay hover:text-clay disabled:cursor-not-allowed disabled:border-border disabled:bg-muted/50 disabled:text-muted-foreground sm:text-base"
               >
+                <ChevronLeft className="h-4 w-4" strokeWidth={1.8} />
                 {t("cook.previousStepButton")}
               </button>
               {isFinalStep ? (
                 <button
                   onClick={handleClose}
-                  className="inline-flex min-w-[12rem] items-center justify-center rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-colors hover:bg-clay"
+                  className="inline-flex min-h-12 items-center justify-center rounded-full bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-clay sm:text-base"
                 >
                   {t("cook.backToRecipeButton")}
                 </button>
               ) : (
                 <button
                   onClick={handleNextStep}
-                  className="inline-flex min-w-[12rem] items-center justify-center rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-colors hover:bg-clay"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-clay sm:text-base"
                 >
                   {t("cook.nextStepButton")}
+                  <ChevronRight className="h-4 w-4" strokeWidth={1.8} />
                 </button>
               )}
             </div>
-          </div>
+            <div className="flex items-center gap-2 text-sm leading-6 text-muted-foreground">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay/60" />
+              <span>{t("cook.listeningHint")}</span>
+            </div>
+          </footer>
         </div>
       </main>
     </div>

@@ -11,6 +11,8 @@ import {
   Mic,
   UtensilsCrossed,
   ChevronDown,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Recipe } from "@/lib/db";
@@ -26,6 +28,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { AppTooltip } from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export const Route = createFileRoute("/recipes")({
   head: () => ({
@@ -38,11 +42,12 @@ export const Route = createFileRoute("/recipes")({
 });
 
 type SortKey = "lastCookedAt" | "createdAt" | "totalTimeMin" | "difficulty";
+type RecipeViewMode = "cards" | "compact";
 
 type FilterOption = {
   id: string;
   label: string;
-  group: "cuisine" | "flavor" | "difficulty";
+  group: "cuisine" | "difficulty";
 };
 
 type Difficulty = NonNullable<Recipe["tags"]["difficulty"]>;
@@ -72,10 +77,10 @@ function matchesFilter(recipe: Recipe, option: FilterOption): boolean {
   switch (option.group) {
     case "cuisine":
       return recipe.tags.cuisine === option.label;
-    case "flavor":
-      return recipe.tags.flavor?.includes(option.label) ?? false;
     case "difficulty":
-      return (recipe.tags.difficulty ?? DEFAULT_DIFFICULTY) === option.id.replace("difficulty:", "");
+      return (
+        (recipe.tags.difficulty ?? DEFAULT_DIFFICULTY) === option.id.replace("difficulty:", "")
+      );
   }
 }
 
@@ -128,9 +133,11 @@ function filterAndSort(
 
 function RecipesPage() {
   const { t, i18n: activeI18n } = useTranslation();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [activeFilterIds, setActiveFilterIds] = useState<string[]>([]);
   const [sort, setSort] = useState<SortKey>("lastCookedAt");
+  const [viewMode, setViewMode] = useState<RecipeViewMode | null>(null);
 
   const liveRecipes = useLiveQuery(() => db.recipes.toArray(), []);
   const allRecipes = useMemo(() => liveRecipes ?? [], [liveRecipes]);
@@ -141,17 +148,11 @@ function RecipesPage() {
 
   const filterOptions = useMemo<FilterOption[]>(() => {
     const cuisines = new Set<string>();
-    const flavors = new Set<string>();
     const difficulties = new Set<Difficulty>();
 
     allRecipes.forEach((recipe) => {
       const cuisine = recipe.tags.cuisine?.trim();
       if (cuisine) cuisines.add(cuisine);
-
-      recipe.tags.flavor?.forEach((flavor) => {
-        const normalized = flavor.trim();
-        if (normalized) flavors.add(normalized);
-      });
 
       difficulties.add(recipe.tags.difficulty ?? DEFAULT_DIFFICULTY);
     });
@@ -160,9 +161,6 @@ function RecipesPage() {
       ...Array.from(cuisines)
         .sort()
         .map((label) => ({ id: `cuisine:${label}`, label, group: "cuisine" as const })),
-      ...Array.from(flavors)
-        .sort()
-        .map((label) => ({ id: `flavor:${label}`, label, group: "flavor" as const })),
       ...Array.from(difficulties)
         .sort((a, b) => DIFFICULTY_ORDER[a] - DIFFICULTY_ORDER[b])
         .map((difficulty) => ({
@@ -204,6 +202,7 @@ function RecipesPage() {
   };
 
   const activeFilters = filterOptions.filter((option) => activeFilterIdSet.has(option.id));
+  const activeViewMode: RecipeViewMode = viewMode ?? (isMobile ? "compact" : "cards");
 
   const importButton = (
     <Link
@@ -295,6 +294,14 @@ function RecipesPage() {
                 >
                   <ArrowUpDown className="h-3.5 w-3.5" strokeWidth={1.75} /> {sortLabels[sort]}
                 </button>
+
+                <RecipeViewModeToggle
+                  value={activeViewMode}
+                  onChange={(next) => setViewMode(next)}
+                  cardsLabel={t("recipes.viewCards")}
+                  compactLabel={t("recipes.viewCompact")}
+                  ariaLabel={t("recipes.viewMode")}
+                />
               </div>
             </div>
           </div>
@@ -305,6 +312,18 @@ function RecipesPage() {
         <div className="page-content-container">
           {displayed.length === 0 ? (
             <EmptyState search={search} t={t} importButton={importButton} />
+          ) : activeViewMode === "compact" ? (
+            <div className="recipe-compact-list">
+              {displayed.map((r, i) => (
+                <RecipeCompactItem
+                  key={r.id}
+                  recipe={r}
+                  index={i}
+                  coverUrl={coverUrls.get(r.id)}
+                  t={t}
+                />
+              ))}
+            </div>
           ) : (
             <div className="recipe-card-grid">
               {displayed.map((r, i) => (
@@ -314,6 +333,62 @@ function RecipesPage() {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function RecipeViewModeToggle({
+  value,
+  onChange,
+  cardsLabel,
+  compactLabel,
+  ariaLabel,
+}: {
+  value: RecipeViewMode;
+  onChange: (value: RecipeViewMode) => void;
+  cardsLabel: string;
+  compactLabel: string;
+  ariaLabel: string;
+}) {
+  const modes: Array<{
+    value: RecipeViewMode;
+    label: string;
+    icon: typeof LayoutGrid;
+  }> = [
+    { value: "cards", label: cardsLabel, icon: LayoutGrid },
+    { value: "compact", label: compactLabel, icon: List },
+  ];
+
+  return (
+    <div
+      className="inline-flex shrink-0 rounded-full border border-border bg-card p-0.5"
+      role="group"
+      aria-label={ariaLabel}
+    >
+      {modes.map((mode) => {
+        const active = value === mode.value;
+        const Icon = mode.icon;
+
+        return (
+          <AppTooltip key={mode.value} content={mode.label} side="top" align="center">
+            <button
+              type="button"
+              aria-label={mode.label}
+              aria-pressed={active}
+              onClick={() => onChange(mode.value)}
+              className={cn(
+                "inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-full px-2.5 text-xs transition-colors",
+                active
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:bg-background hover:text-foreground",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <span className="hidden sm:inline">{mode.label}</span>
+            </button>
+          </AppTooltip>
+        );
+      })}
     </div>
   );
 }
@@ -339,7 +414,6 @@ function SplitFilterButton({
   const activeFilterCount = activeFilters.length;
 
   const cuisines = allOptions.filter((option) => option.group === "cuisine");
-  const flavors = allOptions.filter((option) => option.group === "flavor");
   const difficulties = allOptions.filter((option) => option.group === "difficulty");
 
   return (
@@ -405,27 +479,9 @@ function SplitFilterButton({
               </>
             )}
 
-            {flavors.length > 0 && (
-              <>
-                {(cuisines.length > 0 || difficulties.length > 0) && <DropdownMenuSeparator />}
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  {t("recipes.filterGroupFlavor")}
-                </DropdownMenuLabel>
-                {flavors.map((option) => (
-                  <DropdownMenuCheckboxItem
-                    key={option.id}
-                    checked={activeFilterIds.has(option.id)}
-                    onCheckedChange={() => onToggleFilter(option.id)}
-                  >
-                    {option.label}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </>
-            )}
-
             {difficulties.length > 0 && (
               <>
-                {(cuisines.length > 0 || flavors.length > 0) && <DropdownMenuSeparator />}
+                {cuisines.length > 0 && <DropdownMenuSeparator />}
                 <DropdownMenuLabel className="text-xs text-muted-foreground">
                   {t("recipes.filterGroupDifficulty")}
                 </DropdownMenuLabel>
@@ -529,6 +585,82 @@ function RecipeCard({
             <UtensilsCrossed className="h-3.5 w-3.5" strokeWidth={1.75} />
             {t(ingredientCountKey, { count: recipe.ingredients.length })}
           </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function RecipeCompactItem({
+  recipe,
+  index,
+  coverUrl,
+  t,
+}: {
+  recipe: Recipe;
+  index: number;
+  coverUrl: string | undefined;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  const gradient = gradientForId(recipe.id);
+  const difficulty = recipe.tags.difficulty ?? DEFAULT_DIFFICULTY;
+  const difficultyLabel = t(`recipes.difficulty.${difficulty}`);
+  const cuisineLabel = recipe.tags.cuisine?.trim() || t("recipes.uncategorizedCuisine");
+  const firstFlavor = recipe.tags.flavor?.find((flavor) => flavor.trim())?.trim();
+  const ingredientCountKey =
+    recipe.ingredients.length === 1 ? "recipes.ingredientCountOne" : "recipes.ingredientCountOther";
+
+  return (
+    <Link
+      to="/recipe-detail"
+      search={{ id: recipe.id }}
+      className="group grid min-h-24 grid-cols-[4.75rem_minmax(0,1fr)] gap-3 rounded-2xl border border-border bg-card p-2.5 transition-colors hover:border-clay/60 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4 sm:p-3"
+    >
+      <div
+        className={`relative overflow-hidden rounded-xl ${coverUrl ? "" : `bg-gradient-to-br ${gradient}`}`}
+      >
+        <div className="aspect-square sm:aspect-[4/3]" />
+        {coverUrl ? (
+          <img
+            src={coverUrl}
+            alt={recipe.title}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <>
+            <div className="absolute inset-0 grain opacity-50" aria-hidden />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <ChefHat className="h-8 w-8 text-foreground/20" strokeWidth={1} />
+            </div>
+          </>
+        )}
+        <VoiceBadge
+          n={index + 1}
+          className="absolute left-1.5 top-1.5 !h-5 !w-5 !bg-card !text-[0.62rem] !opacity-90"
+        />
+      </div>
+
+      <div className="flex min-w-0 flex-col justify-center gap-2 py-0.5">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <span className="truncate">{cuisineLabel}</span>
+          <span className="h-1 w-1 shrink-0 rounded-full bg-border" aria-hidden />
+          <span className="shrink-0">{difficultyLabel}</span>
+        </div>
+        <h3 className="truncate font-display text-base font-semibold leading-tight group-hover:text-clay sm:text-lg">
+          {recipe.title}
+        </h3>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />
+            {recipe.tags.totalTimeMin != null
+              ? t("recipes.minutes", { count: recipe.tags.totalTimeMin })
+              : "—"}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <UtensilsCrossed className="h-3.5 w-3.5" strokeWidth={1.75} />
+            {t(ingredientCountKey, { count: recipe.ingredients.length })}
+          </span>
+          {firstFlavor && <span className="max-w-full truncate text-clay">{firstFlavor}</span>}
         </div>
       </div>
     </Link>

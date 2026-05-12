@@ -388,14 +388,24 @@ function parseSpokenNumber(raw: string): number {
 }
 
 function parseTimerLabel(text: string): string {
-  const cleaned = text
-    .replace(/(帮我|给我|请|设置|开始|一个|计时器|计时|定时|timer|remind|after)/gi, "")
+  const purposeMatch = text.match(
+    /(?:提醒(?:我)?|叫(?:我)?|闹(?:我)?|for|to)\s*([^，。！？、,.!?]*?)(?:[，。！？、,.!?]|$)/i,
+  );
+  const source = purposeMatch?.[1]?.trim() || text;
+  const cleaned = source
+    .replace(/(?:帮我|给我|请|再|然后|顺便|设置|开始|一个)/gi, "")
+    .replace(/(?:计时器|计时|定时|倒计时|timer|timers|remind|reminder|after)/gi, "")
     .replace(
-      /([0-9]+|[一二两三四五六七八九十]+)\s*(分钟|分|秒|minute|minutes|second|seconds)/gi,
+      /([0-9]+|[一二两三四五六七八九十]+)\s*(分钟|分|秒|minutes?|mins?|m|seconds?|secs?|s)/gi,
       "",
     )
+    .replace(/^(?:后|之后|以后|的时候)\s*/i, "")
+    .replace(/(?:后|之后|以后|的时候)$/i, "")
+    .replace(/^[\s"'“”‘’`，。！？、,.!?;；:：-]+|[\s"'“”‘’`，。！？、,.!?;；:：-]+$/g, "")
+    .replace(/\s+/g, " ")
     .trim();
-  return cleaned;
+
+  return cleaned.length > 1 ? cleaned : "";
 }
 
 function buildLocalCookingAnswer(

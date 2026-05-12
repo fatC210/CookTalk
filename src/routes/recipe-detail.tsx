@@ -172,6 +172,52 @@ function isEmptyStep(step: EditStep) {
   return !step.description.trim() && !step.durationMin.trim() && !step.tips.trim();
 }
 
+function isInteractiveDragTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    ? Boolean(target.closest("input, textarea, button, select, [role='button']"))
+    : false;
+}
+
+type EditPanelHeaderProps = {
+  title: string;
+  count?: number;
+  action?: React.ReactNode;
+  className?: string;
+};
+
+function EditPanelHeader({ title, count, action, className = "" }: EditPanelHeaderProps) {
+  return (
+    <div
+      className={`sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 backdrop-blur lg:bg-card/95 ${className}`}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <h3 className="truncate text-sm font-medium">{title}</h3>
+        {typeof count === "number" && (
+          <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
+            {count}
+          </span>
+        )}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+type EditPanelProps = {
+  children: React.ReactNode;
+  className?: string;
+};
+
+function EditPanel({ children, className = "" }: EditPanelProps) {
+  return (
+    <section
+      className={`scrollbar-hover min-h-0 space-y-5 rounded-3xl border border-border/70 bg-card/35 p-4 lg:overflow-y-auto ${className}`}
+    >
+      {children}
+    </section>
+  );
+}
+
 type StepDescriptionFieldProps = {
   value: string;
   onChange: (value: string) => void;
@@ -291,8 +337,9 @@ function DetailPage() {
   const [editSteps, setEditSteps] = useState<EditStep[]>([createEmptyStep()]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
-  const [detailDisplayMode, setDetailDisplayMode] =
-    useState<RecipeContentDisplayMode>("all");
+  const [draggingEditStepIndex, setDraggingEditStepIndex] = useState<number | null>(null);
+  const [dragOverEditStepIndex, setDragOverEditStepIndex] = useState<number | null>(null);
+  const [detailDisplayMode, setDetailDisplayMode] = useState<RecipeContentDisplayMode>("all");
   const [editDisplayMode, setEditDisplayMode] = useState<RecipeContentDisplayMode>("all");
   const [expandedCoverPreview, setExpandedCoverPreview] = useState<{
     src: string;
@@ -570,6 +617,12 @@ function DetailPage() {
     setEditSteps((current) => reorderItems(current, fromIndex, toIndex));
   }, []);
 
+  const clearEditStepDragState = useCallback(() => {
+    draggedEditStepIndexRef.current = null;
+    setDraggingEditStepIndex(null);
+    setDragOverEditStepIndex(null);
+  }, []);
+
   const handleSaveEdit = useCallback(async () => {
     if (!id || !recipe) return;
 
@@ -750,6 +803,63 @@ function DetailPage() {
   const showDetailSteps = shouldShowSteps(detailDisplayMode);
   const showEditIngredients = shouldShowIngredients(editDisplayMode);
   const showEditSteps = shouldShowSteps(editDisplayMode);
+  const renderEditIngredientsEditor = () => (
+    <>
+      <EditPanelHeader
+        title={t("recipeDetail.ingredients")}
+        count={editIngredients.length}
+        action={
+          <button
+            type="button"
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs hover:border-foreground"
+            onClick={addEditIngredient}
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+            {t("import.manualAddIngredient")}
+          </button>
+        }
+      />
+      <div className="space-y-2">
+        {editIngredients.map((ingredient, index) => (
+          <div
+            key={index}
+            className="group grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
+            onBlur={(event) => handleEditIngredientBlur(event, index)}
+          >
+            <Input
+              ref={(node) => {
+                editIngredientNameRefs.current[index] = node;
+              }}
+              value={ingredient.name}
+              placeholder={t("import.manualIngredientName")}
+              onChange={(event) => updateEditIngredient(index, { name: event.target.value })}
+            />
+            <Input
+              value={ingredient.amount}
+              placeholder={t("import.manualIngredientAmount")}
+              onChange={(event) => updateEditIngredient(index, { amount: event.target.value })}
+            />
+            {editIngredients.length > 1 && (
+              <button
+                type="button"
+                aria-label={t("common.delete")}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                onClick={() =>
+                  setEditIngredients((current) =>
+                    current.length > 1
+                      ? current.filter((_, itemIndex) => itemIndex !== index)
+                      : [createEmptyIngredient()],
+                  )
+                }
+              >
+                <X className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -982,363 +1092,347 @@ function DetailPage() {
           </div>
 
           <div className="grid gap-12 lg:grid-cols-12">
-          {/* Ingredients */}
-          {showDetailIngredients && (
-          <aside className={showDetailSteps ? "lg:col-span-4" : "lg:col-span-12"}>
-            <div className="lg:sticky lg:top-24">
-              <div className="flex items-end justify-between">
-                <h2 className="font-display text-2xl">{t("recipeDetail.ingredients")}</h2>
-              </div>
-              <VoiceHint className="mt-2">
-                {t("recipeDetail.checkOff", { item: firstIngredientName })}
-              </VoiceHint>
-              <ul className="mt-4 flex flex-wrap gap-2">
-                {ingredients.map((ing, i) => (
-                  <li
-                    key={i}
-                    className="inline-flex max-w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
-                    onClick={() => toggleChecked(i)}
-                  >
-                    <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                        checked.has(i)
-                          ? "bg-foreground border-foreground text-background"
-                          : "border-border"
-                      }`}
-                    >
-                      {checked.has(i) && <Check className="h-3 w-3" strokeWidth={2.5} />}
-                    </span>
-                    <span
-                      className={`min-w-0 text-sm transition-opacity ${checked.has(i) ? "opacity-40 line-through" : ""}`}
-                    >
-                      <span className="break-words">{ing.name}</span>
-                      {ing.amount && (
-                        <span className="ml-2 text-xs text-muted-foreground">{ing.amount}</span>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-
-              <div className="mt-6 rounded-2xl border border-dashed border-border bg-card p-4">
-                <div className="text-xs text-muted-foreground">{t("recipeDetail.lastCooked")}</div>
-                <div className="mt-1 font-display text-lg">{formatTimeAgo(lastCookedAt, t)}</div>
-                <div className="mt-3 text-xs text-muted-foreground">
-                  {t("recipeDetail.source")} ·{" "}
-                  {recipe.sourceUrl || recipe.rawTranscript
-                    ? t("recipeDetail.imported")
-                    : t("recipeDetail.manual")}
-                  <br />
-                  {t("recipeDetail.saved")} · {formatSaved(createdAt, i18n.language, t)}
-                </div>
-              </div>
-            </div>
-          </aside>
-          )}
-
-          {/* Steps */}
-          {showDetailSteps && (
-          <div className={showDetailIngredients ? "lg:col-span-8" : "lg:col-span-12"}>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <h2 className="font-display text-2xl">{t("recipeDetail.steps")}</h2>
-              <VoiceHint>{t("recipeDetail.stepsHint")}</VoiceHint>
-            </div>
-            <ol className="mt-4 space-y-3">
-              {steps.map((s, i) => (
-                <li
-                  key={i}
-                  className="group relative flex min-h-28 flex-col gap-4 rounded-2xl border border-border bg-card p-4 hover:border-clay/60 sm:flex-row sm:items-center sm:gap-5 sm:p-5"
-                >
-                  <VoiceBadge
-                    n={i + 1}
-                    className="absolute left-4 top-4 !bg-card sm:-left-3 sm:top-1/2 sm:-translate-y-1/2"
-                  />
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary font-display text-lg sm:h-12 sm:w-12 sm:text-xl">
-                    {i + 1}
+            {/* Ingredients */}
+            {showDetailIngredients && (
+              <aside className={showDetailSteps ? "lg:col-span-4" : "lg:col-span-12"}>
+                <div className="lg:sticky lg:top-24">
+                  <div className="flex items-end justify-between">
+                    <h2 className="font-display text-2xl">{t("recipeDetail.ingredients")}</h2>
                   </div>
-                  <div className="flex min-h-16 flex-1 flex-col justify-center">
-                    <p className="text-base leading-relaxed">{s.description}</p>
-                    {(s.durationSec || s.tips) && (
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        {s.durationSec && (
-                          <span className="inline-flex items-center gap-1">
-                            <Clock className="h-3 w-3" strokeWidth={1.75} />{" "}
-                            {t("recipes.minutes", { count: Math.ceil(s.durationSec / 60) })}
-                          </span>
-                        )}
-                        {s.tips && (
-                          <span className="rounded-full bg-accent/40 px-2 py-0.5 text-accent-foreground">
-                            {t("recipeDetail.tip")} · {s.tips}
-                          </span>
+                  <VoiceHint className="mt-2">
+                    {t("recipeDetail.checkOff", { item: firstIngredientName })}
+                  </VoiceHint>
+                  <ul className="mt-4 flex flex-wrap gap-2">
+                    {ingredients.map((ing, i) => (
+                      <li
+                        key={i}
+                        className="inline-flex max-w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
+                        onClick={() => toggleChecked(i)}
+                      >
+                        <span
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                            checked.has(i)
+                              ? "bg-foreground border-foreground text-background"
+                              : "border-border"
+                          }`}
+                        >
+                          {checked.has(i) && <Check className="h-3 w-3" strokeWidth={2.5} />}
+                        </span>
+                        <span
+                          className={`min-w-0 text-sm transition-opacity ${checked.has(i) ? "opacity-40 line-through" : ""}`}
+                        >
+                          <span className="break-words">{ing.name}</span>
+                          {ing.amount && (
+                            <span className="ml-2 text-xs text-muted-foreground">{ing.amount}</span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <div className="mt-6 rounded-2xl border border-dashed border-border bg-card p-4">
+                    <div className="text-xs text-muted-foreground">
+                      {t("recipeDetail.lastCooked")}
+                    </div>
+                    <div className="mt-1 font-display text-lg">
+                      {formatTimeAgo(lastCookedAt, t)}
+                    </div>
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      {t("recipeDetail.source")} ·{" "}
+                      {recipe.sourceUrl || recipe.rawTranscript
+                        ? t("recipeDetail.imported")
+                        : t("recipeDetail.manual")}
+                      <br />
+                      {t("recipeDetail.saved")} · {formatSaved(createdAt, i18n.language, t)}
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            )}
+
+            {/* Steps */}
+            {showDetailSteps && (
+              <div className={showDetailIngredients ? "lg:col-span-8" : "lg:col-span-12"}>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <h2 className="font-display text-2xl">{t("recipeDetail.steps")}</h2>
+                  <VoiceHint>{t("recipeDetail.stepsHint")}</VoiceHint>
+                </div>
+                <ol className="mt-4 space-y-3">
+                  {steps.map((s, i) => (
+                    <li
+                      key={i}
+                      className="group relative flex min-h-28 flex-col gap-4 rounded-2xl border border-border bg-card p-4 hover:border-clay/60 sm:flex-row sm:items-center sm:gap-5 sm:p-5"
+                    >
+                      <VoiceBadge
+                        n={i + 1}
+                        className="absolute left-4 top-4 !bg-card sm:-left-3 sm:top-1/2 sm:-translate-y-1/2"
+                      />
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary font-display text-lg sm:h-12 sm:w-12 sm:text-xl">
+                        {i + 1}
+                      </div>
+                      <div className="flex min-h-16 flex-1 flex-col justify-center">
+                        <p className="text-base leading-relaxed">{s.description}</p>
+                        {(s.durationSec || s.tips) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                            {s.durationSec && (
+                              <span className="inline-flex items-center gap-1">
+                                <Clock className="h-3 w-3" strokeWidth={1.75} />{" "}
+                                {t("recipes.minutes", { count: Math.ceil(s.durationSec / 60) })}
+                              </span>
+                            )}
+                            {s.tips && (
+                              <span className="rounded-full bg-accent/40 px-2 py-0.5 text-accent-foreground">
+                                {t("recipeDetail.tip")} · {s.tips}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={t("recipeDetail.startFromStep", { count: i + 1 })}
-                    onClick={() => handleStartCooking(i)}
-                    className="inline-flex h-10 w-10 self-center items-center justify-center rounded-full border border-border bg-transparent text-foreground opacity-100 transition-opacity hover:border-clay hover:bg-transparent hover:text-clay focus-visible:border-border sm:opacity-0 sm:group-hover:opacity-100"
-                  >
-                    <Play className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          </div>
-          )}
+                      <button
+                        type="button"
+                        aria-label={t("recipeDetail.startFromStep", { count: i + 1 })}
+                        onClick={() => handleStartCooking(i)}
+                        className="inline-flex h-10 w-10 self-center items-center justify-center rounded-full border border-border bg-transparent text-foreground opacity-100 transition-opacity hover:border-clay hover:bg-transparent hover:text-clay focus-visible:border-border sm:opacity-0 sm:group-hover:opacity-100"
+                      >
+                        <Play className="h-4 w-4" strokeWidth={1.75} />
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
           </div>
         </div>
       </section>
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="grid h-[calc(100dvh-1rem)] max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-[2rem] p-0 sm:h-[92dvh] sm:w-[calc(100vw-2rem)] sm:p-0">
-          <DialogHeader className="flex-col gap-3 space-y-0 border-b border-border/70 px-5 py-4 pr-12 text-left sm:flex-row sm:items-start sm:justify-between sm:px-6">
-            <div className="space-y-1.5">
-              <DialogTitle>{t("recipeDetail.editRecipeTitle")}</DialogTitle>
-              <DialogDescription>{t("recipeDetail.editRecipeBody")}</DialogDescription>
+        <DialogContent className="grid h-[calc(100dvh-1rem)] max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-[1.75rem] border-border bg-background p-0 sm:h-[92dvh] sm:w-[calc(100vw-2rem)] sm:p-0">
+          <DialogHeader className="space-y-0 border-b border-border/70 py-4 pl-5 pr-16 text-left sm:pl-6 sm:pr-20">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="space-y-1.5">
+                <DialogTitle className="font-display text-2xl">
+                  {t("recipeDetail.editRecipeTitle")}
+                </DialogTitle>
+                <DialogDescription className="max-w-2xl">
+                  {t("recipeDetail.editRecipeBody")}
+                </DialogDescription>
+              </div>
+              <RecipeContentDisplayToggle
+                value={editDisplayMode}
+                onChange={setEditDisplayMode}
+                allLabel={t("recipeContentDisplay.all")}
+                ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
+                stepsLabel={t("recipeContentDisplay.stepsOnly")}
+                ariaLabel={t("recipeContentDisplay.ariaLabel")}
+                className="shrink-0 self-start"
+              />
             </div>
-            <RecipeContentDisplayToggle
-              value={editDisplayMode}
-              onChange={setEditDisplayMode}
-              allLabel={t("recipeContentDisplay.all")}
-              ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
-              stepsLabel={t("recipeContentDisplay.stepsOnly")}
-              ariaLabel={t("recipeContentDisplay.ariaLabel")}
-              className="shrink-0 self-start"
-            />
           </DialogHeader>
 
-          <div className="min-h-0 overflow-y-auto p-4 lg:overflow-hidden lg:p-5">
+          <div className="min-h-0 overflow-y-auto bg-secondary/20 p-4 lg:overflow-hidden lg:p-5">
             <div
-              className={`grid gap-4 lg:min-h-0 ${
-                showEditIngredients && showEditSteps
-                  ? "lg:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.1fr)]"
+              className={`grid gap-4 lg:h-full lg:min-h-0 ${
+                showEditIngredients || showEditSteps
+                  ? "lg:grid-cols-[minmax(20rem,0.82fr)_minmax(0,1.18fr)]"
                   : "lg:grid-cols-1"
               }`}
             >
-            <div className="scrollbar-hover space-y-5 lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:border lg:border-border/70 lg:bg-card/30 lg:p-4">
-              <div className="space-y-4">
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("import.manualRecipeTitle")}</span>
-                  <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
-                </label>
-                <div className="grid gap-3 sm:grid-cols-2">
+              <EditPanel>
+                <div className="space-y-4 rounded-2xl border border-border/70 bg-background p-4 shadow-sm">
+                  <EditPanelHeader
+                    title={t("recipeDetail.editRecipeTitle")}
+                    className="static -mx-0 mb-1 border-0 bg-transparent px-0 py-0 shadow-none"
+                  />
                   <label className="space-y-2">
-                    <span className="text-sm font-medium">{t("import.manualCuisine")}</span>
+                    <span className="text-sm font-medium">{t("import.manualRecipeTitle")}</span>
                     <Input
-                      value={editCuisine}
-                      onChange={(event) => setEditCuisine(event.target.value)}
+                      value={editTitle}
+                      onChange={(event) => setEditTitle(event.target.value)}
                     />
                   </label>
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium">{t("import.manualTotalTime")}</span>
-                    <div className="flex rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay">
-                      <input
-                        className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
-                        inputMode="numeric"
-                        value={editTotalTime}
-                        onChange={(event) => setEditTotalTime(event.target.value)}
-                        placeholder={t("import.manualTotalTimePlaceholder")}
-                      />
-                      <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
-                        {t("import.manualStepDurationUnit")}
-                      </span>
-                    </div>
-                  </label>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium">{t("import.manualDifficulty")}</span>
-                    <Select
-                      value={editDifficulty || "__empty__"}
-                      onValueChange={(next) =>
-                        setEditDifficulty(next === "__empty__" ? "" : (next as EditDifficulty))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__empty__">{t("common.unknown")}</SelectItem>
-                        <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
-                        <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
-                        <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium">{t("import.manualFlavors")}</span>
-                    <Input
-                      value={editFlavors}
-                      onChange={(event) => setEditFlavors(event.target.value)}
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {showEditIngredients && (
-              <div className="space-y-3">
-                <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl bg-background/95 px-1 py-2 backdrop-blur lg:bg-card/95">
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-sm font-medium">{t("recipeDetail.ingredients")}</h3>
-                    <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
-                      {editIngredients.length}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs hover:border-foreground"
-                    onClick={addEditIngredient}
-                  >
-                    <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    {t("import.manualAddIngredient")}
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {editIngredients.map((ingredient, index) => (
-                    <div
-                      key={index}
-                      className="group grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
-                      onBlur={(event) => handleEditIngredientBlur(event, index)}
-                    >
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("import.manualCuisine")}</span>
                       <Input
-                        ref={(node) => {
-                          editIngredientNameRefs.current[index] = node;
-                        }}
-                        value={ingredient.name}
-                        placeholder={t("import.manualIngredientName")}
-                        onChange={(event) =>
-                          updateEditIngredient(index, { name: event.target.value })
-                        }
+                        value={editCuisine}
+                        onChange={(event) => setEditCuisine(event.target.value)}
                       />
-                      <Input
-                        value={ingredient.amount}
-                        placeholder={t("import.manualIngredientAmount")}
-                        onChange={(event) =>
-                          updateEditIngredient(index, { amount: event.target.value })
-                        }
-                      />
-                      {editIngredients.length > 1 && (
-                        <button
-                          type="button"
-                          aria-label={t("common.delete")}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                          onClick={() =>
-                            setEditIngredients((current) =>
-                              current.length > 1
-                                ? current.filter((_, itemIndex) => itemIndex !== index)
-                                : [createEmptyIngredient()],
-                            )
-                          }
-                        >
-                          <X className="h-4 w-4" strokeWidth={1.75} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              )}
-            </div>
-
-            {showEditSteps && (
-            <div className="scrollbar-hover space-y-3 lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:border lg:border-border/70 lg:bg-card/30 lg:p-4">
-              <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 backdrop-blur lg:bg-card/95">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-sm font-medium">{t("recipeDetail.steps")}</h3>
-                  <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
-                    {editSteps.length}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs hover:border-foreground"
-                  onClick={addEditStep}
-                >
-                  <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-                  {t("import.manualAddStep")}
-                </button>
-              </div>
-              <div className="space-y-3">
-                {editSteps.map((step, index) => (
-                  <div
-                    key={index}
-                    className="group rounded-2xl border border-border bg-card p-4"
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const fromIndex = draggedEditStepIndexRef.current;
-                      if (fromIndex !== null) moveEditStep(fromIndex, index);
-                      draggedEditStepIndexRef.current = null;
-                    }}
-                    onBlur={(event) => handleEditStepBlur(event, index)}
-                  >
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="-ml-1 inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-full border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
-                          draggable
-                          onDragStart={(event) => {
-                            draggedEditStepIndexRef.current = index;
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", String(index));
-                          }}
-                          onDragEnd={() => {
-                            draggedEditStepIndexRef.current = null;
-                          }}
-                        >
-                          <GripVertical className="h-4 w-4" strokeWidth={1.75} />
-                        </button>
-                        <span className="font-display text-lg">{index + 1}</span>
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("import.manualTotalTime")}</span>
+                      <div className="flex rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay">
+                        <input
+                          className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+                          inputMode="numeric"
+                          value={editTotalTime}
+                          onChange={(event) => setEditTotalTime(event.target.value)}
+                          placeholder={t("import.manualTotalTimePlaceholder")}
+                        />
+                        <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
+                          {t("import.manualStepDurationUnit")}
+                        </span>
                       </div>
-                      {editSteps.length > 1 && (
-                        <button
-                          type="button"
-                          aria-label={t("common.delete")}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                          onClick={() =>
-                            setEditSteps((current) =>
-                              current.length > 1
-                                ? current.filter((_, itemIndex) => itemIndex !== index)
-                                : [createEmptyStep()],
-                            )
-                          }
-                        >
-                          <X className="h-4 w-4" strokeWidth={1.75} />
-                        </button>
-                      )}
-                    </div>
-                    <StepDescriptionField
-                      textareaRef={(node) => {
-                        editStepDescriptionRefs.current[index] = node;
-                      }}
-                      value={step.description}
-                      onChange={(value) => updateEditStep(index, { description: value })}
-                      placeholder={t("import.manualStepDescription")}
-                    />
-                    <div className="mt-3">
-                      <StepMetadataFields
-                        durationValue={step.durationMin}
-                        tipsValue={step.tips}
-                        onDurationChange={(value) => updateEditStep(index, { durationMin: value })}
-                        onTipsChange={(value) => updateEditStep(index, { tips: value })}
-                        durationLabel={t("import.manualStepDuration")}
-                        durationPlaceholder={t("import.manualStepDurationPlaceholder")}
-                        durationUnit={t("import.manualStepDurationUnit")}
-                        tipsLabel={t("import.manualStepTips")}
-                        tipsPlaceholder={t("import.manualStepTipsPlaceholder")}
-                      />
-                    </div>
+                    </label>
                   </div>
-                ))}
-              </div>
-            </div>
-            )}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("import.manualDifficulty")}</span>
+                      <Select
+                        value={editDifficulty || "__empty__"}
+                        onValueChange={(next) =>
+                          setEditDifficulty(next === "__empty__" ? "" : (next as EditDifficulty))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__empty__">{t("common.unknown")}</SelectItem>
+                          <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
+                          <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
+                          <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("import.manualFlavors")}</span>
+                      <Input
+                        value={editFlavors}
+                        onChange={(event) => setEditFlavors(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {showEditIngredients && showEditSteps && (
+                  <div className="space-y-3">
+                    {renderEditIngredientsEditor()}
+                  </div>
+                )}
+              </EditPanel>
+
+              {showEditIngredients && !showEditSteps && (
+                <EditPanel className="space-y-3">{renderEditIngredientsEditor()}</EditPanel>
+              )}
+
+              {showEditSteps && (
+                <EditPanel className="space-y-3">
+                  <EditPanelHeader
+                    title={t("recipeDetail.steps")}
+                    count={editSteps.length}
+                    action={
+                      <button
+                        type="button"
+                        className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs hover:border-foreground"
+                        onClick={addEditStep}
+                      >
+                        <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        {t("import.manualAddStep")}
+                      </button>
+                    }
+                  />
+                  <div className="space-y-3">
+                    {editSteps.map((step, index) => (
+                      <div
+                        key={index}
+                        className={`group rounded-2xl border bg-background p-4 shadow-sm transition-all duration-150 ${
+                          draggingEditStepIndex === index
+                            ? "scale-[0.99] cursor-grabbing border-clay bg-clay/5 opacity-70 shadow-lg"
+                            : "cursor-grab border-border hover:border-clay/70 hover:shadow-md active:cursor-grabbing"
+                        } ${
+                          dragOverEditStepIndex === index && draggingEditStepIndex !== index
+                            ? "ring-2 ring-clay/35"
+                            : ""
+                        }`}
+                        draggable
+                        onDragStart={(event) => {
+                          if (isInteractiveDragTarget(event.target)) {
+                            event.preventDefault();
+                            return;
+                          }
+                          draggedEditStepIndexRef.current = index;
+                          setDraggingEditStepIndex(index);
+                          setDragOverEditStepIndex(index);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", String(index));
+                        }}
+                        onDragOver={(event) => {
+                          if (draggedEditStepIndexRef.current === null) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                          setDragOverEditStepIndex(index);
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          const fromIndex = draggedEditStepIndexRef.current;
+                          if (fromIndex !== null) moveEditStep(fromIndex, index);
+                          clearEditStepDragState();
+                        }}
+                        onDragEnd={clearEditStepDragState}
+                        onDragLeave={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setDragOverEditStepIndex((current) =>
+                              current === index ? null : current,
+                            );
+                          }
+                        }}
+                        onBlur={(event) => handleEditStepBlur(event, index)}
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className="-ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent bg-muted/50 text-muted-foreground transition-colors group-hover:bg-muted group-hover:text-foreground"
+                            >
+                              <GripVertical className="h-4 w-4" strokeWidth={1.75} />
+                            </span>
+                            <span className="font-display text-lg">{index + 1}</span>
+                          </div>
+                          {editSteps.length > 1 && (
+                            <button
+                              type="button"
+                              aria-label={t("common.delete")}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                              onClick={() =>
+                                setEditSteps((current) =>
+                                  current.length > 1
+                                    ? current.filter((_, itemIndex) => itemIndex !== index)
+                                    : [createEmptyStep()],
+                                )
+                              }
+                            >
+                              <X className="h-4 w-4" strokeWidth={1.75} />
+                            </button>
+                          )}
+                        </div>
+                        <StepDescriptionField
+                          textareaRef={(node) => {
+                            editStepDescriptionRefs.current[index] = node;
+                          }}
+                          value={step.description}
+                          onChange={(value) => updateEditStep(index, { description: value })}
+                          placeholder={t("import.manualStepDescription")}
+                        />
+                        <div className="mt-3">
+                          <StepMetadataFields
+                            durationValue={step.durationMin}
+                            tipsValue={step.tips}
+                            onDurationChange={(value) =>
+                              updateEditStep(index, { durationMin: value })
+                            }
+                            onTipsChange={(value) => updateEditStep(index, { tips: value })}
+                            durationLabel={t("import.manualStepDuration")}
+                            durationPlaceholder={t("import.manualStepDurationPlaceholder")}
+                            durationUnit={t("import.manualStepDurationUnit")}
+                            tipsLabel={t("import.manualStepTips")}
+                            tipsPlaceholder={t("import.manualStepTipsPlaceholder")}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </EditPanel>
+              )}
             </div>
           </div>
 
