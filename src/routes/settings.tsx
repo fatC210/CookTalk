@@ -1,6 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
-import { useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type ReactNode,
+} from "react";
 import { SiteHeader } from "@/components/site-header";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
@@ -52,8 +60,9 @@ import {
 } from "@/lib/llm";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import {
-  getSupportedElevenLabsVoices,
+  getFirstElevenLabsVoiceId,
   toCombinedVoiceOptions,
+  useDefaultElevenLabsVoiceSelection,
   useElevenLabsVoices,
 } from "@/hooks/use-elevenlabs-voices";
 
@@ -294,7 +303,7 @@ function VoiceRoleSelect({
   emptyLabel: string;
   defaultLabel: string;
 }) {
-  const selected = options.find((option) => option.value === value);
+  const selected = options.find((option) => option.value === value) ?? options[0];
   const getOptionDisplayLabel = (option: VoiceOption) =>
     option.displayLabel ?? `${option.label} - ${option.description}`;
   const helperText = selected
@@ -313,7 +322,7 @@ function VoiceRoleSelect({
         </div>
       </div>
       <Select
-        value={value ?? EMPTY_SELECT_VALUE}
+        value={selected?.value ?? EMPTY_SELECT_VALUE}
         onValueChange={(nextValue) => onChange(nextValue === EMPTY_SELECT_VALUE ? null : nextValue)}
         disabled={disabled}
       >
@@ -321,7 +330,6 @@ function VoiceRoleSelect({
           <SelectValue placeholder={disabled ? emptyLabel : defaultLabel} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={EMPTY_SELECT_VALUE}>{disabled ? emptyLabel : defaultLabel}</SelectItem>
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value}>
               {getOptionDisplayLabel(option)}
@@ -414,7 +422,25 @@ function SettingsPage() {
     elevenLabsVoiceOptions,
     formatClonedVoiceDescription,
   );
+  const firstElevenLabsVoiceId = elevenLabsVoiceOptions[0]?.value ?? null;
   const voiceSelectDisabled = !hasElevenLabsKey || voiceOptions.length === 0;
+  const stableVoiceSetters = useMemo(
+    () => [setConversationVoiceId, setCookingVoiceId],
+    [setConversationVoiceId, setCookingVoiceId],
+  );
+  const stableVoiceValues = useMemo(
+    () => [conversationVoiceId, cookingVoiceId],
+    [conversationVoiceId, cookingVoiceId],
+  );
+  const defaultVoiceId = useDefaultElevenLabsVoiceSelection(
+    voiceOptions,
+    firstElevenLabsVoiceId,
+    stableVoiceSetters,
+    stableVoiceValues,
+  );
+  const defaultVoiceLabel =
+    voiceOptions.find((option) => option.value === defaultVoiceId)?.displayLabel ??
+    t("settings.voice.defaultElevenLabsVoice");
 
   // 鈹€鈹€ API key state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   const [elevenLabsKey, setElevenLabsKey] = useState("");
@@ -665,15 +691,15 @@ function SettingsPage() {
               return;
             }
 
-            const defaultVoice = getSupportedElevenLabsVoices(
-              await elevenLabs.listVoices({ showLegacy: true }),
-            )[0];
+            const defaultVoiceId = await getFirstElevenLabsVoiceId(elevenLabs);
 
             await persistApiGroupValues(group, currentValues);
             nextValidatedValues.elevenLabsKey = currentValues.elevenLabsKey;
             setHasElevenLabsKey(true);
-            setConversationVoiceId(defaultVoice?.voice_id ?? null);
-            setCookingVoiceId(defaultVoice?.voice_id ?? null);
+            if (defaultVoiceId) {
+              setConversationVoiceId(defaultVoiceId);
+              setCookingVoiceId(defaultVoiceId);
+            }
             setElevenLabsVoiceRefreshKey((key) => key + 1);
           }
 
@@ -1111,7 +1137,7 @@ function SettingsPage() {
                         onChange={setConversationVoiceId}
                         disabled={voiceSelectDisabled}
                         emptyLabel={t("settings.voice.voiceSelectDisabled")}
-                        defaultLabel={t("settings.voice.noVoiceSelected")}
+                        defaultLabel={defaultVoiceLabel}
                       />
                       <VoiceRoleSelect
                         n={10}
@@ -1122,7 +1148,7 @@ function SettingsPage() {
                         onChange={setCookingVoiceId}
                         disabled={voiceSelectDisabled}
                         emptyLabel={t("settings.voice.voiceSelectDisabled")}
-                        defaultLabel={t("settings.voice.noVoiceSelected")}
+                        defaultLabel={defaultVoiceLabel}
                       />
 
                       <SwitchRow

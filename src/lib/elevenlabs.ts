@@ -42,13 +42,18 @@ export class ElevenLabsService {
     return data.text ?? "";
   }
 
-  async textToSpeech(text: string, voiceId: string): Promise<Blob> {
+  async textToSpeech(
+    text: string,
+    voiceId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<Blob> {
     const response = await fetch(`${this.baseUrl}/text-to-speech/${voiceId}`, {
       method: "POST",
       headers: {
         "xi-api-key": this.apiKey,
         "Content-Type": "application/json",
       },
+      signal: options.signal,
       body: JSON.stringify({
         text,
         model_id: "eleven_multilingual_v2",

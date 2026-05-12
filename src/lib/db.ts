@@ -197,7 +197,7 @@ export async function saveVoicePreviewAudio(
 }
 
 export async function getAllVideoImportTasks(): Promise<VideoImportTask[]> {
-  return db.videoImportTasks.orderBy("updatedAt").reverse().toArray();
+  return db.videoImportTasks.orderBy("createdAt").reverse().toArray();
 }
 
 export async function saveVideoImportTask(task: VideoImportTask): Promise<void> {

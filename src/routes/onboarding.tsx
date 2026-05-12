@@ -5,9 +5,8 @@ import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import { Mic, Volume2, ChefHat, Sparkles, ArrowRight, Check, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { storeApiKey } from "@/lib/crypto";
-import { ElevenLabsService } from "@/lib/elevenlabs";
 import i18n from "@/lib/i18n";
-import { getSupportedElevenLabsVoices } from "@/hooks/use-elevenlabs-voices";
+import { getFirstElevenLabsVoiceIdFromApiKey } from "@/hooks/use-elevenlabs-voices";
 import { useAppStore } from "@/stores/app-store";
 import { useTranslation } from "react-i18next";
 
@@ -77,14 +76,15 @@ function OnboardingPage() {
     setSavingKey(true);
     try {
       const trimmedApiKey = apiKey.trim();
-      const defaultVoice = getSupportedElevenLabsVoices(
-        await new ElevenLabsService(trimmedApiKey).listVoices({ showLegacy: true }),
-      )[0];
+      const defaultVoiceId = await getFirstElevenLabsVoiceIdFromApiKey(trimmedApiKey);
 
       await storeApiKey("elevenlabs", trimmedApiKey);
       setHasElevenLabsKey(true);
-      setConversationVoiceId(defaultVoice?.voice_id ?? null);
-      setCookingVoiceId(defaultVoice?.voice_id ?? null);
+      if (defaultVoiceId) {
+        setConversationVoiceId(defaultVoiceId);
+        setCookingVoiceId(defaultVoiceId);
+        setSelectedVoice(defaultVoiceId);
+      }
       setStepDone(1, true);
       toast.success(t("onboarding.keySaved"));
     } catch {
@@ -95,7 +95,7 @@ function OnboardingPage() {
   };
 
   // Step 2 – Voice selection
-  const [selectedVoice, setSelectedVoice] = useState<string | null>(null);
+  const [selectedVoice, setSelectedVoice] = useState<string | null>(DEFAULT_VOICES[0]?.id ?? null);
   const confirmVoice = () => {
     if (!selectedVoice) return;
     setConversationVoiceId(selectedVoice);
@@ -282,8 +282,7 @@ function OnboardingPage() {
                             <button
                               type="button"
                               onClick={confirmVoice}
-                              disabled={!selectedVoice}
-                              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-40 sm:w-auto"
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay sm:w-auto"
                             >
                               {t("onboarding.steps.voice.action")}{" "}
                               <ArrowRight className="h-4 w-4" strokeWidth={1.75} />

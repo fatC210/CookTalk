@@ -137,6 +137,45 @@
 }
 
 @layer components {
+  .scrollbar-hover {
+    scrollbar-gutter: stable;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hover:hover,
+  .scrollbar-hover:focus-within {
+    scrollbar-color: color-mix(in oklch, var(--color-clay) 65%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-hover::-webkit-scrollbar {
+    display: block;
+    width: 0;
+    height: 0;
+  }
+
+  .scrollbar-hover:hover::-webkit-scrollbar,
+  .scrollbar-hover:focus-within::-webkit-scrollbar {
+    width: 0.625rem;
+    height: 0.625rem;
+  }
+
+  .scrollbar-hover::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-hover::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+    background-color: transparent;
+  }
+
+  .scrollbar-hover:hover::-webkit-scrollbar-thumb,
+  .scrollbar-hover:focus-within::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklch, var(--color-clay) 65%, transparent);
+  }
+
   .voice-badge {
     display: inline-flex;
     align-items: center;

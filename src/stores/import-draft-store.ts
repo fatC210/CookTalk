@@ -13,16 +13,6 @@ export type PipelineStage =
   | "error";
 
 export type ImportMode = "video" | "manual";
-export type FollowUpField = "servings" | "spiceLevel" | "notes";
-export type FollowUpStatus =
-  | "idle"
-  | "speaking"
-  | "listening"
-  | "transcribing"
-  | "refining"
-  | "done";
-export type FollowUpProgressState = "pending" | "answered" | "skipped";
-
 export type StructuredRecipe = {
   title: string;
   ingredients: { name: string; amount: string }[];
@@ -30,8 +20,6 @@ export type StructuredRecipe = {
   tags: Recipe["tags"];
 };
 
-export type FollowUpAnswers = Record<FollowUpField, string>;
-export type FollowUpProgress = Record<FollowUpField, FollowUpProgressState>;
 export type ManualIngredient = StructuredRecipe["ingredients"][number];
 export type ManualDifficulty = Exclude<Recipe["tags"]["difficulty"], undefined> | "";
 export type ManualStep = {
@@ -41,6 +29,18 @@ export type ManualStep = {
 };
 
 export type ManualTextImportStatus = "idle" | "structuring";
+
+export type FollowUpField = "servings" | "spiceLevel" | "notes";
+export type FollowUpAnswers = Record<FollowUpField, string>;
+export type FollowUpProgressValue = "pending" | "answered" | "skipped";
+export type FollowUpProgress = Record<FollowUpField, FollowUpProgressValue>;
+export type FollowUpStatus =
+  | "idle"
+  | "speaking"
+  | "listening"
+  | "transcribing"
+  | "refining"
+  | "done";
 
 export type VideoImportDraftSnapshot = Pick<
   ImportDraftValues,
@@ -169,23 +169,15 @@ export function createEmptyRecipeStep(order = 1): StructuredRecipe["steps"][numb
   return { order, description: "", durationSec: undefined, tips: "" };
 }
 
-export function createEmptyFollowUpAnswers(): FollowUpAnswers {
-  return {
-    servings: "",
-    spiceLevel: "",
-    notes: "",
-  };
+function createInitialFollowUpAnswers(): FollowUpAnswers {
+  return { servings: "", spiceLevel: "", notes: "" };
 }
 
-export function createEmptyFollowUpProgress(): FollowUpProgress {
-  return {
-    servings: "pending",
-    spiceLevel: "pending",
-    notes: "pending",
-  };
+function createInitialFollowUpProgress(): FollowUpProgress {
+  return { servings: "pending", spiceLevel: "pending", notes: "pending" };
 }
 
-function createFollowUpDraft(): Pick<
+function createInitialFollowUpDraft(): Pick<
   ImportDraftValues,
   | "followUpAnswers"
   | "followUpProgress"
@@ -198,8 +190,8 @@ function createFollowUpDraft(): Pick<
   | "followUpCompleted"
 > {
   return {
-    followUpAnswers: createEmptyFollowUpAnswers(),
-    followUpProgress: createEmptyFollowUpProgress(),
+    followUpAnswers: createInitialFollowUpAnswers(),
+    followUpProgress: createInitialFollowUpProgress(),
     followUpIndex: 0,
     followUpInput: "",
     followUpPrompt: "",
@@ -226,7 +218,7 @@ function createInitialImportDraft(): ImportDraftValues {
     editIngredients: [],
     editDifficulty: "",
     editTotalTime: "",
-    ...createFollowUpDraft(),
+    ...createInitialFollowUpDraft(),
     manualTitle: "",
     manualCuisine: "",
     manualDifficulty: "",
@@ -259,11 +251,12 @@ export function createInitialVideoDraftSnapshot(): VideoImportDraftSnapshot {
     editIngredients: [],
     editDifficulty: "",
     editTotalTime: "",
-    ...createFollowUpDraft(),
+    ...createInitialFollowUpDraft(),
   };
 }
 
 export function hasVideoDraftContent(snapshot: VideoImportDraftSnapshot): boolean {
+  const initialSnapshot = createInitialVideoDraftSnapshot();
   return [
     snapshot.selectedMediaFile,
     snapshot.transcript.trim(),
@@ -273,9 +266,12 @@ export function hasVideoDraftContent(snapshot: VideoImportDraftSnapshot): boolea
     snapshot.editTitle.trim(),
     snapshot.editIngredients.length > 0,
     snapshot.editSteps.length > 0,
-    snapshot.stage !== "idle",
+    Object.values(snapshot.followUpAnswers ?? initialSnapshot.followUpAnswers).some((value) =>
+      value.trim(),
+    ),
     snapshot.followUpStarted,
     snapshot.followUpCompleted,
+    snapshot.stage !== "idle",
   ].some(Boolean);
 }
 
@@ -333,8 +329,16 @@ export const useImportDraftStore = create<ImportDraftState>()((set) => {
       set({
         ...createInitialVideoDraftSnapshot(),
         ...(snapshot ?? createInitialVideoDraftSnapshot()),
+        followUpAnswers: {
+          ...createInitialFollowUpAnswers(),
+          ...(snapshot?.followUpAnswers ?? {}),
+        },
+        followUpProgress: {
+          ...createInitialFollowUpProgress(),
+          ...(snapshot?.followUpProgress ?? {}),
+        },
       }),
-    clearFollowUpDraft: () => set(createFollowUpDraft()),
+    clearFollowUpDraft: () => set(createInitialFollowUpDraft()),
     clearVideoDraft: () => set(createInitialVideoDraftSnapshot()),
     clearManualDraft: () =>
       set({

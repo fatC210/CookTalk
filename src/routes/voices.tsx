@@ -82,15 +82,19 @@ function VoiceRoleButton({
   disabled = false,
   onClick,
 }: VoiceRoleButtonProps) {
+  const visibilityClass = isSelected
+    ? "opacity-100 sm:pointer-events-auto sm:opacity-100"
+    : "opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover/voice-card:pointer-events-auto sm:group-hover/voice-card:opacity-100 sm:group-focus-within/voice-card:pointer-events-auto sm:group-focus-within/voice-card:opacity-100";
+
   return (
-    <AppTooltip content={label} side="left" disabled={disabled}>
+    <AppTooltip content={label} side="top" align="center" disabled={disabled}>
       <button
         type="button"
         aria-pressed={isSelected}
         disabled={disabled}
         className={cn(
           "inline-flex h-8 w-8 items-center justify-center rounded-full border bg-secondary/90 text-foreground/80 shadow-sm backdrop-blur transition-[border-color,background-color,color,opacity,box-shadow] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40",
-          "opacity-0 pointer-events-none group-hover/voice-card:pointer-events-auto group-hover/voice-card:opacity-100 group-focus-within/voice-card:pointer-events-auto group-focus-within/voice-card:opacity-100",
+          visibilityClass,
           isSelected
             ? "border-clay bg-clay text-background shadow-sm hover:border-clay hover:bg-clay"
             : "border-border/80 hover:border-clay hover:bg-secondary hover:text-clay",
@@ -143,7 +147,6 @@ function VoicesPage() {
     isLoading: isLoadingElevenLabsVoices,
     error: elevenLabsVoicesError,
     hasElevenLabsKey,
-    reload: reloadElevenLabsVoices,
   } = useElevenLabsVoices();
 
   // Clone dialog state
@@ -567,8 +570,7 @@ function VoicesPage() {
 
   const handleSetConversationVoice = (voiceId: string, name: string) => {
     if (conversationVoiceId === voiceId) {
-      setConversationVoiceId(null);
-      toast.success(t("voices.conversationVoiceCleared", { name }));
+      toast.success(t("voices.conversationVoiceSuccess", { name }));
       return;
     }
 
@@ -578,8 +580,7 @@ function VoicesPage() {
 
   const handleSetCookingVoice = (voiceId: string, name: string) => {
     if (cookingVoiceId === voiceId) {
-      setCookingVoiceId(null);
-      toast.success(t("voices.cookingVoiceCleared", { name }));
+      toast.success(t("voices.cookingVoiceSuccess", { name }));
       return;
     }
 
@@ -755,22 +756,14 @@ function VoicesPage() {
       const target = findVoiceTarget(text);
       if (!target) return;
 
-      if (
-        isVoiceCommandMatch(
-          text,
-          /(设为|设置为|用作|切换为|选择).*(对话|聊天|conversation)/i,
-        )
-      ) {
+      if (isVoiceCommandMatch(text, /(设为|设置为|用作|切换为|选择).*(对话|聊天|conversation)/i)) {
         customEvent.preventDefault();
         handleSetConversationVoice(target.voiceId, target.name);
         return;
       }
 
       if (
-        isVoiceCommandMatch(
-          text,
-          /(设为|设置为|用作|切换为|选择).*(烹饪|做菜|朗读|cooking|cook)/i,
-        )
+        isVoiceCommandMatch(text, /(设为|设置为|用作|切换为|选择).*(烹饪|做菜|朗读|cooking|cook)/i)
       ) {
         customEvent.preventDefault();
         handleSetCookingVoice(target.voiceId, target.name);
@@ -854,96 +847,95 @@ function VoicesPage() {
               const isPausedPreview = pausedPreviewKey === previewKey;
 
               return (
-                <AppTooltip key={v.id} content={t("voices.preview")}>
-                  <article
-                    role="button"
-                    tabIndex={0}
-                    aria-label={
-                      isPlayingPreview
-                        ? t("cook.pause")
-                        : isPausedPreview
-                          ? t("cook.resume")
-                          : t("voices.preview")
-                    }
-                    data-voice-label={`${t("voices.preview")} ${v.name}`}
-                    data-voice-aliases={`播放${v.name} 试听${v.name} 预览${v.name} 暂停${v.name} pause ${v.name} play ${v.name} preview ${v.name}`}
-                    onClick={() => void handlePreviewVoice(v)}
-                    onKeyDown={(event) =>
-                      handleCardKeyDown(event, () => void handlePreviewVoice(v))
-                    }
-                    className="group/voice-card relative cursor-pointer rounded-3xl border border-border bg-card p-5 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
-                    <VoiceRoleActionStack>
-                      <VoiceRoleButton
-                        isSelected={conversationVoiceId === v.elevenLabsVoiceId}
-                        disabled={!v.elevenLabsVoiceId}
-                        Icon={MessageCircle}
-                        label={
+                <article
+                  key={v.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={
+                    isPlayingPreview
+                      ? t("cook.pause")
+                      : isPausedPreview
+                        ? t("cook.resume")
+                        : t("voices.preview")
+                  }
+                  data-voice-label={`${t("voices.preview")} ${v.name}`}
+                  data-voice-aliases={`播放${v.name} 试听${v.name} 预览${v.name} 暂停${v.name} pause ${v.name} play ${v.name} preview ${v.name}`}
+                  onClick={() => void handlePreviewVoice(v)}
+                  onKeyDown={(event) => handleCardKeyDown(event, () => void handlePreviewVoice(v))}
+                  className="group/voice-card relative cursor-pointer rounded-3xl border border-border bg-card p-5 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
+                  <VoiceRoleActionStack>
+                    <VoiceRoleButton
+                      isSelected={conversationVoiceId === v.elevenLabsVoiceId}
+                      disabled={!v.elevenLabsVoiceId}
+                      Icon={MessageCircle}
+                      label={
                           conversationVoiceId === v.elevenLabsVoiceId
-                            ? t("voices.clearConversationVoice")
+                            ? t("voices.currentConversationVoice")
                             : t("voices.setConversationVoice")
+                      }
+                      voiceAliases={`设为对话音色 设置${v.name}为对话音色 用${v.name}对话 clear conversation voice set ${v.name} as conversation voice`}
+                      onClick={(event) => {
+                        stopCardPreview(event);
+                        if (v.elevenLabsVoiceId) {
+                          handleSetConversationVoice(v.elevenLabsVoiceId, v.name);
                         }
-                        voiceAliases={`设为对话音色 设置${v.name}为对话音色 用${v.name}对话 clear conversation voice set ${v.name} as conversation voice`}
-                        onClick={(event) => {
-                          stopCardPreview(event);
-                          if (v.elevenLabsVoiceId) {
-                            handleSetConversationVoice(v.elevenLabsVoiceId, v.name);
-                          }
-                        }}
-                      />
-                      <VoiceRoleButton
-                        isSelected={cookingVoiceId === v.elevenLabsVoiceId}
-                        disabled={!v.elevenLabsVoiceId}
-                        Icon={ChefHat}
-                        label={
+                      }}
+                    />
+                    <VoiceRoleButton
+                      isSelected={cookingVoiceId === v.elevenLabsVoiceId}
+                      disabled={!v.elevenLabsVoiceId}
+                      Icon={ChefHat}
+                      label={
                           cookingVoiceId === v.elevenLabsVoiceId
-                            ? t("voices.clearCookingVoice")
+                            ? t("voices.currentCookingVoice")
                             : t("voices.setCookingVoice")
+                      }
+                      voiceAliases={`设为烹饪音色 设置${v.name}为烹饪音色 用${v.name}做菜 用${v.name}朗读 set ${v.name} as cooking voice`}
+                      onClick={(event) => {
+                        stopCardPreview(event);
+                        if (v.elevenLabsVoiceId) {
+                          handleSetCookingVoice(v.elevenLabsVoiceId, v.name);
                         }
-                        voiceAliases={`设为烹饪音色 设置${v.name}为烹饪音色 用${v.name}做菜 用${v.name}朗读 set ${v.name} as cooking voice`}
-                        onClick={(event) => {
-                          stopCardPreview(event);
-                          if (v.elevenLabsVoiceId) {
-                            handleSetCookingVoice(v.elevenLabsVoiceId, v.name);
-                          }
+                      }}
+                    />
+                  </VoiceRoleActionStack>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
+                      {isLoadingPreview ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-clay" strokeWidth={1.5} />
+                      ) : isPlayingPreview ? (
+                        <Pause className="h-5 w-5 text-clay" strokeWidth={1.5} />
+                      ) : (
+                        <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
+                      )}
+                    </div>
+                  </div>
+
+                  <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
+                  {/* Waveform */}
+                  <div className="mt-4 flex h-10 items-center gap-1">
+                    {Array.from({ length: 40 }).map((_, k) => (
+                      <span
+                        key={k}
+                        className={`flex-1 rounded-full bg-clay/40 ${
+                          isPlayingPreview ? "voice-preview-wave-bar" : ""
+                        }`}
+                        style={{
+                          height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
+                          animationDelay: `${k * 34}ms`,
+                          animationDuration: `${760 + (k % 7) * 54}ms`,
                         }}
                       />
-                    </VoiceRoleActionStack>
+                    ))}
+                  </div>
 
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
-                        {isLoadingPreview ? (
-                          <Loader2 className="h-5 w-5 animate-spin text-clay" strokeWidth={1.5} />
-                        ) : isPlayingPreview ? (
-                          <Pause className="h-5 w-5 text-clay" strokeWidth={1.5} />
-                        ) : (
-                          <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
-                        )}
-                      </div>
-                    </div>
-
-                    <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
-                    {/* Waveform */}
-                    <div className="mt-4 flex h-10 items-center gap-1">
-                      {Array.from({ length: 40 }).map((_, k) => (
-                        <span
-                          key={k}
-                          className={`flex-1 rounded-full bg-clay/40 ${
-                            isPlayingPreview ? "voice-preview-wave-bar" : ""
-                          }`}
-                          style={{
-                            height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
-                            animationDelay: `${k * 34}ms`,
-                            animationDuration: `${760 + (k % 7) * 54}ms`,
-                          }}
-                        />
-                      ))}
-                    </div>
-
-                    <div className="mt-4 flex justify-end">
+                  <div className="mt-4 flex justify-end">
+                    <AppTooltip content={t("common.delete")} side="top" align="end">
                       <button
-                        className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border"
+                        className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground opacity-100 transition-[border-color,color,opacity] hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border sm:opacity-0 sm:group-hover/voice-card:opacity-100 sm:group-focus-within/voice-card:opacity-100"
                         aria-label={t("common.delete")}
                         data-voice-label={`${t("common.delete")} ${v.name}`}
                         data-voice-aliases={`删除${v.name} delete ${v.name}`}
@@ -954,9 +946,9 @@ function VoicesPage() {
                       >
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                       </button>
-                    </div>
-                  </article>
-                </AppTooltip>
+                    </AppTooltip>
+                  </div>
+                </article>
               );
             })}
 
@@ -992,17 +984,7 @@ function VoicesPage() {
                   : t("voices.elevenLabsVoicesLocked")}
               </p>
             </div>
-            {hasElevenLabsKey ? (
-              <button
-                type="button"
-                onClick={() => void reloadElevenLabsVoices()}
-                data-voice-label={t("common.retry")}
-                data-voice-aliases="重试 重新加载音色 刷新音色 retry reload voices refresh voices"
-                className="text-sm text-clay hover:underline inline-flex items-center gap-1"
-              >
-                <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("common.retry")}
-              </button>
-            ) : (
+            {!hasElevenLabsKey ? (
               <Link
                 to="/settings"
                 data-voice-label={t("voices.configureKey")}
@@ -1011,7 +993,7 @@ function VoicesPage() {
               >
                 <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} /> {t("voices.configureKey")}
               </Link>
-            )}
+            ) : null}
           </div>
 
           {!hasElevenLabsKey ? (
@@ -1046,7 +1028,6 @@ function VoicesPage() {
           ) : (
             <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
               {elevenLabsVoices.map((voice, i) => {
-                const displayLabel = formatElevenLabsVoiceDisplayLabel(voice, t("common.unknown"));
                 const gender = getElevenLabsVoiceGender(voice, t("common.unknown"));
                 const previewUrl = getElevenLabsVoicePreviewUrl(voice);
                 const previewKey = getPresetPreviewKey(voice.voice_id, previewUrl);
@@ -1055,80 +1036,79 @@ function VoicesPage() {
                 const isPausedPreview = pausedPreviewKey === previewKey;
 
                 return (
-                  <AppTooltip key={voice.voice_id} content={t("voices.preview")}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      aria-label={
-                        isPlayingPreview
-                          ? t("cook.pause")
-                          : isPausedPreview
-                            ? t("cook.resume")
-                            : t("voices.preview")
-                      }
-                      data-voice-label={`${t("voices.preview")} ${voice.name}`}
-                      data-voice-aliases={`播放${voice.name} 试听${voice.name} 预览${voice.name} 暂停${voice.name} pause ${voice.name} play ${voice.name} preview ${voice.name}`}
-                      onClick={() => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
-                      onKeyDown={(event) =>
-                        handleCardKeyDown(
-                          event,
-                          () => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl),
-                        )
-                      }
-                      className="group/voice-card relative flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-5 py-4 pr-24 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <VoiceRoleActionStack className="top-1/2 flex-row -translate-y-1/2">
-                        <VoiceRoleButton
-                          isSelected={conversationVoiceId === voice.voice_id}
-                          Icon={MessageCircle}
-                          label={
-                            conversationVoiceId === voice.voice_id
-                              ? t("voices.clearConversationVoice")
-                              : t("voices.setConversationVoice")
-                          }
-                          voiceAliases={`设为对话音色 设置${voice.name}为对话音色 用${voice.name}对话 clear conversation voice set ${voice.name} as conversation voice`}
-                          onClick={(event) => {
-                            stopCardPreview(event);
-                            handleSetConversationVoice(voice.voice_id, voice.name);
-                          }}
-                        />
-                        <VoiceRoleButton
-                          isSelected={cookingVoiceId === voice.voice_id}
-                          Icon={ChefHat}
-                          label={
-                            cookingVoiceId === voice.voice_id
-                              ? t("voices.clearCookingVoice")
-                              : t("voices.setCookingVoice")
-                          }
-                          voiceAliases={`设为烹饪音色 设置${voice.name}为烹饪音色 用${voice.name}做菜 用${voice.name}朗读 set ${voice.name} as cooking voice`}
-                          onClick={(event) => {
-                            stopCardPreview(event);
-                            handleSetCookingVoice(voice.voice_id, voice.name);
-                          }}
-                        />
-                      </VoiceRoleActionStack>
-                      <div className="flex min-w-0 items-center gap-3">
-                        <VoiceBadge n={i + 1} />
-                        <div className="min-w-0">
-                          <AppTooltip content={displayLabel}>
-                            <div className="truncate font-display text-base">{voice.name}</div>
-                          </AppTooltip>
-                          <div className="mt-1">
-                            <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                              {gender}
-                            </span>
-                          </div>
+                  <div
+                    key={voice.voice_id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={
+                      isPlayingPreview
+                        ? t("cook.pause")
+                        : isPausedPreview
+                          ? t("cook.resume")
+                          : t("voices.preview")
+                    }
+                    data-voice-label={`${t("voices.preview")} ${voice.name}`}
+                    data-voice-aliases={`播放${voice.name} 试听${voice.name} 预览${voice.name} 暂停${voice.name} pause ${voice.name} play ${voice.name} preview ${voice.name}`}
+                    onClick={() => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl)}
+                    onKeyDown={(event) =>
+                      handleCardKeyDown(
+                        event,
+                        () => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl),
+                      )
+                    }
+                    className="group/voice-card relative flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-4 py-4 pb-14 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pr-24"
+                  >
+                    <VoiceRoleActionStack className="bottom-3 top-auto flex-row sm:top-1/2 sm:-translate-y-1/2">
+                      <VoiceRoleButton
+                        isSelected={conversationVoiceId === voice.voice_id}
+                        Icon={MessageCircle}
+                        label={
+                          conversationVoiceId === voice.voice_id
+                            ? t("voices.currentConversationVoice")
+                            : t("voices.setConversationVoice")
+                        }
+                        voiceAliases={`设为对话音色 设置${voice.name}为对话音色 用${voice.name}对话 clear conversation voice set ${voice.name} as conversation voice`}
+                        onClick={(event) => {
+                          stopCardPreview(event);
+                          handleSetConversationVoice(voice.voice_id, voice.name);
+                        }}
+                      />
+                      <VoiceRoleButton
+                        isSelected={cookingVoiceId === voice.voice_id}
+                        Icon={ChefHat}
+                        label={
+                          cookingVoiceId === voice.voice_id
+                            ? t("voices.currentCookingVoice")
+                            : t("voices.setCookingVoice")
+                        }
+                        voiceAliases={`设为烹饪音色 设置${voice.name}为烹饪音色 用${voice.name}做菜 用${voice.name}朗读 set ${voice.name} as cooking voice`}
+                        onClick={(event) => {
+                          stopCardPreview(event);
+                          handleSetCookingVoice(voice.voice_id, voice.name);
+                        }}
+                      />
+                    </VoiceRoleActionStack>
+                    <div className="flex w-full min-w-0 items-start gap-3 sm:w-auto sm:items-center">
+                      <VoiceBadge n={i + 1} className="shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="break-words font-display text-sm leading-snug sm:truncate sm:text-base">
+                          {voice.name}
+                        </div>
+                        <div className="mt-1">
+                          <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            {gender}
+                          </span>
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
-                        {isLoadingPreview ? (
-                          <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
-                        ) : isPlayingPreview ? (
-                          <Pause className="h-4 w-4 text-clay" strokeWidth={1.5} />
-                        ) : null}
-                      </div>
                     </div>
-                  </AppTooltip>
+                    <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                      {isLoadingPreview ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
+                      ) : isPlayingPreview ? (
+                        <Pause className="h-4 w-4 text-clay" strokeWidth={1.5} />
+                      ) : null}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -1282,11 +1262,9 @@ function VoicesPage() {
                     />
                     {uploadedAudio ? (
                       <div className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-border p-3">
-                        <AppTooltip content={uploadedAudio.name}>
-                          <span className="block min-w-0 flex-1 truncate text-sm">
-                            {t("voices.audioSelectedWithName", { name: uploadedAudio.name })}
-                          </span>
-                        </AppTooltip>
+                        <span className="block min-w-0 flex-1 truncate text-sm">
+                          {t("voices.audioSelectedWithName", { name: uploadedAudio.name })}
+                        </span>
                         <button
                           className="shrink-0 text-muted-foreground hover:text-foreground"
                           onClick={() => {

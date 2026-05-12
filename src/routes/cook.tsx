@@ -1,8 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { MessageCircle, Timer, Volume2, X } from "lucide-react";
+import { CheckCircle2, MessageCircle, Timer, Volume2, X } from "lucide-react";
 import { VoiceHint } from "@/components/voice-badge";
 import {
   answerCookingQuestion,
@@ -11,12 +11,14 @@ import {
   parseVoiceIntent,
   speakWithElevenLabs,
   VoicePlaybackInterruptedError,
+  type VoiceIntentType,
   type VoiceStatus,
 } from "@/lib/voice-pipeline";
 import { db, type Recipe } from "@/lib/db";
 import i18n from "@/lib/i18n";
 import { cleanStructuredRecipePayload } from "@/lib/llm";
 import { stopActiveVoicePlayback } from "@/lib/voice-playback";
+import { cn } from "@/lib/utils";
 import { useVoiceSession } from "@/hooks/use-voice-session";
 import { useTimers, type TimerInfo } from "@/hooks/use-timers";
 import { getActiveWakeWords, useAppStore } from "@/stores/app-store";
@@ -50,6 +52,23 @@ type QaMessage = {
   speaker: "assistant" | "user";
   text: string;
 };
+
+const hiddenQaTranscriptIntentTypes = new Set<VoiceIntentType>([
+  "next_step",
+  "previous_step",
+  "pause",
+  "resume",
+  "jump_step",
+  "end_cooking",
+  "show_badges",
+  "hide_badges",
+  "stop_listening",
+  "start_listening",
+]);
+
+function shouldAppendTranscriptToQa(intentType: VoiceIntentType): boolean {
+  return !hiddenQaTranscriptIntentTypes.has(intentType);
+}
 
 function cleanRecipeForCooking(recipe: Recipe, language: AppLanguage): Recipe {
   const cleaned = cleanStructuredRecipePayload(recipe, language, recipe.rawTranscript);
@@ -113,8 +132,10 @@ function CookPage() {
   const [recipe, setRecipe] = useState<Recipe | null | undefined>(undefined);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [spokenStepKey, setSpokenStepKey] = useState<string | null>(null);
+  const [spokenStepKeys, setSpokenStepKeys] = useState<Set<string>>(() => new Set());
   const [qaMessages, setQaMessages] = useState<QaMessage[]>([]);
+  const [qaInput, setQaInput] = useState("");
+  const [isQaSubmitting, setIsQaSubmitting] = useState(false);
 
   const {
     currentStep,
@@ -131,7 +152,9 @@ function CookPage() {
   const { activeTimers, cancelTimer, extendTimer, startTimer, setOnCompleted } = useTimers();
 
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const qaScrollRef = useRef<HTMLDivElement | null>(null);
   const qaMessageIdRef = useRef(0);
+  const activeQaRequestsRef = useRef(0);
   const latestStateRef = useRef<LatestCookingState>({
     recipe: null,
     stepIndex: 0,
@@ -139,9 +162,10 @@ function CookPage() {
     isPaused: false,
   });
   const setMutedRef = useRef<((muted: boolean) => void) | null>(null);
-  const announcedStepKeyRef = useRef<string | null>(null);
+  const announcedStepKeysRef = useRef<Set<string>>(new Set());
   const announcingStepKeyRef = useRef<string | null>(null);
   const pendingInitialAnnounceStepRef = useRef<number | null>(null);
+  const speechAbortControllerRef = useRef<AbortController | null>(null);
   const isClosingRef = useRef(false);
 
   const recipeStepCount = recipe?.steps.length ?? 0;
@@ -150,6 +174,9 @@ function CookPage() {
   const step = recipe?.steps[safeStep];
   const stepNumber = safeStep + 1;
   const stepCount = recipeStepCount;
+  const isFirstStep = safeStep <= 0;
+  const isFinalStep = stepCount > 0 && safeStep === stepCount - 1;
+  const recipeId = recipe?.id;
   const resolvedVoiceId = recipe?.voiceId ?? cookingVoiceId ?? undefined;
   const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
 
@@ -168,7 +195,12 @@ function CookPage() {
     ]);
   }, []);
 
-  const resetQaMessagesForStep = useCallback((prompt: string) => {
+  const updateQaSubmitting = useCallback((delta: 1 | -1) => {
+    activeQaRequestsRef.current = Math.max(0, activeQaRequestsRef.current + delta);
+    setIsQaSubmitting(activeQaRequestsRef.current > 0);
+  }, []);
+
+  const resetQaMessagesForRecipe = useCallback((prompt: string) => {
     qaMessageIdRef.current = 1;
     setQaMessages([
       {
@@ -183,12 +215,20 @@ function CookPage() {
     document.title = t("cook.metaTitle");
   }, [t, language]);
 
+  const cancelPendingSpeech = useCallback(() => {
+    speechAbortControllerRef.current?.abort();
+    speechAbortControllerRef.current = null;
+    announcingStepKeyRef.current = null;
+    stopActiveVoicePlayback();
+    setIsSpeaking(false);
+  }, []);
+
   const handleClose = useCallback(() => {
     isClosingRef.current = true;
-    stopActiveVoicePlayback();
+    cancelPendingSpeech();
     endCooking();
     navigate({ to: id ? "/recipe-detail" : "/recipes", search: id ? { id } : {} });
-  }, [endCooking, id, navigate]);
+  }, [cancelPendingSpeech, endCooking, id, navigate]);
 
   const updateLatestState = useCallback((nextState: Partial<LatestCookingState>) => {
     latestStateRef.current = {
@@ -196,6 +236,22 @@ function CookPage() {
       ...nextState,
     };
   }, []);
+
+  const handlePreviousStep = useCallback(() => {
+    const target = Math.max(safeStep - 1, 0);
+    if (target === safeStep) return;
+    cancelPendingSpeech();
+    prevStep();
+    updateLatestState({ stepIndex: target });
+  }, [cancelPendingSpeech, prevStep, safeStep, updateLatestState]);
+
+  const handleNextStep = useCallback(() => {
+    const target = Math.min(safeStep + 1, Math.max(stepCount - 1, 0));
+    if (target === safeStep) return;
+    cancelPendingSpeech();
+    nextStep();
+    updateLatestState({ stepIndex: target });
+  }, [cancelPendingSpeech, nextStep, safeStep, stepCount, updateLatestState]);
 
   const speak = useCallback(
     async (text: string, options?: { skipCard?: boolean }) => {
@@ -208,10 +264,15 @@ function CookPage() {
 
       if (!hasElevenLabsKey) return false;
 
+      speechAbortControllerRef.current?.abort();
+      const abortController = new AbortController();
+      speechAbortControllerRef.current = abortController;
       setIsSpeaking(true);
       setVoiceError(null);
       try {
-        await speakWithElevenLabs(trimmed, resolvedVoiceId, language);
+        await speakWithElevenLabs(trimmed, resolvedVoiceId, language, {
+          signal: abortController.signal,
+        });
         return true;
       } catch (error) {
         if (error instanceof VoicePlaybackInterruptedError) return false;
@@ -220,27 +281,32 @@ function CookPage() {
         toast.error(message);
         return false;
       } finally {
-        setIsSpeaking(false);
+        if (speechAbortControllerRef.current === abortController) {
+          speechAbortControllerRef.current = null;
+          setIsSpeaking(false);
+        }
       }
     },
     [appendQaMessage, hasElevenLabsKey, language, resolvedVoiceId, t],
   );
 
   const announceCurrentStep = useCallback(
-    async (targetRecipe: Recipe, targetStep: number) => {
+    async (targetRecipe: Recipe, targetStep: number, options?: { force?: boolean }) => {
       const stepKey = `${targetRecipe.id}:${targetStep}:${language}`;
-      if (announcedStepKeyRef.current === stepKey || announcingStepKeyRef.current === stepKey) {
+      if (
+        (!options?.force && announcedStepKeysRef.current.has(stepKey)) ||
+        announcingStepKeyRef.current === stepKey
+      ) {
         return;
       }
 
       announcingStepKeyRef.current = stepKey;
       const stepSpeech = buildStepSpeech(targetRecipe, targetStep, language);
-      resetQaMessagesForStep(t("cook.voiceQaPrompt"));
       try {
         const didSpeak = await speak(stepSpeech, { skipCard: true });
         if (didSpeak) {
-          announcedStepKeyRef.current = stepKey;
-          setSpokenStepKey(stepKey);
+          announcedStepKeysRef.current.add(stepKey);
+          setSpokenStepKeys(new Set(announcedStepKeysRef.current));
         }
       } finally {
         if (announcingStepKeyRef.current === stepKey) {
@@ -248,7 +314,39 @@ function CookPage() {
         }
       }
     },
-    [language, resetQaMessagesForStep, speak, t],
+    [language, speak],
+  );
+
+  const askCookingQuestion = useCallback(
+    async (question: string, options?: { appendUser?: boolean }) => {
+      const cleaned = question.trim();
+      const currentRecipe = latestStateRef.current.recipe;
+      if (!cleaned || !currentRecipe) return;
+
+      if (options?.appendUser) {
+        appendQaMessage("user", cleaned);
+      }
+
+      const { stepIndex, timers } = latestStateRef.current;
+      setVoiceError(null);
+      updateQaSubmitting(1);
+      const answer = await (async () => {
+        try {
+          return await answerCookingQuestion({
+            recipe: currentRecipe,
+            currentStep: stepIndex,
+            question: cleaned,
+            language,
+            timers,
+          });
+        } finally {
+          updateQaSubmitting(-1);
+        }
+      })();
+
+      await speak(answer);
+    },
+    [appendQaMessage, language, speak, updateQaSubmitting],
   );
 
   const handleTranscriptIntent = useCallback(
@@ -257,6 +355,9 @@ function CookPage() {
       if (!currentRecipe) return;
 
       const intent = parseVoiceIntent(transcript);
+      if (shouldAppendTranscriptToQa(intent.type)) {
+        appendQaMessage("user", transcript);
+      }
       const { stepIndex, timers } = latestStateRef.current;
 
       switch (intent.type) {
@@ -266,6 +367,7 @@ function CookPage() {
             await speak(language === "zh" ? "已经是最后一步了。" : "This is the last step.");
             return;
           }
+          cancelPendingSpeech();
           nextStep();
           updateLatestState({ stepIndex: target });
           return;
@@ -276,6 +378,7 @@ function CookPage() {
             await speak(language === "zh" ? "已经是第一步了。" : "This is the first step.");
             return;
           }
+          cancelPendingSpeech();
           prevStep();
           updateLatestState({ stepIndex: target });
           return;
@@ -286,6 +389,7 @@ function CookPage() {
             Math.min((intent.stepNumber ?? 1) - 1, currentRecipe.steps.length - 1),
           );
           if (target === stepIndex) return;
+          cancelPendingSpeech();
           jumpToStep(target);
           updateLatestState({ stepIndex: target });
           return;
@@ -301,7 +405,7 @@ function CookPage() {
           await announceCurrentStep(currentRecipe, stepIndex);
           return;
         case "repeat_step":
-          await announceCurrentStep(currentRecipe, stepIndex);
+          await announceCurrentStep(currentRecipe, stepIndex, { force: true });
           return;
         case "read_tip": {
           const tip = currentRecipe.steps[stepIndex]?.tips?.trim();
@@ -382,14 +486,7 @@ function CookPage() {
           handleClose();
           return;
         case "qa": {
-          const answer = await answerCookingQuestion({
-            recipe: currentRecipe,
-            currentStep: stepIndex,
-            question: transcript,
-            language,
-            timers,
-          });
-          await speak(answer);
+          await askCookingQuestion(transcript);
           return;
         }
         default:
@@ -398,6 +495,9 @@ function CookPage() {
     },
     [
       announceCurrentStep,
+      appendQaMessage,
+      askCookingQuestion,
+      cancelPendingSpeech,
       cancelTimer,
       extendTimer,
       handleClose,
@@ -419,6 +519,18 @@ function CookPage() {
     handleTranscriptIntentRef.current = handleTranscriptIntent;
   }, [handleTranscriptIntent]);
 
+  const handleQaSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const question = qaInput.trim();
+      if (!question) return;
+      setQaInput("");
+      setVoiceError(null);
+      void handleTranscriptIntentRef.current(question);
+    },
+    [qaInput],
+  );
+
   const voiceSession = useVoiceSession({
     enabled: recipe !== null && recipe !== undefined,
     wakeWords: activeWakeWords,
@@ -430,7 +542,6 @@ function CookPage() {
     onTranscript: async (transcript) => {
       const cleaned = transcript.trim();
       if (!cleaned) return;
-      appendQaMessage("user", cleaned);
       setVoiceError(null);
       await handleTranscriptIntentRef.current(cleaned);
     },
@@ -478,13 +589,29 @@ function CookPage() {
   }, [id, initialStep, recipe, startCooking]);
 
   useEffect(() => {
+    if (!recipeId) return;
+    announcedStepKeysRef.current = new Set();
+    setSpokenStepKeys(new Set());
+    resetQaMessagesForRecipe(t("cook.voiceQaPrompt"));
+    setQaInput("");
+    activeQaRequestsRef.current = 0;
+    setIsQaSubmitting(false);
+  }, [recipeId, resetQaMessagesForRecipe, t]);
+
+  useEffect(() => {
+    const scrollElement = qaScrollRef.current;
+    if (!scrollElement) return;
+    scrollElement.scrollTo({ top: scrollElement.scrollHeight, behavior: "smooth" });
+  }, [isQaSubmitting, qaMessages]);
+
+  useEffect(() => {
     isClosingRef.current = false;
 
     return () => {
       isClosingRef.current = true;
-      stopActiveVoicePlayback();
+      cancelPendingSpeech();
     };
-  }, []);
+  }, [cancelPendingSpeech]);
 
   useEffect(() => {
     if (!recipe) return;
@@ -492,7 +619,7 @@ function CookPage() {
 
     const targetStep = pendingInitialAnnounceStepRef.current ?? safeStep;
     const stepKey = `${recipe.id}:${targetStep}:${language}`;
-    if (announcedStepKeyRef.current === stepKey) return;
+    if (announcedStepKeysRef.current.has(stepKey)) return;
     pendingInitialAnnounceStepRef.current = null;
     void announceCurrentStep(recipe, targetStep);
   }, [announceCurrentStep, hasElevenLabsKey, language, recipe, resolvedVoiceId, safeStep]);
@@ -582,7 +709,7 @@ function CookPage() {
   const description = step?.description ?? "";
   const { main: descMain, highlight: descHighlight } = getStepDescriptionParts(description);
   const currentStepKey = recipe ? `${recipe.id}:${safeStep}:${language}` : null;
-  const hasSpokenCurrentStep = spokenStepKey === currentStepKey;
+  const hasSpokenCurrentStep = currentStepKey ? spokenStepKeys.has(currentStepKey) : false;
 
   return (
     <div className="flex h-dvh min-w-0 flex-col overflow-x-hidden overflow-y-hidden bg-background">
@@ -635,28 +762,39 @@ function CookPage() {
           </div>
 
           <div className="grid min-h-0 flex-1 gap-4 py-3 sm:gap-5 sm:py-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
-            <section className="flex min-h-[24rem] min-w-0 flex-col lg:min-h-0">
-              <div className="flex min-h-0 flex-1 flex-col justify-center rounded-[2rem] border border-border bg-card p-5 sm:p-7 lg:p-8">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
-                    <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
-                    {voiceStatusLabel}
-                  </span>
+            <section className="flex min-h-[18rem] min-w-0 flex-col sm:min-h-[24rem] lg:min-h-0">
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-border bg-card p-5 sm:p-7 lg:p-8">
+                <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-clay/10 blur-3xl" />
+                <div className="pointer-events-none absolute bottom-8 left-8 h-24 w-24 rounded-full bg-accent/40 blur-3xl" />
+                <div className="relative flex items-start justify-between gap-4">
+                  <div className="space-y-3">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+                      <span className={`h-2 w-2 rounded-full ${voiceDotClass}`} />
+                      {voiceStatusLabel}
+                    </span>
+                  </div>
                   {hasSpokenCurrentStep && (
-                    <span className="text-xs text-muted-foreground">
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/50 px-3 py-1.5 text-xs text-muted-foreground">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-clay" strokeWidth={1.75} />
                       {t("cook.stepSpokenOnce")}
                     </span>
                   )}
                 </div>
-                <h1 className="mt-5 max-w-full font-display text-[clamp(1.75rem,6.2vw,2.7rem)] font-medium leading-[1.12] tracking-tight md:text-[clamp(2.4rem,4vw,3.8rem)]">
-                  {descMain}
-                  {descHighlight && <span className="text-clay"> {descHighlight}</span>}
-                </h1>
-                {step?.tips && (
-                  <p className="mt-5 inline-flex w-full items-center gap-2 rounded-full bg-accent/40 px-4 py-2 text-xs sm:w-fit sm:text-sm">
-                    <span className="font-medium">{t("cook.tip")}</span> {step.tips}
-                  </p>
-                )}
+                <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto py-5 sm:py-8 lg:py-6 [@media(max-height:900px)]:justify-start">
+                  <div className="mb-3 h-px w-16 bg-clay/50 sm:mb-4" />
+                  <h1 className="w-full font-display text-[clamp(1.75rem,min(5.8vw,8.5vh),3.75rem)] font-medium leading-[1.08] tracking-tight lg:text-[clamp(2.25rem,min(4.4vw,7.5vh),4.25rem)]">
+                    {descMain}
+                    {descHighlight && <span className="text-clay"> {descHighlight}</span>}
+                  </h1>
+                </div>
+                <div className="relative min-h-12">
+                  {step?.tips && (
+                    <p className="inline-flex w-full items-center gap-2 rounded-2xl bg-accent/45 px-4 py-3 text-sm leading-6 text-foreground/85 sm:w-fit">
+                      <span className="shrink-0 font-medium text-clay">{t("cook.tip")}</span>
+                      <span>{step.tips}</span>
+                    </p>
+                  )}
+                </div>
               </div>
             </section>
 
@@ -724,28 +862,29 @@ function CookPage() {
                   <MessageCircle className="h-4 w-4 text-clay" strokeWidth={1.75} />
                   <div className="text-sm font-medium">{t("cook.voiceQa")}</div>
                 </div>
-                <div className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto pr-1">
+                <div
+                  ref={qaScrollRef}
+                  className="mt-4 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto pr-1"
+                >
                   {qaMessages.map((message) => {
-                    const isAssistant = message.speaker === "assistant";
+                    const isUser = message.speaker === "user";
                     return (
                       <div
                         key={message.id}
-                        className="min-w-0 overflow-hidden rounded-[1.5rem] border-2 border-foreground/85 bg-background px-4 py-3"
+                        className={cn("flex min-w-0", isUser ? "justify-end" : "justify-start")}
                       >
-                        <div className="flex min-w-0 items-start gap-3">
-                          <span className="mt-0.5 h-7 w-7 shrink-0 rounded-full border-2 border-foreground/85 bg-background" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-base font-semibold leading-none">
-                              {isAssistant ? "cooktalk" : t("cook.youLabel")}
-                            </div>
-                            <p className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm text-foreground/90">
-                              {message.text}
-                            </p>
-                          </div>
-                        </div>
+                        <p
+                          className={cn(
+                            "max-w-[86%] whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6 text-foreground/90",
+                            isUser && "text-right",
+                          )}
+                        >
+                          {message.text}
+                        </p>
                       </div>
                     );
                   })}
+                  {isQaSubmitting && <QaLoadingDots />}
                   {(voiceError || error) && (
                     <p className="px-1 text-xs text-destructive">{voiceError || error}</p>
                   )}
@@ -753,28 +892,71 @@ function CookPage() {
                     <p className="px-1 text-sm text-muted-foreground">{t("cook.voiceQaBody")}</p>
                   )}
                 </div>
+                <form onSubmit={handleQaSubmit} className="mt-4 flex shrink-0 gap-2">
+                  <input
+                    value={qaInput}
+                    onChange={(event) => setQaInput(event.target.value)}
+                    placeholder={t("cook.voiceQaPlaceholder")}
+                    className="min-w-0 flex-1 rounded-full border border-border bg-background px-4 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-clay"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!qaInput.trim()}
+                    className="shrink-0 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-clay disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+                  >
+                    {t("cook.voiceQaSend")}
+                  </button>
+                </form>
               </div>
             </aside>
           </div>
         </div>
 
         <div className="shrink-0 border-t border-border/60 bg-card/50">
-          <div className="mx-auto flex max-w-7xl items-center justify-center px-4 py-4 sm:px-6 sm:py-6">
-            <button
-              onClick={() => {
-                const target = Math.min(safeStep + 1, Math.max(stepCount - 1, 0));
-                if (target === safeStep) return;
-                nextStep();
-                updateLatestState({ stepIndex: target });
-              }}
-              disabled={safeStep === stepCount - 1}
-              className="inline-flex min-w-[12rem] items-center justify-center rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-colors hover:bg-clay disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
-            >
-              {t("cook.nextStepButton")}
-            </button>
+          <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:px-6 sm:py-6">
+            <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+              <button
+                onClick={handlePreviousStep}
+                disabled={isFirstStep}
+                className="inline-flex min-w-[12rem] items-center justify-center rounded-full border border-border bg-background px-8 py-3 text-base font-medium text-foreground transition-colors hover:border-clay hover:text-clay disabled:cursor-not-allowed disabled:border-border disabled:bg-muted/50 disabled:text-muted-foreground"
+              >
+                {t("cook.previousStepButton")}
+              </button>
+              {isFinalStep ? (
+                <button
+                  onClick={handleClose}
+                  className="inline-flex min-w-[12rem] items-center justify-center rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-colors hover:bg-clay"
+                >
+                  {t("cook.backToRecipeButton")}
+                </button>
+              ) : (
+                <button
+                  onClick={handleNextStep}
+                  className="inline-flex min-w-[12rem] items-center justify-center rounded-full bg-foreground px-8 py-3 text-base font-medium text-background transition-colors hover:bg-clay"
+                >
+                  {t("cook.nextStepButton")}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+function QaLoadingDots() {
+  return (
+    <div className="flex justify-start" aria-live="polite" aria-label="AI is replying">
+      <div className="flex items-center gap-1.5 py-1.5">
+        {[0, 1, 2].map((index) => (
+          <span
+            key={index}
+            className="h-2 w-2 animate-bounce rounded-full bg-clay"
+            style={{ animationDelay: `${index * 140}ms` }}
+          />
+        ))}
+      </div>
     </div>
   );
 }

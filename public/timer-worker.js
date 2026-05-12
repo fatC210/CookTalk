@@ -2,6 +2,21 @@
 let timers = new Map();
 let intervalId = null;
 
+function postTimerState() {
+  const states = [];
+  timers.forEach((timer, id) => {
+    states.push({
+      id,
+      label: timer.label,
+      totalSeconds: timer.totalSeconds,
+      remainingSeconds: Math.round(timer.remaining),
+      isRunning: timer.isRunning,
+    });
+  });
+
+  self.postMessage({ type: "tick", timers: states });
+}
+
 function tick() {
   const now = Date.now();
   const completed = [];
@@ -19,18 +34,7 @@ function tick() {
   });
 
   // Send tick update with all timer states
-  const states = [];
-  timers.forEach((timer, id) => {
-    states.push({
-      id,
-      label: timer.label,
-      totalSeconds: timer.totalSeconds,
-      remainingSeconds: Math.round(timer.remaining),
-      isRunning: timer.isRunning,
-    });
-  });
-
-  self.postMessage({ type: "tick", timers: states });
+  postTimerState();
 
   // Send completed notifications
   completed.forEach((t) => {
@@ -53,6 +57,7 @@ self.onmessage = function (e) {
       if (!intervalId) {
         intervalId = setInterval(tick, 1000);
       }
+      postTimerState();
       break;
 
     case "cancel":
@@ -61,6 +66,7 @@ self.onmessage = function (e) {
         clearInterval(intervalId);
         intervalId = null;
       }
+      postTimerState();
       break;
 
     case "extend":
@@ -70,6 +76,7 @@ self.onmessage = function (e) {
         timer.totalSeconds += seconds;
         timer.isRunning = true;
       }
+      postTimerState();
       break;
 
     case "clear":
@@ -78,6 +85,7 @@ self.onmessage = function (e) {
         clearInterval(intervalId);
         intervalId = null;
       }
+      postTimerState();
       break;
   }
 };

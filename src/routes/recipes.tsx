@@ -45,7 +45,10 @@ type FilterOption = {
   group: "cuisine" | "flavor" | "difficulty";
 };
 
+type Difficulty = NonNullable<Recipe["tags"]["difficulty"]>;
+
 const DIFFICULTY_ORDER: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
+const DEFAULT_DIFFICULTY: Difficulty = "easy";
 
 const CARD_GRADIENTS = [
   "from-[#c4654a]/30 to-[#8b7355]/20",
@@ -72,7 +75,7 @@ function matchesFilter(recipe: Recipe, option: FilterOption): boolean {
     case "flavor":
       return recipe.tags.flavor?.includes(option.label) ?? false;
     case "difficulty":
-      return recipe.tags.difficulty === option.id.replace("difficulty:", "");
+      return (recipe.tags.difficulty ?? DEFAULT_DIFFICULTY) === option.id.replace("difficulty:", "");
   }
 }
 
@@ -139,7 +142,7 @@ function RecipesPage() {
   const filterOptions = useMemo<FilterOption[]>(() => {
     const cuisines = new Set<string>();
     const flavors = new Set<string>();
-    const difficulties = new Set<NonNullable<Recipe["tags"]["difficulty"]>>();
+    const difficulties = new Set<Difficulty>();
 
     allRecipes.forEach((recipe) => {
       const cuisine = recipe.tags.cuisine?.trim();
@@ -150,7 +153,7 @@ function RecipesPage() {
         if (normalized) flavors.add(normalized);
       });
 
-      if (recipe.tags.difficulty) difficulties.add(recipe.tags.difficulty);
+      difficulties.add(recipe.tags.difficulty ?? DEFAULT_DIFFICULTY);
     });
 
     return [
@@ -208,7 +211,8 @@ function RecipesPage() {
       className="inline-flex w-full items-center justify-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:w-auto sm:px-5"
     >
       <Plus className="h-4 w-4" strokeWidth={1.75} />
-      {t("recipes.importVideo")}
+      <span className="sm:hidden">{t("nav.import")}</span>
+      <span className="hidden sm:inline">{t("recipes.importVideo")}</span>
     </Link>
   );
 
@@ -471,7 +475,7 @@ function RecipeCard({
   t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const gradient = gradientForId(recipe.id);
-  const difficulty = recipe.tags.difficulty ?? "easy";
+  const difficulty = recipe.tags.difficulty ?? DEFAULT_DIFFICULTY;
   const difficultyLabel = t(`recipes.difficulty.${difficulty}`);
   const flavorStr = recipe.tags.flavor?.join(" · ") ?? "";
   const cuisineLabel = recipe.tags.cuisine?.trim() || t("recipes.uncategorizedCuisine");

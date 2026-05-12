@@ -37,15 +37,23 @@ export function cloneVideoImportDraftSnapshot(
     editIngredients: snapshot.editIngredients.map((item) => ({ ...item })),
     editDifficulty: snapshot.editDifficulty,
     editTotalTime: snapshot.editTotalTime,
-    followUpAnswers: { ...snapshot.followUpAnswers },
-    followUpProgress: { ...snapshot.followUpProgress },
-    followUpIndex: snapshot.followUpIndex,
-    followUpInput: snapshot.followUpInput,
-    followUpPrompt: snapshot.followUpPrompt,
-    followUpStatus: snapshot.followUpStatus,
-    followUpError: snapshot.followUpError,
-    followUpStarted: snapshot.followUpStarted,
-    followUpCompleted: snapshot.followUpCompleted,
+    followUpAnswers: {
+      servings: snapshot.followUpAnswers?.servings ?? "",
+      spiceLevel: snapshot.followUpAnswers?.spiceLevel ?? "",
+      notes: snapshot.followUpAnswers?.notes ?? "",
+    },
+    followUpProgress: {
+      servings: snapshot.followUpProgress?.servings ?? "pending",
+      spiceLevel: snapshot.followUpProgress?.spiceLevel ?? "pending",
+      notes: snapshot.followUpProgress?.notes ?? "pending",
+    },
+    followUpIndex: snapshot.followUpIndex ?? 0,
+    followUpInput: snapshot.followUpInput ?? "",
+    followUpPrompt: snapshot.followUpPrompt ?? "",
+    followUpStatus: snapshot.followUpStatus ?? "idle",
+    followUpError: snapshot.followUpError ?? null,
+    followUpStarted: snapshot.followUpStarted ?? false,
+    followUpCompleted: snapshot.followUpCompleted ?? false,
   };
 }
 
@@ -104,15 +112,6 @@ export function getTaskProgressMeta(snapshot: VideoImportDraftSnapshot): {
         progress: "cover",
         progressPercent: 76,
         progressLabelKey: "import.taskProgress.transcriptOnly",
-        stage: snapshot.stage,
-      };
-    }
-
-    if (snapshot.structuredRecipe && !snapshot.followUpCompleted) {
-      return {
-        progress: "follow-up",
-        progressPercent: 70,
-        progressLabelKey: "import.taskProgress.followUp",
         stage: snapshot.stage,
       };
     }

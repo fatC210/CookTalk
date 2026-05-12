@@ -1,6 +1,7 @@
 import { getApiKey } from "@/lib/crypto";
 import { type Recipe } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
+import { getFirstElevenLabsVoiceId } from "@/hooks/use-elevenlabs-voices";
 import { getConfiguredLLMService } from "@/lib/llm";
 import i18n from "@/lib/i18n";
 import { claimVoicePlayback } from "@/lib/voice-playback";
@@ -205,8 +206,10 @@ export async function speakWithElevenLabs(
   text: string,
   voiceId?: string | null,
   language: AppLanguage = "zh",
+  options: { signal?: AbortSignal } = {},
 ): Promise<void> {
-  const blob = await synthesizeWithElevenLabs(text, voiceId, language);
+  const blob = await synthesizeWithElevenLabs(text, voiceId, language, options);
+  throwIfAborted(options.signal, language);
   await playAudioBlob(blob, language);
 }
 
@@ -214,12 +217,33 @@ export async function synthesizeWithElevenLabs(
   text: string,
   voiceId?: string | null,
   language: AppLanguage = "zh",
+  options: { signal?: AbortSignal } = {},
 ): Promise<Blob> {
   const apiKey = await getApiKey("elevenlabs");
+  throwIfAborted(options.signal, language);
   if (!apiKey) throw new Error(voiceText(language, "voice.elevenLabsKeyRequiredShort"));
-  if (!voiceId) throw new Error(voiceText(language, "voice.voiceSelectRequired"));
+  const service = new ElevenLabsService(apiKey);
+  const resolvedVoiceId = voiceId ?? (await getFirstElevenLabsVoiceId(service));
+  throwIfAborted(options.signal, language);
+  if (!resolvedVoiceId) throw new Error(voiceText(language, "voice.voiceSelectRequired"));
 
-  return new ElevenLabsService(apiKey).textToSpeech(text, voiceId);
+  try {
+    return await service.textToSpeech(text, resolvedVoiceId, { signal: options.signal });
+  } catch (error) {
+    if (isAbortError(error) || options.signal?.aborted) {
+      throw new VoicePlaybackInterruptedError(voiceText(language, "voice.playbackInterrupted"));
+    }
+    throw error;
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined, language: AppLanguage): void {
+  if (!signal?.aborted) return;
+  throw new VoicePlaybackInterruptedError(voiceText(language, "voice.playbackInterrupted"));
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export async function answerCookingQuestion({

@@ -42,7 +42,19 @@ interface LLMConfig {
 }
 
 interface ChatCompletionResponse {
-  choices: Array<{ message: { content: string } }>;
+  choices: Array<{ message: { content: string | null; reasoning_content?: string | null } }>;
+}
+
+function isChatCompletionResponse(value: unknown): value is ChatCompletionResponse {
+  if (!isRecord(value) || !Array.isArray(value.choices)) return false;
+
+  return value.choices.some(
+    (choice) =>
+      isRecord(choice) &&
+      isRecord(choice.message) &&
+      (typeof choice.message.content === "string" ||
+        typeof choice.message.reasoning_content === "string"),
+  );
 }
 
 interface ChatCompletionStreamResponse {
@@ -83,6 +95,8 @@ const META_REASONING_PATTERN =
   /\b(?:prompt|json|schema|field|fields|mapping|map to schema|infer(?:red|ence)?|invent|optional|respond with|return valid|markdown|refine the json|failed response|repair malformed|rule|rules|assistant|model|chain[-\s]*of[-\s]*thought|reasoning|mentioned\/inferred|primary step description|let'?s|i(?:'ll| will| should| can)|we (?:can|should|will))\b|(?:我应该|我会|让我|等等|先|再|提示词|字段|结构化|返回|输出|省略|编造|推断|修复|让我们|我想|我不能)/i;
 const META_FRAGMENT_CUE_PATTERN =
   /\b(?:let'?s|i(?:'ll| will| should| can)|we (?:can|should|will)|or (?:mention|combine|use|write|describe|pan[-\s]*fry)|tags mentioned|mentioned\/inferred|primary step description|common and detailed|prominent|specific times|chain[-\s]*of[-\s]*thought|reasoning|field mapping|schema|json)\b/i;
+const PROMPT_INSTRUCTION_PATTERN =
+  /\b(?:ordered steps?|ingredient name|quantity\s*\+\s*unit|suitable for reading aloud|all text in|except\s+[`"']?difficulty|no explanations?|valid json only|schema explanations?|field mapping|chain[-\s]*of[-\s]*thought|self-talk|do not include|do not output|return valid|use this schema|rules?:|failed response|repair malformed|convert the following)\b|(?:只返回|不要输出|字段映射|思考过程|自言自语|合法\s*JSON|严格遵循|食材名称|数量和单位)/i;
 const COOKING_CONTENT_CUE_PATTERN =
   /[\u4e00-\u9fff]|(?:\b(?:add|mix|stir|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve|preheat|brush|fill|wrap)\b)/i;
 const DURATION_HOUR_PATTERN = /(\d+(?:\.\d+)?)\s*(?:小时|hours?\b|hrs?\b|h\b)/i;
@@ -457,7 +471,7 @@ export async function validateOpenAIChatConfig(config: Required<LLMConfig>): Pro
       body: JSON.stringify({
         model: config.model,
         messages: [{ role: "user", content: "ping" }],
-        max_tokens: 1,
+        max_tokens: 16,
         temperature: 0,
       }),
     });
@@ -467,8 +481,8 @@ export async function validateOpenAIChatConfig(config: Required<LLMConfig>): Pro
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) return false;
 
-    const data = (await response.json()) as { id?: unknown; object?: unknown };
-    return data.id === config.model || data.object === "model";
+    const data = await response.json();
+    return isChatCompletionResponse(data);
   } catch {
     return false;
   }
@@ -716,6 +730,7 @@ function isSchemaNoiseLine(value: string): boolean {
 
   const stripped = cleanRecipeTextValue(raw);
   if (!stripped) return true;
+  if (PROMPT_INSTRUCTION_PATTERN.test(stripped)) return true;
   if (isRecipeSchemaPlaceholder(stripped)) return true;
   if (/^(?:map\s+to\s+schema|schema|json|```)/i.test(stripped)) return true;
   if (/^"?[\w\u4e00-\u9fff]+"?\s*:\s*\[?\{?["“]?[\w\u4e00-\u9fff\s]+["”]?/i.test(stripped)) {
@@ -1124,9 +1139,157 @@ function splitFlavor(value: unknown): string[] | undefined {
 const HEURISTIC_STEP_PATTERN =
   /(?:先|首先|然后|再|接着|随后|最后|把|将|用|加入|放入|倒入|下入|撒入|切|切成|切好|剁|拍|腌|拌|搅拌|翻炒|炒|煎|炸|烤|蒸|煮|炖|焖|焯|爆香|收汁|勾芡|出锅|盛出|装盘|备用|浸泡|清洗|冲洗|去皮|揉|醒发|发酵|mix|stir|add|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve)/i;
 const HEURISTIC_FILLER_PATTERN =
-  /(?:大家好|hello|hi everyone|点赞|关注|收藏|转发|订阅|感谢观看|下期见|记得关注|我是|欢迎来到|sponsor|sponsored|subscribe)/i;
+  /(?:大家好|hello|hi everyone|点赞|点个赞|关注|收藏|转发|评论|留言|订阅|感谢观看|下期见|记得关注|我是|欢迎来到|祝大家|天天开心|背景音乐|sponsor|sponsored|subscribe|like and subscribe)/i;
 const HEAT_OR_TIP_PATTERN =
   /(?:小火|中火|大火|微火|全程|注意|不要|别|记得|避免|low heat|medium heat|high heat|be careful|make sure)/i;
+
+const NON_RECIPE_CHATTER_PATTERN =
+  /(?:大家好|朋友们|家人们|孩子在家|阿建|分享|帮助|点赞|点个赞|关注|收藏|转发|评论|留言|订阅|感谢观看|下期见|祝大家|天天开心|美美地享用|不知道怎么做|非常地下饭|比红烧肉|背景音乐|sponsor|sponsored|subscribe|like and subscribe|thanks for watching)/i;
+const COOKING_ACTION_PATTERN =
+  /(?:加入|放入|倒入|下入|撒入|加|放|倒|下|切|切成|切好|剁|拍|洗|清洗|冲洗|去皮|削皮|控水|挤出|腌|拌|搅拌|调|调成|翻炒|煸炒|炒|煎|炸|烤|蒸|煮|炖|焖|焯|焯水|爆香|收汁|勾芡|出锅|盛出|装盘|备用|浸泡|预热|刷|填充|封口|包|上色|mix|stir|add|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve|preheat|wash|slice|chop|dice)/i;
+const INGREDIENT_OR_MEASURE_PATTERN =
+  /(?:少许|适量|一勺|半勺|两勺|\d+\s*(?:克|g|kg|斤|毫升|ml|升|l|个|颗|粒|片|块|根|把|勺|匙|茶匙|汤匙|杯|碗|分钟|秒|小时|minutes?|mins?|seconds?|secs?|hours?|hrs?)|盐|糖|醋|酱油|生抽|老抽|蚝油|料酒|胡椒|淀粉|清水|油|葱|姜|蒜|肉|蛋|米|面|粉|菜|茄子|土豆|番茄|辣椒)/i;
+const NON_INGREDIENT_PHRASE_PATTERN =
+  /(?:抑制|细菌|农药|残留|保持|鲜嫩|柔软|下饭|视频|分享|点赞|评论|转发|关注|孩子|家人|做法|简单|实用|帮助|今天|非常|而且|因为|以后|回家|餐桌|开心|background music)/i;
+const NON_RECIPE_TITLE_PATTERN =
+  /(?:厨师|主厨|美食|厨房|菜谱|教程|视频|分享|频道|博主|达人|阿建|温暖厨师|点赞|关注|评论|转发|收藏|订阅|背景音乐|unknown|untitled)/i;
+const DISH_TITLE_CUE_PATTERN =
+  /(?:鸡|鸭|鱼|虾|蟹|肉|排骨|牛|羊|猪|蛋|豆腐|茄子|土豆|番茄|西红柿|青椒|辣椒|白菜|萝卜|黄瓜|面|粉|饭|米|粥|汤|饼|包子|馒头|蛋糕|沙拉|红烧|清炒|小炒|凉拌|炖|焖|煮|烤|炸|煎|蒸|卤|拌|stew|salad|soup|rice|noodle|chicken|beef|pork|fish|shrimp|egg|tofu|potato|tomato|eggplant)/i;
+const COMMON_INGREDIENT_NAME_PATTERN =
+  /^(?:盐|食盐|白糖|糖|生抽|老抽|酱油|蚝油|料酒|胡椒粉|胡椒|白醋|醋|油|食用油|清水|水|葱|姜|蒜|蒜末|葱花|salt|sugar|soy sauce|oil|water|vinegar|pepper|garlic|ginger|scallion)$/i;
+
+function hasCookingAction(value: string): boolean {
+  return COOKING_ACTION_PATTERN.test(value) || countCookingContentCues(value) > 0;
+}
+
+function isLikelyNonRecipeChatter(value: string): boolean {
+  const text = cleanRecipeTextValue(value);
+  if (!text) return true;
+  const hasChatter = NON_RECIPE_CHATTER_PATTERN.test(text);
+  const hasAction = hasCookingAction(text);
+  if (hasChatter && !hasAction) return true;
+  if (hasChatter && hasAction && text.length > 34 && countCookingContentCues(text) <= 1) return true;
+  return false;
+}
+
+function isLikelyIngredientName(value: string): boolean {
+  const text = cleanRecipeTextValue(value);
+  if (!text) return false;
+  if (text.length > 18) return false;
+  if (isLikelyNonRecipeChatter(text)) return false;
+  if (NON_INGREDIENT_PHRASE_PATTERN.test(text)) return false;
+  if (hasCookingAction(text)) return false;
+  return INGREDIENT_OR_MEASURE_PATTERN.test(text) || /^[\u4e00-\u9fffA-Za-z\s-]{1,18}$/.test(text);
+}
+
+function isLikelyCookingStepText(value: string): boolean {
+  const text = cleanRecipeTextValue(value);
+  if (!text || text.length < 3) return false;
+  if (isLikelyNonRecipeChatter(text)) return false;
+  return (
+    hasCookingAction(text) ||
+    HEAT_OR_TIP_PATTERN.test(text) ||
+    Boolean(parseDurationToSeconds(text))
+  );
+}
+
+function hasDishTitleCue(value: string): boolean {
+  return DISH_TITLE_CUE_PATTERN.test(cleanRecipeTextValue(value));
+}
+
+function isLikelyBadRecipeTitle(value: string, recipe?: RecipePayload): boolean {
+  const title = cleanRecipeTextValue(value);
+  if (!title) return true;
+  if (title.length > 30) return true;
+  if (isRecipeSchemaPlaceholder(title) || isSchemaNoiseLine(title)) return true;
+  if (isLikelyNonRecipeChatter(title)) return true;
+  if (hasDishTitleCue(title)) return false;
+
+  const ingredientNames = recipe?.ingredients
+    .map((item) => cleanRecipeTextValue(item.name))
+    .filter((name) => name.length >= 2 && !COMMON_INGREDIENT_NAME_PATTERN.test(name));
+  if (ingredientNames?.some((name) => title.includes(name) || name.includes(title))) return false;
+
+  return NON_RECIPE_TITLE_PATTERN.test(title) || title.length <= 2;
+}
+
+function getRecipeTitleIngredientNames(recipe: RecipePayload): string[] {
+  const seen = new Set<string>();
+  return recipe.ingredients
+    .map((item) => cleanRecipeTextValue(item.name))
+    .filter((name) => name && isLikelyIngredientName(name))
+    .filter((name) => !COMMON_INGREDIENT_NAME_PATTERN.test(name))
+    .filter((name) => {
+      const key = normalizePlaceholderText(name);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 3);
+}
+
+function inferZhCookingMethod(recipe: RecipePayload): string {
+  const steps = recipe.steps.map((step) => step.description).join(" ");
+  if (/红烧/.test(steps)) return "红烧";
+  if (/凉拌|拌匀|拌一下/.test(steps)) return "凉拌";
+  if (/清蒸|蒸/.test(steps)) return "清蒸";
+  if (/香煎|煎/.test(steps)) return "香煎";
+  if (/炸/.test(steps)) return "酥炸";
+  if (/烤/.test(steps)) return "烤";
+  if (/炖|焖/.test(steps)) return "焖";
+  if (/炒|煸炒|翻炒/.test(steps)) return "家常炒";
+  if (/煮/.test(steps)) return "水煮";
+  return "家常";
+}
+
+function inferEnCookingMethod(recipe: RecipePayload): string {
+  const steps = recipe.steps.map((step) => step.description).join(" ").toLowerCase();
+  if (/roast|bake/.test(steps)) return "Roasted";
+  if (/steam/.test(steps)) return "Steamed";
+  if (/stir[-\s]?fry|saute|fry/.test(steps)) return "Stir-Fried";
+  if (/simmer|stew|braise/.test(steps)) return "Braised";
+  if (/boil/.test(steps)) return "Boiled";
+  if (/grill/.test(steps)) return "Grilled";
+  return "Homestyle";
+}
+
+function generateRecipeTitleFromContent(recipe: RecipePayload, language: AppLanguage): string {
+  const ingredients = getRecipeTitleIngredientNames(recipe);
+  const stepsText = recipe.steps.map((step) => step.description).join(" ");
+
+  if (language === "zh") {
+    const hasEggplant = ingredients.some((name) => /茄子/.test(name)) || /茄子/.test(stepsText);
+    const hasMincedMeat = ingredients.some((name) => /肉末|肉沫/.test(name)) || /肉末|肉沫/.test(stepsText);
+    if (hasEggplant && hasMincedMeat) return "肉末茄子";
+
+    const method = inferZhCookingMethod(recipe);
+    const primary = ingredients.find((name) => /肉|鸡|鸭|鱼|虾|蛋|豆腐|茄子|土豆|番茄|西红柿|白菜|萝卜|黄瓜|面|饭/.test(name)) ?? ingredients[0];
+    if (!primary) return "";
+    if (ingredients.length >= 2 && ingredients.join("").length <= 10) return ingredients.slice(0, 2).join("");
+    return `${method}${primary}`;
+  }
+
+  const primary = ingredients[0];
+  if (!primary) return "";
+  const method = inferEnCookingMethod(recipe);
+  const secondary = ingredients[1];
+  return secondary ? `${method} ${primary} with ${secondary}` : `${method} ${primary}`;
+}
+
+function isLikelyInstructionIngredient(item: RecipePayload["ingredients"][number]): boolean {
+  const name = item.name.trim();
+  const amount = item.amount.trim();
+  if (!name) return false;
+  if (amount && name.length <= 24 && countCookingContentCues(name) <= 1) return false;
+
+  const cueCount = countCookingContentCues(name);
+  const hasInstructionPunctuation = /[，,。；;]|(?:然后|接着|随后|最后|until|then)\b/i.test(name);
+  return (
+    (cueCount >= 2 && name.length >= 12) ||
+    (cueCount >= 1 && hasInstructionPunctuation) ||
+    (HEURISTIC_STEP_PATTERN.test(name) && name.length >= 18)
+  );
+}
 
 function normalizeIngredient(value: unknown): RecipePayload["ingredients"][number] | null {
   if (typeof value === "string") {
@@ -1283,6 +1446,10 @@ function sanitizeRecipeIngredients(
       if (!item.name && !item.amount) return false;
       if (item.name && isSchemaNoiseLine(item.name)) return false;
       if (item.amount && isSchemaNoiseLine(item.amount)) return false;
+      if (isLikelyInstructionIngredient(item)) return false;
+      if (!isLikelyIngredientName(item.name) && !INGREDIENT_OR_MEASURE_PATTERN.test(item.amount)) {
+        return false;
+      }
       if (containsMetaReasoning(`${item.name} ${item.amount}`)) return false;
 
       const key = `${normalizePlaceholderText(item.name)}\u0000${normalizePlaceholderText(
@@ -1311,9 +1478,10 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
       readInlineLabeledValue(text, STEP_TEXT_LABELS) || text,
     );
     if (isRecipeSchemaPlaceholder(description) || isSchemaNoiseLine(description)) return null;
-    if (containsMetaReasoning(description)) return null;
-    const durationSec = parseDurationToSeconds(description);
-    return description
+      if (containsMetaReasoning(description)) return null;
+      if (!isLikelyCookingStepText(description)) return null;
+      const durationSec = parseDurationToSeconds(description);
+      return description
       ? { order: index + 1, description, ...(durationSec ? { durationSec } : {}) }
       : null;
   }
@@ -1338,6 +1506,7 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
   );
   if (!description) return null;
   if (containsMetaReasoning(description)) return null;
+  if (!isLikelyCookingStepText(description)) return null;
 
   const orderValue = readFirstValue(value, ["order", "stepNumber", "index", "position", "序号"]);
   const order =
@@ -1433,6 +1602,7 @@ function sanitizeRecipeSteps(steps: RecipePayload["steps"]): RecipePayload["step
         return false;
       }
       if (containsMetaReasoning(step.description)) return false;
+      if (!isLikelyCookingStepText(step.description)) return false;
 
       const key = normalizePlaceholderText(step.description);
       if (seen.has(key)) return false;
@@ -2048,8 +2218,9 @@ export function cleanStructuredRecipePayload(
   language?: AppLanguage,
   fallbackText?: string,
 ): RecipePayload {
+  const resolvedLanguage = resolveRecipeLanguage(language);
   const cleaned = enrichRecipePayload(coerceRecipePayload(recipe), fallbackText);
-  const localized = localizeRecipePayload(cleaned, resolveRecipeLanguage(language));
+  const localized = localizeRecipePayload(cleaned, resolvedLanguage);
   const heuristic = fallbackText ? buildHeuristicRecipePayload(fallbackText) : null;
 
   const result = {
@@ -2069,8 +2240,13 @@ export function cleanStructuredRecipePayload(
           : [],
   };
 
+  const title = isLikelyBadRecipeTitle(result.title, result)
+    ? generateRecipeTitleFromContent(result, resolvedLanguage) || result.title
+    : result.title;
+
   return {
     ...result,
+    title,
     steps: result.steps.map((step, index) => ({ ...step, order: index + 1 })),
   };
 }
@@ -2266,6 +2442,8 @@ export class LLMService {
     const repairPrompt = [
       "Convert the following failed recipe extraction response into valid JSON only.",
       "Do not add markdown or explanation.",
+      "Ignore prompt text, schema examples, field mapping notes, and model self-talk.",
+      "When original recipe text is available, extract the recipe from it instead of the failed response.",
       "Use this schema exactly:",
       "{",
       '  "title": "Recipe name",',
@@ -2274,8 +2452,12 @@ export class LLMService {
       '  "tags": {"flavor": ["savory"], "difficulty": "easy|medium|hard", "cuisine": "cuisine name", "totalTimeMin": 20}',
       "}",
       "",
+      fallbackSourceText ? `Original recipe text:\n${trimRecipeSourceText(fallbackSourceText)}` : "",
+      fallbackSourceText ? "" : "",
       `Failed response:\n${trimRecipeSourceText(result)}`,
-    ].join("\n");
+    ]
+      .filter((line) => line !== "")
+      .join("\n");
 
     const repaired = await this.chat(
       [
@@ -2300,8 +2482,8 @@ export class LLMService {
     }
 
     const heuristic =
-      buildHeuristicRecipePayload(result) ??
-      (fallbackSourceText ? buildHeuristicRecipePayload(fallbackSourceText) : null);
+      (fallbackSourceText ? buildHeuristicRecipePayload(fallbackSourceText) : null) ??
+      buildHeuristicRecipePayload(result);
     if (heuristic) return heuristic;
 
     throw new Error(errorMessage);
@@ -2317,6 +2499,100 @@ export class LLMService {
   ): Promise<RecipePayload> => {
     return this.structureRecipeFromTextInLanguage(recipeText, resolveRecipeLanguage(language));
   };
+
+  private async reviewStructuredRecipeInLanguage(
+    draftRecipe: RecipePayload,
+    sourceText: string,
+    language: AppLanguage,
+  ): Promise<RecipePayload> {
+    const prompt =
+      language === "zh"
+        ? `请审核下面从做菜视频转写中抽取出的菜谱 JSON，并输出修正后的最终 JSON。
+
+审核目标：
+- 如果 title 是频道名、人设名、泛称或无法从转写中确认的名字，请根据主要食材和步骤生成一个自然菜名。
+- 删除与做菜无关的寒暄、背景音乐、求赞、关注、评论、转发、家庭闲聊和结尾祝福。
+- ingredients 只保留真实食材、调料和用量；不要把“去除农药残留”“保持鲜嫩”“非常下饭”等说明或旁白放进食材。
+- steps 只保留实际操作步骤；不要把介绍、效果描述、广告话术或“你不知道怎么做”等句子作为步骤。
+- 如果一句话是操作步骤，不要放到 ingredients；如果是火候、注意事项或技巧，可以放进对应步骤的 tips。
+- 校对 title、ingredients、steps、tags 的位置是否正确，必要时重排步骤顺序。
+- 不确定的用量可以留空字符串；不要编造来源文本没有的食材或步骤。
+- 只返回合法 JSON，不要输出 Markdown、解释或思考过程。
+
+Schema：
+{
+  "title": "菜名",
+  "ingredients": [{"name": "食材名", "amount": "用量"}],
+  "steps": [{"order": 1, "description": "步骤描述", "durationSec": 300, "tips": "可选提示"}],
+  "tags": {"flavor": ["口味"], "difficulty": "easy|medium|hard", "cuisine": "菜系", "totalTimeMin": 20}
+}
+
+原始转写：
+${trimRecipeSourceText(sourceText)}
+
+待审核菜谱 JSON：
+${JSON.stringify(draftRecipe, null, 2)}`
+        : `Review this recipe JSON extracted from a cooking-video transcript and return the corrected final JSON.
+
+Review goals:
+- If title is a channel name, persona name, generic label, or cannot be confirmed from the transcript, generate a natural dish name from the main ingredients and steps.
+- Remove greetings, filler, background music, like/follow/comment/share requests, sponsorships, family chatter, and sign-offs.
+- Keep ingredients as real foods, seasonings, and amounts only; do not put benefits, effects, commentary, or instructions into ingredients.
+- Keep steps as actual cooking actions only; do not include intro, outcome claims, ads, or non-cooking chatter as steps.
+- If a sentence is an action step, do not put it in ingredients; heat control, cautions, and technique notes may go into the matching step tips.
+- Verify title, ingredients, steps, and tags are in the correct fields, and reorder steps when needed.
+- Leave uncertain amounts as empty strings; do not invent ingredients or steps not supported by the source.
+- Return valid JSON only, no markdown, explanations, or chain-of-thought.
+
+Schema:
+{
+  "title": "Recipe name",
+  "ingredients": [{"name": "ingredient", "amount": "amount"}],
+  "steps": [{"order": 1, "description": "step description", "durationSec": 300, "tips": "optional tip"}],
+  "tags": {"flavor": ["savory"], "difficulty": "easy|medium|hard", "cuisine": "cuisine name", "totalTimeMin": 20}
+}
+
+Transcript:
+${trimRecipeSourceText(sourceText)}
+
+Draft recipe JSON:
+${JSON.stringify(draftRecipe, null, 2)}`;
+
+    try {
+      const result = await this.chat(
+        [
+          {
+            role: "system",
+            content:
+              language === "zh"
+                ? "你是严格的菜谱审核员。只返回修正后的合法 JSON，不要输出解释、Markdown 或思考过程。"
+                : "You are a strict recipe extraction reviewer. Return corrected valid JSON only, no markdown, explanations, or chain-of-thought.",
+          },
+          { role: "user", content: prompt },
+        ],
+        { maxTokens: 1600, responseFormat: "json_object", temperature: 0 },
+      );
+
+      const parsed = this.parseRecipePayload(result, "Failed to parse reviewed recipe JSON");
+      if (!parsed) return draftRecipe;
+
+      const reviewed = cleanStructuredRecipePayload(parsed, language);
+      if (!hasUsableRecipePayload(reviewed)) return draftRecipe;
+
+      const reviewedTitle = isLikelyBadRecipeTitle(reviewed.title, reviewed)
+        ? generateRecipeTitleFromContent(reviewed, language) || reviewed.title
+        : reviewed.title;
+
+      return {
+        ...reviewed,
+        title: reviewedTitle || generateRecipeTitleFromContent(draftRecipe, language) || draftRecipe.title,
+        tags: mergeRecipeTags(reviewed.tags, draftRecipe.tags),
+      };
+    } catch (err) {
+      console.warn("Recipe review failed, using structured draft", err);
+      return draftRecipe;
+    }
+  }
 
   private async structureRecipeInLanguage(
     transcript: string,
@@ -2336,8 +2612,10 @@ export class LLMService {
   "tags": {"flavor": ["口味"], "difficulty": "easy|medium|hard", "cuisine": "菜系", "totalTimeMin": 20}
 }
 要求：
-- 忽略寒暄、广告、口头禅和与做菜无关的内容。
+- 忽略寒暄、广告、口头禅、背景音乐、求点赞关注评论转发、家庭闲聊、结尾祝福和其他与做菜无关的内容。
 - 保留真正有用的菜名、食材、步骤、火候、时长和关键技巧。
+- ingredients 只放真实食材、调料和用量；不要放操作句、功效说明或旁白。
+- steps 只放实际烹饪操作；不要放开场白、效果描述、广告话术或结尾互动。
 - 像“煮 3 分钟”“小火焖 10 分钟”这类时长，请尽量提取到 "durationSec"。
 - 重要的火候、注意事项、技巧补充写到 "tips"。
 - 不要输出 Markdown、解释、字段说明或思考过程，只返回合法 JSON。
@@ -2352,8 +2630,10 @@ ${trimRecipeSourceText(transcript)}`
   "tags": {"flavor": ["savory"], "difficulty": "easy|medium|hard", "cuisine": "cuisine name", "totalTimeMin": 20}
 }
 Rules:
-- Ignore filler chatter, greetings, ads, and non-recipe content.
+- Ignore filler chatter, greetings, background music, ads, like/follow/comment/share requests, family chatter, sign-offs, and other non-recipe content.
 - Title, ingredients, and steps should be in English unless the source clearly requires another language.
+- Ingredients must contain real foods, seasonings, and amounts only; do not put action sentences, benefits, commentary, or transcript chatter into ingredients.
+- Steps must contain actual cooking actions only; do not include intro, outcome claims, ads, or sign-off interactions as steps.
 - Extract durations from wording like "boil for 3 minutes" or "simmer on low for 10 minutes".
 - Put important heat control, technique, and caution notes into tips.
 - Do not include markdown, explanations, field-mapping notes, or chain-of-thought. Return JSON only.
@@ -2380,7 +2660,11 @@ ${trimRecipeSourceText(transcript)}`;
       "No usable recipe content was extracted from the transcript",
       transcript,
     );
-    const cleaned = cleanStructuredRecipePayload(recipe, language, transcript);
+    const cleaned = await this.reviewStructuredRecipeInLanguage(
+      cleanStructuredRecipePayload(recipe, language, transcript),
+      transcript,
+      language,
+    );
     if (!hasUsableRecipePayload(cleaned)) {
       throw new Error("No usable recipe content was extracted from the transcript");
     }

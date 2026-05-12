@@ -20,6 +20,7 @@ import {
   Sparkles,
   Plus,
   X,
+  GripVertical,
 } from "lucide-react";
 import { db, deleteRecipe, type Recipe } from "@/lib/db";
 import { getApiKey } from "@/lib/crypto";
@@ -60,6 +61,12 @@ import { Input } from "@/components/ui/input";
 import { AutoResizeTextarea } from "@/components/ui/auto-resize-textarea";
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
+  RecipeContentDisplayToggle,
+  shouldShowIngredients,
+  shouldShowSteps,
+  type RecipeContentDisplayMode,
+} from "@/components/recipe-content-display-toggle";
+import {
   toCombinedVoiceOptions,
   useElevenLabsVoices,
   type ElevenLabsVoiceOption,
@@ -80,8 +87,6 @@ export const Route = createFileRoute("/recipe-detail")({
   }),
   component: DetailPage,
 });
-
-const DEFAULT_RECIPE_VOICE_VALUE = "__default_recipe_voice__";
 
 type RecipeVoiceOption = ElevenLabsVoiceOption;
 type EditIngredient = { name: string; amount: string };
@@ -149,9 +154,28 @@ function createEmptyStep(): EditStep {
   return { description: "", durationMin: "", tips: "" };
 }
 
+function reorderItems<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return items;
+  if (fromIndex >= items.length || toIndex >= items.length) return items;
+
+  const next = [...items];
+  const [movedItem] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, movedItem);
+  return next;
+}
+
+function isEmptyIngredient(ingredient: EditIngredient) {
+  return !ingredient.name.trim() && !ingredient.amount.trim();
+}
+
+function isEmptyStep(step: EditStep) {
+  return !step.description.trim() && !step.durationMin.trim() && !step.tips.trim();
+}
+
 type StepDescriptionFieldProps = {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: React.FocusEventHandler<HTMLTextAreaElement>;
   placeholder: string;
   textareaRef?: React.Ref<HTMLTextAreaElement>;
 };
@@ -159,6 +183,7 @@ type StepDescriptionFieldProps = {
 function StepDescriptionField({
   value,
   onChange,
+  onBlur,
   placeholder,
   textareaRef,
 }: StepDescriptionFieldProps) {
@@ -170,6 +195,7 @@ function StepDescriptionField({
         className="overflow-y-hidden rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus-visible:border-clay focus-visible:ring-0"
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
         minRows={1}
         maxRows={6}
@@ -241,6 +267,7 @@ function DetailPage() {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const editIngredientNameRefs = useRef<Array<HTMLInputElement | null>>([]);
   const editStepDescriptionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const draggedEditStepIndexRef = useRef<number | null>(null);
   const liveClonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []);
   const {
     options: elevenLabsVoiceOptions,
@@ -264,6 +291,9 @@ function DetailPage() {
   const [editSteps, setEditSteps] = useState<EditStep[]>([createEmptyStep()]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [detailDisplayMode, setDetailDisplayMode] =
+    useState<RecipeContentDisplayMode>("all");
+  const [editDisplayMode, setEditDisplayMode] = useState<RecipeContentDisplayMode>("all");
   const [expandedCoverPreview, setExpandedCoverPreview] = useState<{
     src: string;
     alt: string;
@@ -285,7 +315,11 @@ function DetailPage() {
       return `${languageLabel} · ${voiceDescription || t("voices.clonedVoice")}`;
     };
 
-    return toCombinedVoiceOptions(clonedVoices, elevenLabsVoiceOptions, formatClonedVoiceDescription);
+    return toCombinedVoiceOptions(
+      clonedVoices,
+      elevenLabsVoiceOptions,
+      formatClonedVoiceDescription,
+    );
   }, [liveClonedVoices, elevenLabsVoiceOptions, t]);
 
   useEffect(() => {
@@ -480,17 +514,49 @@ function DetailPage() {
     );
   }, []);
 
+  const handleEditIngredientBlur = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>, index: number) => {
+      const nextFocusedElement = event.relatedTarget;
+      if (nextFocusedElement && event.currentTarget.contains(nextFocusedElement)) return;
+      setEditIngredients((current) => {
+        const ingredient = current[index];
+        if (!ingredient || !isEmptyIngredient(ingredient)) return current;
+        return current.length > 1
+          ? current.filter((_, itemIndex) => itemIndex !== index)
+          : [createEmptyIngredient()];
+      });
+    },
+    [],
+  );
+
+  const handleEditStepBlur = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>, index: number) => {
+      const nextFocusedElement = event.relatedTarget;
+      if (nextFocusedElement && event.currentTarget.contains(nextFocusedElement)) return;
+      setEditSteps((current) => {
+        const step = current[index];
+        if (!step || !isEmptyStep(step)) return current;
+        return current.length > 1
+          ? current.filter((_, itemIndex) => itemIndex !== index)
+          : [createEmptyStep()];
+      });
+    },
+    [],
+  );
+
   const addEditIngredient = useCallback(() => {
+    setEditDisplayMode((current) => (current === "steps" ? "all" : current));
     setEditIngredients((current) => {
-      const next = [...current, createEmptyIngredient()];
+      const next = [createEmptyIngredient(), ...current];
       window.requestAnimationFrame(() => {
-        editIngredientNameRefs.current[next.length - 1]?.focus();
+        editIngredientNameRefs.current[0]?.focus();
       });
       return next;
     });
   }, []);
 
   const addEditStep = useCallback(() => {
+    setEditDisplayMode((current) => (current === "ingredients" ? "all" : current));
     setEditSteps((current) => {
       const next = [...current, createEmptyStep()];
       window.requestAnimationFrame(() => {
@@ -498,6 +564,10 @@ function DetailPage() {
       });
       return next;
     });
+  }, []);
+
+  const moveEditStep = useCallback((fromIndex: number, toIndex: number) => {
+    setEditSteps((current) => reorderItems(current, fromIndex, toIndex));
   }, []);
 
   const handleSaveEdit = useCallback(async () => {
@@ -660,10 +730,12 @@ function DetailPage() {
   );
   const firstIngredientName = ingredients[0]?.name ?? t("recipeDetail.ingredient");
   const selectedVoice = voiceOptions.find((option) => option.value === voiceId);
-  const globalCookingVoice = voiceOptions.find((option) => option.value === cookingVoiceId);
-  const defaultVoiceLabel = globalCookingVoice
-    ? t("recipeDetail.defaultVoiceWithName", { name: globalCookingVoice.label })
+  const defaultCookingVoice =
+    voiceOptions.find((option) => option.value === cookingVoiceId) ?? voiceOptions[0];
+  const defaultVoiceLabel = defaultCookingVoice
+    ? t("recipeDetail.defaultVoiceWithName", { name: defaultCookingVoice.label })
     : t("recipeDetail.defaultVoice");
+  const displayedVoiceId = voiceId ?? defaultCookingVoice?.value;
   const voiceSelectDisabled = !hasElevenLabsKey || voiceOptions.length === 0;
   const voiceHelperText = selectedVoice
     ? selectedVoice.displayLabel
@@ -674,6 +746,10 @@ function DetailPage() {
     ? t("settings.voice.loadingElevenLabsVoices")
     : elevenLabsVoicesError;
   const canGenerateCover = hasLlmKey && hasImageGenKey;
+  const showDetailIngredients = shouldShowIngredients(detailDisplayMode);
+  const showDetailSteps = shouldShowSteps(detailDisplayMode);
+  const showEditIngredients = shouldShowIngredients(editDisplayMode);
+  const showEditSteps = shouldShowSteps(editDisplayMode);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -731,12 +807,8 @@ function DetailPage() {
                 )}
                 <div className="flex w-full flex-col gap-1 sm:w-[22rem] lg:w-[24rem]">
                   <Select
-                    value={voiceId ?? DEFAULT_RECIPE_VOICE_VALUE}
-                    onValueChange={(nextValue) =>
-                      void handleRecipeVoiceChange(
-                        nextValue === DEFAULT_RECIPE_VOICE_VALUE ? null : nextValue,
-                      )
-                    }
+                    value={displayedVoiceId}
+                    onValueChange={(nextValue) => void handleRecipeVoiceChange(nextValue)}
                     disabled={voiceSelectDisabled}
                   >
                     <SelectTrigger
@@ -747,9 +819,6 @@ function DetailPage() {
                       <SelectValue placeholder={defaultVoiceLabel} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={DEFAULT_RECIPE_VOICE_VALUE}>
-                        {defaultVoiceLabel}
-                      </SelectItem>
                       {voiceOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.displayLabel}
@@ -851,7 +920,7 @@ function DetailPage() {
                     />
                   </>
                 )}
-                <div className="pointer-events-none absolute right-4 top-4 z-20 flex gap-2 opacity-0 transition-opacity group-hover/cover:pointer-events-auto group-hover/cover:opacity-100 group-focus-within/cover:pointer-events-auto group-focus-within/cover:opacity-100">
+                <div className="absolute right-4 top-4 z-20 flex gap-2 opacity-100 transition-opacity sm:pointer-events-none sm:opacity-0 sm:group-hover/cover:pointer-events-auto sm:group-hover/cover:opacity-100 sm:group-focus-within/cover:pointer-events-auto sm:group-focus-within/cover:opacity-100">
                   <AppTooltip content={t("recipeDetail.uploadCover")}>
                     <button
                       type="button"
@@ -900,9 +969,22 @@ function DetailPage() {
 
       {/* Body */}
       <section className="flex-1">
-        <div className="mx-auto grid max-w-7xl gap-12 px-4 py-10 sm:px-6 sm:py-14 lg:grid-cols-12">
+        <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-14">
+          <div className="mb-6 flex justify-center sm:justify-end">
+            <RecipeContentDisplayToggle
+              value={detailDisplayMode}
+              onChange={setDetailDisplayMode}
+              allLabel={t("recipeContentDisplay.all")}
+              ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
+              stepsLabel={t("recipeContentDisplay.stepsOnly")}
+              ariaLabel={t("recipeContentDisplay.ariaLabel")}
+            />
+          </div>
+
+          <div className="grid gap-12 lg:grid-cols-12">
           {/* Ingredients */}
-          <aside className="lg:col-span-4">
+          {showDetailIngredients && (
+          <aside className={showDetailSteps ? "lg:col-span-4" : "lg:col-span-12"}>
             <div className="lg:sticky lg:top-24">
               <div className="flex items-end justify-between">
                 <h2 className="font-display text-2xl">{t("recipeDetail.ingredients")}</h2>
@@ -952,9 +1034,11 @@ function DetailPage() {
               </div>
             </div>
           </aside>
+          )}
 
           {/* Steps */}
-          <div className="lg:col-span-8">
+          {showDetailSteps && (
+          <div className={showDetailIngredients ? "lg:col-span-8" : "lg:col-span-12"}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <h2 className="font-display text-2xl">{t("recipeDetail.steps")}</h2>
               <VoiceHint>{t("recipeDetail.stepsHint")}</VoiceHint>
@@ -1002,86 +1086,109 @@ function DetailPage() {
               ))}
             </ol>
           </div>
+          )}
+          </div>
         </div>
       </section>
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("recipeDetail.editRecipeTitle")}</DialogTitle>
-            <DialogDescription>{t("recipeDetail.editRecipeBody")}</DialogDescription>
+        <DialogContent className="grid h-[calc(100dvh-1rem)] max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-[2rem] p-0 sm:h-[92dvh] sm:w-[calc(100vw-2rem)] sm:p-0">
+          <DialogHeader className="flex-col gap-3 space-y-0 border-b border-border/70 px-5 py-4 pr-12 text-left sm:flex-row sm:items-start sm:justify-between sm:px-6">
+            <div className="space-y-1.5">
+              <DialogTitle>{t("recipeDetail.editRecipeTitle")}</DialogTitle>
+              <DialogDescription>{t("recipeDetail.editRecipeBody")}</DialogDescription>
+            </div>
+            <RecipeContentDisplayToggle
+              value={editDisplayMode}
+              onChange={setEditDisplayMode}
+              allLabel={t("recipeContentDisplay.all")}
+              ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
+              stepsLabel={t("recipeContentDisplay.stepsOnly")}
+              ariaLabel={t("recipeContentDisplay.ariaLabel")}
+              className="shrink-0 self-start"
+            />
           </DialogHeader>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-4">
-              <label className="space-y-2">
-                <span className="text-sm font-medium">{t("import.manualRecipeTitle")}</span>
-                <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
+          <div className="min-h-0 overflow-y-auto p-4 lg:overflow-hidden lg:p-5">
+            <div
+              className={`grid gap-4 lg:min-h-0 ${
+                showEditIngredients && showEditSteps
+                  ? "lg:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.1fr)]"
+                  : "lg:grid-cols-1"
+              }`}
+            >
+            <div className="scrollbar-hover space-y-5 lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:border lg:border-border/70 lg:bg-card/30 lg:p-4">
+              <div className="space-y-4">
                 <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("import.manualCuisine")}</span>
-                  <Input
-                    value={editCuisine}
-                    onChange={(event) => setEditCuisine(event.target.value)}
-                  />
+                  <span className="text-sm font-medium">{t("import.manualRecipeTitle")}</span>
+                  <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
                 </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("import.manualTotalTime")}</span>
-                  <div className="flex rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay">
-                    <input
-                      className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
-                      inputMode="numeric"
-                      value={editTotalTime}
-                      onChange={(event) => setEditTotalTime(event.target.value)}
-                      placeholder={t("import.manualTotalTimePlaceholder")}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium">{t("import.manualCuisine")}</span>
+                    <Input
+                      value={editCuisine}
+                      onChange={(event) => setEditCuisine(event.target.value)}
                     />
-                    <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
-                      {t("import.manualStepDurationUnit")}
-                    </span>
-                  </div>
-                </label>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("import.manualDifficulty")}</span>
-                  <Select
-                    value={editDifficulty || "__empty__"}
-                    onValueChange={(next) =>
-                      setEditDifficulty(next === "__empty__" ? "" : (next as EditDifficulty))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__empty__">{t("common.unknown")}</SelectItem>
-                      <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
-                      <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
-                      <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium">{t("import.manualFlavors")}</span>
-                  <Input
-                    value={editFlavors}
-                    onChange={(event) => setEditFlavors(event.target.value)}
-                  />
-                </label>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium">{t("import.manualTotalTime")}</span>
+                    <div className="flex rounded-xl border border-border bg-card shadow-sm transition-colors focus-within:border-clay">
+                      <input
+                        className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+                        inputMode="numeric"
+                        value={editTotalTime}
+                        onChange={(event) => setEditTotalTime(event.target.value)}
+                        placeholder={t("import.manualTotalTimePlaceholder")}
+                      />
+                      <span className="flex shrink-0 items-center border-l border-border px-3 text-xs text-muted-foreground">
+                        {t("import.manualStepDurationUnit")}
+                      </span>
+                    </div>
+                  </label>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium">{t("import.manualDifficulty")}</span>
+                    <Select
+                      value={editDifficulty || "__empty__"}
+                      onValueChange={(next) =>
+                        setEditDifficulty(next === "__empty__" ? "" : (next as EditDifficulty))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__empty__">{t("common.unknown")}</SelectItem>
+                        <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
+                        <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
+                        <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium">{t("import.manualFlavors")}</span>
+                    <Input
+                      value={editFlavors}
+                      onChange={(event) => setEditFlavors(event.target.value)}
+                    />
+                  </label>
+                </div>
               </div>
 
+              {showEditIngredients && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
+                <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl bg-background/95 px-1 py-2 backdrop-blur lg:bg-card/95">
                   <div className="flex items-center gap-3">
                     <h3 className="text-sm font-medium">{t("recipeDetail.ingredients")}</h3>
-                    <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                    <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
                       {editIngredients.length}
                     </span>
                   </div>
                   <button
                     type="button"
-                    className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs hover:border-foreground"
+                    className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs hover:border-foreground"
                     onClick={addEditIngredient}
                   >
                     <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -1090,7 +1197,11 @@ function DetailPage() {
                 </div>
                 <div className="space-y-2">
                   {editIngredients.map((ingredient, index) => (
-                    <div key={index} className="group grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                    <div
+                      key={index}
+                      className="group grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
+                      onBlur={(event) => handleEditIngredientBlur(event, index)}
+                    >
                       <Input
                         ref={(node) => {
                           editIngredientNameRefs.current[index] = node;
@@ -1108,37 +1219,41 @@ function DetailPage() {
                           updateEditIngredient(index, { amount: event.target.value })
                         }
                       />
-                      <button
-                        type="button"
-                        aria-label={t("common.delete")}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                        onClick={() =>
-                          setEditIngredients((current) =>
-                            current.length > 1
-                              ? current.filter((_, itemIndex) => itemIndex !== index)
-                              : [createEmptyIngredient()],
-                          )
-                        }
-                      >
-                        <X className="h-4 w-4" strokeWidth={1.75} />
-                      </button>
+                      {editIngredients.length > 1 && (
+                        <button
+                          type="button"
+                          aria-label={t("common.delete")}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                          onClick={() =>
+                            setEditIngredients((current) =>
+                              current.length > 1
+                                ? current.filter((_, itemIndex) => itemIndex !== index)
+                                : [createEmptyIngredient()],
+                            )
+                          }
+                        >
+                          <X className="h-4 w-4" strokeWidth={1.75} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
+              )}
             </div>
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
+            {showEditSteps && (
+            <div className="scrollbar-hover space-y-3 lg:min-h-0 lg:overflow-y-auto lg:rounded-3xl lg:border lg:border-border/70 lg:bg-card/30 lg:p-4">
+              <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 backdrop-blur lg:bg-card/95">
                 <div className="flex items-center gap-3">
                   <h3 className="text-sm font-medium">{t("recipeDetail.steps")}</h3>
-                  <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                  <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
                     {editSteps.length}
                   </span>
                 </div>
                 <button
                   type="button"
-                  className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs hover:border-foreground"
+                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs hover:border-foreground"
                   onClick={addEditStep}
                 >
                   <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -1147,23 +1262,56 @@ function DetailPage() {
               </div>
               <div className="space-y-3">
                 {editSteps.map((step, index) => (
-                  <div key={index} className="group rounded-2xl border border-border bg-card p-4">
+                  <div
+                    key={index}
+                    className="group rounded-2xl border border-border bg-card p-4"
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const fromIndex = draggedEditStepIndexRef.current;
+                      if (fromIndex !== null) moveEditStep(fromIndex, index);
+                      draggedEditStepIndexRef.current = null;
+                    }}
+                    onBlur={(event) => handleEditStepBlur(event, index)}
+                  >
                     <div className="mb-3 flex items-center justify-between gap-3">
-                      <span className="font-display text-lg">{index + 1}</span>
-                      <button
-                        type="button"
-                        aria-label={t("common.delete")}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                        onClick={() =>
-                          setEditSteps((current) =>
-                            current.length > 1
-                              ? current.filter((_, itemIndex) => itemIndex !== index)
-                              : [createEmptyStep()],
-                          )
-                        }
-                      >
-                        <X className="h-4 w-4" strokeWidth={1.75} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="-ml-1 inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-full border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                          draggable
+                          onDragStart={(event) => {
+                            draggedEditStepIndexRef.current = index;
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", String(index));
+                          }}
+                          onDragEnd={() => {
+                            draggedEditStepIndexRef.current = null;
+                          }}
+                        >
+                          <GripVertical className="h-4 w-4" strokeWidth={1.75} />
+                        </button>
+                        <span className="font-display text-lg">{index + 1}</span>
+                      </div>
+                      {editSteps.length > 1 && (
+                        <button
+                          type="button"
+                          aria-label={t("common.delete")}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                          onClick={() =>
+                            setEditSteps((current) =>
+                              current.length > 1
+                                ? current.filter((_, itemIndex) => itemIndex !== index)
+                                : [createEmptyStep()],
+                            )
+                          }
+                        >
+                          <X className="h-4 w-4" strokeWidth={1.75} />
+                        </button>
+                      )}
                     </div>
                     <StepDescriptionField
                       textareaRef={(node) => {
@@ -1190,9 +1338,11 @@ function DetailPage() {
                 ))}
               </div>
             </div>
+            )}
+            </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="border-t border-border/70 bg-background/95 px-5 py-4 backdrop-blur sm:px-6">
             <button
               type="button"
               className="mt-2 rounded-full border border-border px-5 py-2.5 text-sm hover:border-foreground sm:mt-0"

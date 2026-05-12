@@ -200,7 +200,7 @@ function RootComponent() {
         <TooltipProvider delayDuration={120}>
           <GlobalVoiceController />
           <Outlet />
-          <Toaster position="top-center" richColors closeButton />
+          <Toaster position="top-center" richColors duration={2000} />
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

@@ -45,6 +45,48 @@ export function getSupportedElevenLabsVoices(voices: ElevenLabsVoice[]): ElevenL
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export async function getFirstElevenLabsVoiceId(service: ElevenLabsService): Promise<string | null> {
+  return getSupportedElevenLabsVoices(await service.listVoices({ showLegacy: true }))[0]?.voice_id ?? null;
+}
+
+export async function getFirstElevenLabsVoiceIdFromApiKey(apiKey: string): Promise<string | null> {
+  return getFirstElevenLabsVoiceId(new ElevenLabsService(apiKey));
+}
+
+export function getDefaultVoiceId(options: ElevenLabsVoiceOption[]): string | null {
+  return options[0]?.value ?? null;
+}
+
+export function resolveVoiceId(
+  voiceId: string | null | undefined,
+  options: ElevenLabsVoiceOption[],
+  fallbackVoiceId = getDefaultVoiceId(options),
+): string | null {
+  return voiceId && options.some((option) => option.value === voiceId)
+    ? voiceId
+    : fallbackVoiceId;
+}
+
+export function useDefaultElevenLabsVoiceSelection(
+  options: ElevenLabsVoiceOption[],
+  fallbackVoiceId: string | null,
+  setters: Array<(id: string) => void>,
+  values: Array<string | null | undefined>,
+): string | null {
+  const defaultVoiceId = fallbackVoiceId ?? getDefaultVoiceId(options);
+
+  useEffect(() => {
+    if (!defaultVoiceId) return;
+
+    setters.forEach((setVoiceId, index) => {
+      const resolvedVoiceId = resolveVoiceId(values[index], options, defaultVoiceId);
+      if (resolvedVoiceId && values[index] !== resolvedVoiceId) setVoiceId(resolvedVoiceId);
+    });
+  }, [defaultVoiceId, options, setters, values]);
+
+  return defaultVoiceId;
+}
+
 export function toElevenLabsVoiceOption(
   voice: ElevenLabsVoice,
   fallbackGender?: string,

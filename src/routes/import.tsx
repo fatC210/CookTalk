@@ -1,5 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SiteHeader } from "@/components/site-header";
+import { RecipeEditShortcuts } from "@/components/recipe-edit-shortcuts";
+import {
+  RecipeContentDisplayToggle,
+  shouldShowIngredients,
+  shouldShowSteps,
+  type RecipeContentDisplayMode,
+} from "@/components/recipe-content-display-toggle";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
   AlertCircle,
@@ -10,6 +17,8 @@ import {
   FileVideo,
   ImageIcon,
   Loader2,
+  RotateCcw,
+  GripVertical,
   MessageCircleMore,
   Mic,
   Pencil,
@@ -42,7 +51,11 @@ import {
   MAX_VIDEO_IMPORT_TASKS,
   updateVideoImportTask,
 } from "@/lib/video-import-tasks";
-import { speakWithElevenLabs, transcribeWithElevenLabs } from "@/lib/voice-pipeline";
+import {
+  normalizeSpeechText,
+  speakWithElevenLabs,
+  transcribeWithElevenLabs,
+} from "@/lib/voice-pipeline";
 import {
   Select,
   SelectContent,
@@ -77,6 +90,7 @@ import {
   type FollowUpField,
   type ManualDifficulty,
   type ManualIngredient,
+  type ManualStep,
   type PipelineStage,
   type StructuredRecipe,
   type VideoImportDraftSnapshot,
@@ -97,6 +111,7 @@ export const Route = createFileRoute("/import")({
 });
 
 const EMPTY_MANUAL_DIFFICULTY_VALUE = "__empty__";
+const ENABLE_GUIDED_FOLLOW_UPS = false;
 
 const pipelineStages = [
   {
@@ -143,6 +158,27 @@ const stageLabelKeys: Partial<Record<PipelineStage, string>> = {
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function reorderItems<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return items;
+  if (fromIndex >= items.length || toIndex >= items.length) return items;
+
+  const next = [...items];
+  const [movedItem] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, movedItem);
+  return next;
+}
+
+function reorderRecipeSteps(
+  steps: StructuredRecipe["steps"],
+  fromIndex: number,
+  toIndex: number,
+): StructuredRecipe["steps"] {
+  return reorderItems(steps, fromIndex, toIndex).map((item, itemIndex) => ({
+    ...item,
+    order: itemIndex + 1,
+  }));
 }
 
 function buildVideoDraftSnapshot(values: {
@@ -273,6 +309,18 @@ function parseDurationMinutesInput(value: string): number | undefined {
   return minutes ? minutes * 60 : undefined;
 }
 
+function isEmptyIngredient(ingredient: ManualIngredient) {
+  return !ingredient.name.trim() && !ingredient.amount.trim();
+}
+
+function isEmptyRecipeStep(step: StructuredRecipe["steps"][number]) {
+  return !step.description.trim() && !step.durationSec && !(step.tips ?? "").trim();
+}
+
+function isEmptyManualStep(step: ManualStep) {
+  return !step.description.trim() && !step.durationMin.trim() && !step.tips.trim();
+}
+
 type StepMetadataFieldsProps = {
   t: TFunction;
   durationValue: string;
@@ -329,6 +377,7 @@ function StepMetadataFields({
 type StepDescriptionFieldProps = {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: React.FocusEventHandler<HTMLTextAreaElement>;
   placeholder: string;
   disabled?: boolean;
   textareaRef?: React.Ref<HTMLTextAreaElement>;
@@ -337,6 +386,7 @@ type StepDescriptionFieldProps = {
 function StepDescriptionField({
   value,
   onChange,
+  onBlur,
   placeholder,
   disabled,
   textareaRef,
@@ -349,6 +399,7 @@ function StepDescriptionField({
         className="overflow-y-hidden rounded-xl border border-border bg-card px-3 py-3 text-sm outline-none focus-visible:border-clay focus-visible:ring-0"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
         minRows={1}
         maxRows={6}
@@ -465,7 +516,6 @@ function ImportPage() {
     isDragging,
     setIsDragging,
     selectedMediaFile,
-    setSelectedMediaFile,
     stage,
     setStage,
     error,
@@ -548,10 +598,14 @@ function ImportPage() {
     src: string;
     alt: string;
   } | null>(null);
+  const [videoEditDisplayMode, setVideoEditDisplayMode] =
+    useState<RecipeContentDisplayMode>("all");
+  const [manualDisplayMode, setManualDisplayMode] = useState<RecipeContentDisplayMode>("all");
   const videoTasksQuery = useLiveQuery(
-    () => db.videoImportTasks.orderBy("updatedAt").reverse().toArray(),
+    () => db.videoImportTasks.orderBy("createdAt").reverse().toArray(),
     [],
   );
+  const isVideoTasksLoaded = videoTasksQuery !== undefined;
   const videoTasks = useMemo(() => videoTasksQuery ?? [], [videoTasksQuery]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -561,11 +615,17 @@ function ImportPage() {
   const editStepDescriptionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const manualIngredientNameRefs = useRef<Array<HTMLInputElement | null>>([]);
   const manualStepDescriptionRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const draggedEditStepIndexRef = useRef<number | null>(null);
+  const draggedManualStepIndexRef = useRef<number | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recorderTimeoutRef = useRef<number | null>(null);
+  const shouldAutoListenFollowUpRef = useRef(false);
+  const followUpSubmitRef = useRef<((answer: string) => Promise<void>) | null>(null);
+  const creatingNewVideoTaskRef = useRef(false);
   const initializedVideoTaskRef = useRef(false);
   const lastSavedTaskSignatureRef = useRef<string>("");
+  const pipelineRunIdRef = useRef(0);
 
   const MAX_SIZE = 200 * 1024 * 1024;
   const canUseVoiceFollowUp = hasElevenLabsKey;
@@ -593,10 +653,10 @@ function ImportPage() {
     followUpStarted,
     followUpCompleted,
   });
-  const currentVideoTask = videoTasks.find((task) => task.id === currentTaskId) ?? null;
   const hasVideoTaskCapacity = videoTasks.length < MAX_VIDEO_IMPORT_TASKS;
 
   useEffect(() => {
+    if (!isVideoTasksLoaded) return;
     if (initializedVideoTaskRef.current) return;
     initializedVideoTaskRef.current = true;
 
@@ -610,18 +670,32 @@ function ImportPage() {
     }
 
     replaceVideoDraft(createInitialVideoDraftSnapshot());
-  }, [currentTaskId, replaceVideoDraft, videoTasks]);
+  }, [currentTaskId, isVideoTasksLoaded, replaceVideoDraft, videoTasks]);
 
   useEffect(() => {
+    if (!isVideoTasksLoaded) return;
+    if (creatingNewVideoTaskRef.current && hasVideoTaskCapacity) return;
     if (videoTasks.length === 0) {
       if (currentTaskId !== null) setCurrentTaskId(null);
+      creatingNewVideoTaskRef.current = false;
       return;
     }
 
     if (!currentTaskId || !videoTasks.some((task) => task.id === currentTaskId)) {
-      setCurrentTaskId(videoTasks[0].id);
+      const nextTask = videoTasks[0];
+      setCurrentTaskId(nextTask.id);
+      lastSavedTaskSignatureRef.current = "";
+      replaceVideoDraft(nextTask.snapshot);
+      setMode("video");
     }
-  }, [currentTaskId, videoTasks]);
+  }, [
+    currentTaskId,
+    hasVideoTaskCapacity,
+    isVideoTasksLoaded,
+    replaceVideoDraft,
+    setMode,
+    videoTasks,
+  ]);
 
   const followUpQuestions = useMemo<
     {
@@ -655,6 +729,46 @@ function ImportPage() {
   );
 
   const currentFollowUp = followUpQuestions[followUpIndex] ?? null;
+  const followUpMessages = followUpQuestions.slice(0, followUpIndex + 1).map((item, index) => ({
+    ...item,
+    answer: followUpAnswers[item.field]?.trim() ?? "",
+    isCurrent: index === followUpIndex,
+  }));
+  const followUpBusy =
+    followUpStatus === "speaking" ||
+    followUpStatus === "listening" ||
+    followUpStatus === "transcribing" ||
+    followUpStatus === "refining";
+
+  const focusElement = (element: HTMLElement | null | undefined) => {
+    if (!element) return;
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => element.focus(), 180);
+  };
+
+  const focusElementAfterDisplayChange = (elementGetter: () => HTMLElement | null | undefined) => {
+    window.requestAnimationFrame(() => focusElement(elementGetter()));
+  };
+
+  const jumpToEditIngredient = (index: number) => {
+    setVideoEditDisplayMode((current) => (current === "steps" ? "all" : current));
+    focusElementAfterDisplayChange(() => editIngredientNameRefs.current[index]);
+  };
+
+  const jumpToEditStep = (index: number) => {
+    setVideoEditDisplayMode((current) => (current === "ingredients" ? "all" : current));
+    focusElementAfterDisplayChange(() => editStepDescriptionRefs.current[index]);
+  };
+
+  const jumpToManualIngredient = (index: number) => {
+    setManualDisplayMode((current) => (current === "steps" ? "all" : current));
+    focusElementAfterDisplayChange(() => manualIngredientNameRefs.current[index]);
+  };
+
+  const jumpToManualStep = (index: number) => {
+    setManualDisplayMode((current) => (current === "ingredients" ? "all" : current));
+    focusElementAfterDisplayChange(() => manualStepDescriptionRefs.current[index]);
+  };
 
   const syncRecipeEditor = (recipe: StructuredRecipe) => {
     setStructuredRecipe(recipe);
@@ -676,10 +790,11 @@ function ImportPage() {
   };
 
   const addEditIngredient = () => {
+    setVideoEditDisplayMode((current) => (current === "steps" ? "all" : current));
     setEditIngredients((current) => {
-      const next = [...current, createEmptyIngredient()];
+      const next = [createEmptyIngredient(), ...current];
       window.requestAnimationFrame(() => {
-        editIngredientNameRefs.current[next.length - 1]?.focus();
+        editIngredientNameRefs.current[0]?.focus();
       });
       return next;
     });
@@ -693,6 +808,18 @@ function ImportPage() {
     );
   };
 
+  const handleEditIngredientBlur = (event: React.FocusEvent<HTMLDivElement>, index: number) => {
+    const nextFocusedElement = event.relatedTarget;
+    if (nextFocusedElement && event.currentTarget.contains(nextFocusedElement)) return;
+    setEditIngredients((current) => {
+      const ingredient = current[index];
+      if (!ingredient || !isEmptyIngredient(ingredient)) return current;
+      return current.length > 1
+        ? current.filter((_, itemIndex) => itemIndex !== index)
+        : [createEmptyIngredient()];
+    });
+  };
+
   const updateEditStep = (index: number, patch: Partial<StructuredRecipe["steps"][number]>) => {
     setEditSteps((current) =>
       current.map((item, itemIndex) =>
@@ -702,13 +829,21 @@ function ImportPage() {
   };
 
   const addEditStep = () => {
+    setVideoEditDisplayMode((current) => (current === "ingredients" ? "all" : current));
     setEditSteps((current) => {
-      const next = [...current, createEmptyRecipeStep(current.length + 1)];
+      const next = [...current, createEmptyRecipeStep(current.length + 1)].map((item, itemIndex) => ({
+        ...item,
+        order: itemIndex + 1,
+      }));
       window.requestAnimationFrame(() => {
         editStepDescriptionRefs.current[next.length - 1]?.focus();
       });
       return next;
     });
+  };
+
+  const moveEditStep = (fromIndex: number, toIndex: number) => {
+    setEditSteps((current) => reorderRecipeSteps(current, fromIndex, toIndex));
   };
 
   const removeEditStep = (index: number) => {
@@ -721,13 +856,56 @@ function ImportPage() {
     );
   };
 
-  const selectFollowUpQuestion = (index: number) => {
-    const question = followUpQuestions[index];
-    if (!question || followUpBusy) return;
-    setFollowUpIndex(index);
-    setFollowUpInput(followUpAnswers[question.field] ?? "");
-    setFollowUpPrompt(question.question);
-    setFollowUpError(null);
+  const handleEditStepBlur = (event: React.FocusEvent<HTMLDivElement>, index: number) => {
+    const nextFocusedElement = event.relatedTarget;
+    if (nextFocusedElement && event.currentTarget.contains(nextFocusedElement)) return;
+    setEditSteps((current) => {
+      const step = current[index];
+      if (!step || !isEmptyRecipeStep(step)) return current;
+      return current.length > 1
+        ? current
+            .filter((_, itemIndex) => itemIndex !== index)
+            .map((item, itemIndex) => ({ ...item, order: itemIndex + 1 }))
+        : [createEmptyRecipeStep(1)];
+    });
+  };
+
+  const handleManualIngredientBlur = (event: React.FocusEvent<HTMLDivElement>, index: number) => {
+    const nextFocusedElement = event.relatedTarget;
+    if (nextFocusedElement && event.currentTarget.contains(nextFocusedElement)) return;
+    setManualIngredients((current) => {
+      const ingredient = current[index];
+      if (!ingredient || !isEmptyIngredient(ingredient)) return current;
+      return current.length > 1
+        ? current.filter((_, itemIndex) => itemIndex !== index)
+        : [createEmptyIngredient()];
+    });
+  };
+
+  const handleManualStepBlur = (event: React.FocusEvent<HTMLDivElement>, index: number) => {
+    const nextFocusedElement = event.relatedTarget;
+    if (nextFocusedElement && event.currentTarget.contains(nextFocusedElement)) return;
+    setManualSteps((current) => {
+      const step = current[index];
+      if (!step || !isEmptyManualStep(step)) return current;
+      return current.length > 1
+        ? current.filter((_, itemIndex) => itemIndex !== index)
+        : [createEmptyManualStep()];
+    });
+  };
+
+  const addManualStep = () => {
+    setManualSteps((current) => {
+      const next = [...current, createEmptyManualStep()];
+      window.requestAnimationFrame(() => {
+        manualStepDescriptionRefs.current[next.length - 1]?.focus();
+      });
+      return next;
+    });
+  };
+
+  const moveManualStep = (fromIndex: number, toIndex: number) => {
+    setManualSteps((current) => reorderItems(current, fromIndex, toIndex));
   };
 
   const stopAnswerRecording = useCallback(() => {
@@ -751,15 +929,29 @@ function ImportPage() {
   }, []);
 
   const resetFollowUpFlow = () => {
+    shouldAutoListenFollowUpRef.current = false;
     cleanupAnswerRecording();
     clearFollowUpDraft();
   };
 
+  const saveCurrentVideoTaskNow = useCallback(async () => {
+    if (!currentTaskId) return;
+    const baseTask = videoTasks.find((task) => task.id === currentTaskId);
+    if (!baseTask || !hasVideoDraftContent(videoDraftSnapshot)) return;
+
+    const nextTask = updateVideoImportTask(baseTask, videoDraftSnapshot);
+    lastSavedTaskSignatureRef.current = `${nextTask.id}:${getVideoDraftSignature(nextTask.snapshot)}`;
+    await saveVideoImportTask(nextTask);
+  }, [currentTaskId, videoDraftSnapshot, videoTasks]);
+
   const loadVideoTask = useCallback(
-    (taskId: string) => {
+    async (taskId: string) => {
       const task = videoTasks.find((item) => item.id === taskId);
       if (!task) return;
+      if (task.id === currentTaskId) return;
 
+      creatingNewVideoTaskRef.current = false;
+      await saveCurrentVideoTaskNow();
       stopAnswerRecording();
       cleanupAnswerRecording();
       setCurrentTaskId(task.id);
@@ -768,7 +960,15 @@ function ImportPage() {
       setMode("video");
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [cleanupAnswerRecording, replaceVideoDraft, setMode, stopAnswerRecording, videoTasks],
+    [
+      cleanupAnswerRecording,
+      currentTaskId,
+      replaceVideoDraft,
+      saveCurrentVideoTaskNow,
+      setMode,
+      stopAnswerRecording,
+      videoTasks,
+    ],
   );
 
   const clearCurrentVideoTask = useCallback(async () => {
@@ -779,6 +979,7 @@ function ImportPage() {
     }
     clearVideoDraft();
     setCurrentTaskId(null);
+    creatingNewVideoTaskRef.current = false;
     lastSavedTaskSignatureRef.current = "";
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [cleanupAnswerRecording, clearVideoDraft, currentTaskId, stopAnswerRecording]);
@@ -795,8 +996,23 @@ function ImportPage() {
     [clearCurrentVideoTask, currentTaskId],
   );
 
-  const resetVideoDraft = () => {
-    void clearCurrentVideoTask();
+  const returnToUploadStep = async () => {
+    if (!hasVideoTaskCapacity) {
+      toast.error(t("import.videoTaskLimitReached"));
+      return;
+    }
+
+    await saveCurrentVideoTaskNow();
+    pipelineRunIdRef.current += 1;
+    stopAnswerRecording();
+    cleanupAnswerRecording();
+    shouldAutoListenFollowUpRef.current = false;
+    setCurrentTaskId(null);
+    creatingNewVideoTaskRef.current = true;
+    lastSavedTaskSignatureRef.current = "";
+    replaceVideoDraft(createInitialVideoDraftSnapshot());
+    setMode("video");
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const resetManualDraft = () => {
@@ -848,7 +1064,7 @@ function ImportPage() {
       toast.error(fileError);
       return;
     }
-    if (!hasVideoTaskCapacity && !currentTaskId) {
+    if (!hasVideoTaskCapacity && (!currentTaskId || creatingNewVideoTaskRef.current)) {
       toast.error(t("import.videoTaskLimitReached"));
       return;
     }
@@ -864,6 +1080,7 @@ function ImportPage() {
 
     stopAnswerRecording();
     cleanupAnswerRecording();
+    creatingNewVideoTaskRef.current = false;
     setCurrentTaskId(task.id);
     replaceVideoDraft(task.snapshot);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -910,7 +1127,7 @@ function ImportPage() {
         console.warn("Follow-up voice prompt failed:", err);
         toast.warning(t("import.followUpVoiceWarning"));
       } finally {
-        setFollowUpStatus((current) => (current === "speaking" ? "idle" : current));
+        setFollowUpStatus((current) => (current === "speaking" ? "listening" : current));
       }
     },
     [
@@ -987,12 +1204,21 @@ function ImportPage() {
           const answer = (await transcribeWithElevenLabs(audioBlob, language)).trim();
           setFollowUpInput(answer);
           toast.success(t("import.followUpTranscriptReady"));
+          if (shouldAutoListenFollowUpRef.current && answer) {
+            await followUpSubmitRef.current?.(answer);
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : t("import.followUpTranscribeFailed");
           setFollowUpError(message);
           toast.error(message);
         } finally {
-          setFollowUpStatus("idle");
+          setFollowUpStatus((current) =>
+            current === "transcribing"
+              ? shouldAutoListenFollowUpRef.current
+                ? "listening"
+                : "idle"
+              : current,
+          );
         }
       };
 
@@ -1042,9 +1268,9 @@ function ImportPage() {
     }
   };
 
-  const handleFollowUpSubmit = async () => {
+  const submitFollowUpAnswer = async (rawAnswer: string) => {
     if (!currentFollowUp) return;
-    const answer = followUpInput.trim();
+    const answer = rawAnswer.trim();
     if (!answer) return;
 
     const nextAnswers = {
@@ -1071,6 +1297,14 @@ function ImportPage() {
     setFollowUpInput("");
     setFollowUpStatus("done");
   };
+
+  const handleFollowUpSubmit = async () => {
+    await submitFollowUpAnswer(followUpInput);
+  };
+
+  useEffect(() => {
+    followUpSubmitRef.current = submitFollowUpAnswer;
+  });
 
   const handleFollowUpContinue = async () => {
     const answer = followUpInput.trim();
@@ -1128,6 +1362,7 @@ function ImportPage() {
       return;
     }
 
+    const pipelineRunId = (pipelineRunIdRef.current += 1);
     resetFollowUpFlow();
     setError(null);
     setTranscript("");
@@ -1148,6 +1383,7 @@ function ImportPage() {
       }
       const sttService = new ElevenLabsService(elevenLabsKey);
       const rawTranscript = (await sttService.speechToText(selectedMediaFile)).trim();
+      if (pipelineRunId !== pipelineRunIdRef.current) return;
       if (!rawTranscript) {
         throw new Error("Cannot structure recipe from empty transcript");
       }
@@ -1165,11 +1401,49 @@ function ImportPage() {
           language,
           rawTranscript,
         );
+        if (pipelineRunId !== pipelineRunIdRef.current) return;
         syncRecipeEditor(recipe);
       }
 
+      if (pipelineRunId !== pipelineRunIdRef.current) return;
       setStage("preview");
     } catch (err) {
+      if (pipelineRunId !== pipelineRunIdRef.current) return;
+      const message = formatImportError(err, t("import.pipelineFailed"), t);
+      setError(message);
+      setStage("error");
+      toast.error(message);
+    }
+  };
+
+  const restructureVideoDraft = async () => {
+    const rawTranscript = transcript.trim();
+    if (!rawTranscript) return;
+
+    const pipelineRunId = (pipelineRunIdRef.current += 1);
+    resetFollowUpFlow();
+    setError(null);
+    setCoverImage(null);
+    setVideoCoverSource("default");
+
+    try {
+      setStage("structuring");
+      const llmService = await getConfiguredLLMService();
+      if (!llmService) {
+        throw new Error(t("import.manualTextLlmRequired"));
+      }
+
+      const recipe = cleanStructuredImportRecipe(
+        (await llmService.structureRecipe(rawTranscript, language)) as StructuredRecipe,
+        language,
+        rawTranscript,
+      );
+      if (pipelineRunId !== pipelineRunIdRef.current) return;
+
+      syncRecipeEditor(recipe);
+      setStage("preview");
+    } catch (err) {
+      if (pipelineRunId !== pipelineRunIdRef.current) return;
       const message = formatImportError(err, t("import.pipelineFailed"), t);
       setError(message);
       setStage("error");
@@ -1512,6 +1786,41 @@ function ImportPage() {
   }, [openMediaPicker]);
 
   useEffect(() => {
+    if (!ENABLE_GUIDED_FOLLOW_UPS) return;
+
+    const handleVoiceCommand = (event: Event) => {
+      const isFollowUpActive = Boolean(
+        structuredRecipe &&
+        (stage === "preview" || stage === "saving" || stage === "done") &&
+        !followUpCompleted,
+      );
+      if (!isFollowUpActive || !currentFollowUp || followUpBusy) return;
+      const transcript = (event as CustomEvent<{ transcript?: string }>).detail?.transcript?.trim();
+      if (!transcript) return;
+      const text = normalizeSpeechText(transcript);
+
+      if (
+        /(open|go to|show|back|upload|delete|save|recipe|选择|上传|返回|删除|保存|菜谱)/i.test(text)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      void submitFollowUpAnswer(transcript);
+    };
+
+    window.addEventListener("cooktalk:voice-command", handleVoiceCommand);
+    return () => window.removeEventListener("cooktalk:voice-command", handleVoiceCommand);
+  }, [
+    currentFollowUp,
+    followUpBusy,
+    followUpCompleted,
+    stage,
+    structuredRecipe,
+    submitFollowUpAnswer,
+  ]);
+
+  useEffect(() => {
     if (!coverImage) {
       setCoverPreviewUrl(null);
       return;
@@ -1534,12 +1843,14 @@ function ImportPage() {
   }, [manualCoverImage]);
 
   useEffect(() => {
+    if (!ENABLE_GUIDED_FOLLOW_UPS) return;
     if (stage !== "preview" || !structuredRecipe || followUpStarted) return;
 
     setFollowUpStarted(true);
     setFollowUpIndex(0);
     setFollowUpInput("");
     if (canUseVoiceFollowUp) {
+      shouldAutoListenFollowUpRef.current = true;
       void askFollowUpQuestion(0);
     } else {
       setFollowUpPrompt(followUpQuestions[0]?.question ?? "");
@@ -1556,6 +1867,16 @@ function ImportPage() {
     stage,
     structuredRecipe,
   ]);
+
+  useEffect(() => {
+    if (!ENABLE_GUIDED_FOLLOW_UPS) return;
+    if (!shouldAutoListenFollowUpRef.current) return;
+    if (!canUseVoiceFollowUp || followUpCompleted || !currentFollowUp) return;
+    if (followUpStatus !== "listening") return;
+    if (recorderRef.current && recorderRef.current.state !== "inactive") return;
+
+    void startAnswerRecording();
+  }, [canUseVoiceFollowUp, currentFollowUp, followUpCompleted, followUpStatus]);
 
   useEffect(() => {
     if (!currentTaskId) return;
@@ -1590,9 +1911,7 @@ function ImportPage() {
       ? 0
       : stage === "transcribing" || stage === "structuring" || stage === "error"
         ? 1
-        : !previewRecipe || !followUpCompleted
-          ? 2
-          : 3;
+        : 2;
 
   const guidedSteps = [
     {
@@ -1607,31 +1926,27 @@ function ImportPage() {
       label: t("import.guided.step3Label"),
       title: t("import.guided.step3Title"),
     },
-    {
-      label: t("import.guided.step4Label"),
-      title: t("import.guided.step4Title"),
-    },
   ];
 
   const isPreviewStage = stage === "preview" || stage === "saving" || stage === "done";
   const isGeneratingCover = stage === "generating-cover";
-  const showGuidedFollowUp = Boolean(previewRecipe && isPreviewStage && !followUpCompleted);
-  const showGuidedCover = Boolean(previewRecipe && isPreviewStage && followUpCompleted);
-  const showVideoSidebar = showGuidedFollowUp || showGuidedCover;
+  const showGuidedFollowUp = Boolean(
+    ENABLE_GUIDED_FOLLOW_UPS && previewRecipe && isPreviewStage && !followUpCompleted,
+  );
+  const showGuidedCover = Boolean(previewRecipe && isPreviewStage);
+  const showVideoEditIngredients = shouldShowIngredients(videoEditDisplayMode);
+  const showVideoEditSteps = shouldShowSteps(videoEditDisplayMode);
+  const showManualIngredients = shouldShowIngredients(manualDisplayMode);
+  const showManualSteps = shouldShowSteps(manualDisplayMode);
   const answeredFollowUpCount = followUpQuestions.filter(
     (item) => followUpProgress[item.field] !== "pending",
   ).length;
-  const followUpBusy =
-    followUpStatus === "speaking" ||
-    followUpStatus === "listening" ||
-    followUpStatus === "transcribing" ||
-    followUpStatus === "refining";
   const isManualTextStructuring = manualTextImportStatus === "structuring";
   const canStructureWithLlm = hasLlmKey;
   const canGenerateAiCover = hasLlmKey && hasImageGenKey;
   const canCreateAnotherVideoTask = hasVideoTaskCapacity;
   const videoTasksPanel = (
-    <div className="rounded-[2rem] border border-border bg-card p-5 sm:p-6">
+    <div className="flex min-h-[34rem] flex-col rounded-[2rem] border border-border bg-card p-5 sm:min-h-[38rem] sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
@@ -1651,46 +1966,70 @@ function ImportPage() {
       </div>
 
       {videoTasks.length > 0 ? (
-        <div className="mt-5 space-y-3">
+        <div className="mt-5 space-y-3 overflow-y-auto pr-1">
           {videoTasks.map((task) => {
             const isActiveTask = task.id === currentTaskId;
             const displayTitle = deriveTaskDisplayTitle(task.snapshot, task.fileName);
+            const showFileName = displayTitle !== task.fileName;
 
             return (
               <div
                 key={task.id}
-                className={`rounded-[1.5rem] border p-4 transition-colors ${
-                  isActiveTask ? "border-clay bg-clay/5" : "border-border bg-background/70"
+                className={`rounded-[1.5rem] border p-4 text-left transition-colors ${
+                  isActiveTask
+                    ? "border-clay bg-clay/5"
+                    : "cursor-pointer border-border bg-background/70 hover:border-foreground/35"
                 }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => void loadVideoTask(task.id)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  void loadVideoTask(task.id);
+                }}
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{displayTitle}</div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {task.fileName} · {formatBytes(task.fileSize)}
+                      {showFileName ? `${task.fileName} · ` : ""}
+                      {formatBytes(task.fileSize)}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{task.progressPercent}%</span>
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       type="button"
                       className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs hover:border-foreground"
-                      onClick={() => loadVideoTask(task.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void loadVideoTask(task.id);
+                      }}
                     >
                       {isActiveTask ? t("import.videoTaskCurrent") : t("import.videoTaskResume")}
                     </button>
-                    <button
-                      type="button"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
-                      onClick={() => void handleDeleteVideoTask(task.id)}
-                      aria-label={t("import.videoTaskDelete")}
-                    >
-                      <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-                    </button>
+                    <AppTooltip content={t("import.videoTaskDelete")} side="top" align="end">
+                      <button
+                        type="button"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeleteVideoTask(task.id);
+                        }}
+                        aria-label={t("import.videoTaskDelete")}
+                      >
+                        <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                      </button>
+                    </AppTooltip>
                   </div>
                 </div>
                 <div className="mt-4">
-                  <Progress value={task.progressPercent} className="h-2.5" />
+                  <div className="flex items-center gap-3">
+                    <span className="min-w-8 text-xs text-muted-foreground">
+                      {task.progressPercent}%
+                    </span>
+                    <Progress value={task.progressPercent} className="h-2.5 flex-1" />
+                  </div>
                   <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
                     <span>{t(task.progressLabelKey)}</span>
                     {task.snapshot.error ? (
@@ -1732,35 +2071,46 @@ function ImportPage() {
               </p>
             </div>
 
-            <div className="inline-flex w-fit shrink-0 rounded-full border border-border bg-card p-1 lg:mt-6">
+            <div className="flex w-fit shrink-0 flex-col items-start gap-3 lg:mt-6 lg:items-end">
               <button
                 type="button"
-                data-voice-label={t("import.videoMode")}
-                data-voice-aliases="视频模式 导入视频 上传视频 选择视频 video mode import video upload video"
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
-                  mode === "video"
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setMode("video")}
+                onClick={() => navigate({ to: "/recipes" })}
+                className="inline-flex items-center gap-2 rounded-full border border-clay/30 bg-clay/10 px-4 py-2 text-sm text-clay transition-colors hover:border-clay/50 hover:bg-clay/15"
               >
-                <FileVideo className="h-4 w-4" strokeWidth={1.75} />
-                {t("import.videoMode")}
+                {t("import.viewRecipes")}
+                <ArrowRight className="h-4 w-4" strokeWidth={1.75} />
               </button>
-              <button
-                type="button"
-                data-voice-label={t("import.manualMode")}
-                data-voice-aliases="手动模式 手动录入 手动添加菜谱 manual mode add manually"
-                className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
-                  mode === "manual"
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setMode("manual")}
-              >
-                <FileText className="h-4 w-4" strokeWidth={1.75} />
-                {t("import.manualMode")}
-              </button>
+
+              <div className="inline-flex rounded-full border border-border bg-card p-1">
+                <button
+                  type="button"
+                  data-voice-label={t("import.videoMode")}
+                  data-voice-aliases="视频模式 导入视频 上传视频 选择视频 video mode import video upload video"
+                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
+                    mode === "video"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setMode("video")}
+                >
+                  <FileVideo className="h-4 w-4" strokeWidth={1.75} />
+                  {t("import.videoMode")}
+                </button>
+                <button
+                  type="button"
+                  data-voice-label={t("import.manualMode")}
+                  data-voice-aliases="手动模式 手动录入 手动添加菜谱 manual mode add manually"
+                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
+                    mode === "manual"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setMode("manual")}
+                >
+                  <FileText className="h-4 w-4" strokeWidth={1.75} />
+                  {t("import.manualMode")}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1768,7 +2118,8 @@ function ImportPage() {
             <div className="import-stepper mt-8">
               {guidedSteps.map((item, index) => {
                 const isCurrent = guidedStepIndex === index;
-                const isDone = index < guidedStepIndex || (index === 3 && stage === "done");
+                const isDone =
+                  index < guidedStepIndex || (index === guidedSteps.length - 1 && stage === "done");
                 const isLineActive = index > 0 && index <= guidedStepIndex;
 
                 return (
@@ -1820,7 +2171,7 @@ function ImportPage() {
               {mode === "video" && stage === "idle" && (
                 <>
                   <div
-                    className={`relative rounded-[2rem] border-2 border-dashed p-6 text-center transition-colors sm:p-14 ${
+                    className={`relative flex min-h-[34rem] flex-col justify-center rounded-[2rem] border-2 border-dashed p-6 text-center transition-colors sm:min-h-[38rem] sm:p-14 ${
                       isDragging
                         ? "border-clay bg-clay/5"
                         : "border-border bg-card hover:border-clay/60"
@@ -1848,6 +2199,7 @@ function ImportPage() {
                       type="file"
                       accept="video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/aac,audio/flac,audio/x-flac,audio/webm,.mp4,.mov,.webm,.mp3,.wav,.m4a,.aac,.flac"
                       className="hidden"
+                      onClick={(event) => event.stopPropagation()}
                       onChange={handleInputChange}
                     />
                     <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-foreground/30 bg-background">
@@ -1930,6 +2282,19 @@ function ImportPage() {
                       />
                     ))}
                   </div>
+                  <button
+                    type="button"
+                    className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
+                    onClick={() => void returnToUploadStep()}
+                    data-voice-label={t("import.backToUploadStep")}
+                    data-voice-aliases="返回上传 返回选择文件 回到上传文件 重新选择文件 back to upload choose another file"
+                  >
+                    <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
+                    {t("import.backToUploadStep")}
+                  </button>
+                  <p className="mx-auto mt-3 max-w-md text-xs text-muted-foreground">
+                    {t("import.backToUploadStepHint")}
+                  </p>
                 </div>
               )}
 
@@ -1942,13 +2307,25 @@ function ImportPage() {
                     {t("import.failed")}
                   </h3>
                   <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">{error}</p>
-                  <button
-                    className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
-                    onClick={() => void startPipeline()}
-                    disabled={!hasElevenLabsKey}
-                  >
-                    {t("import.retry")}
-                  </button>
+                  <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row sm:flex-wrap">
+                    <button
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
+                      onClick={() => void startPipeline()}
+                      disabled={!hasElevenLabsKey}
+                    >
+                      {t("import.retry")}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-6 py-3 text-sm hover:border-foreground sm:w-auto"
+                      onClick={() => void returnToUploadStep()}
+                      data-voice-label={t("import.backToUploadStep")}
+                      data-voice-aliases="返回上传 返回选择文件 回到上传文件 重新选择文件 back to upload choose another file"
+                    >
+                      <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
+                      {t("import.backToUploadStep")}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -2067,7 +2444,18 @@ function ImportPage() {
                       </div>
                     )}
 
-                    <div className="mt-8">
+                    <div className="mt-6 flex justify-center sm:justify-end">
+                      <RecipeContentDisplayToggle
+                        value={videoEditDisplayMode}
+                        onChange={setVideoEditDisplayMode}
+                        allLabel={t("recipeContentDisplay.all")}
+                        ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
+                        stepsLabel={t("recipeContentDisplay.stepsOnly")}
+                        ariaLabel={t("recipeContentDisplay.ariaLabel")}
+                      />
+                    </div>
+
+                    <div className={`mt-8 ${showVideoEditIngredients ? "" : "hidden"}`}>
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <h5 className="text-sm font-medium">{t("import.manualIngredients")}</h5>
@@ -2086,11 +2474,12 @@ function ImportPage() {
                           {t("import.manualAddIngredient")}
                         </button>
                       </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
+                      <div className="mt-4 space-y-3">
                         {previewRecipe.ingredients.map((ingredient, index) => (
                           <div
                             key={`${ingredient.name}-${index}`}
-                            className="group rounded-2xl border border-border bg-background px-3 py-3"
+                            className="group rounded-2xl border border-border bg-background p-4"
+                            onBlur={(event) => handleEditIngredientBlur(event, index)}
                           >
                             <div className="grid gap-2">
                               <div className="flex items-center justify-between gap-2">
@@ -2098,7 +2487,7 @@ function ImportPage() {
                                   {t("import.manualIngredients")}
                                 </span>
                                 <button
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                  className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                                   onClick={() => removeEditIngredient(index)}
                                   type="button"
                                 >
@@ -2109,7 +2498,7 @@ function ImportPage() {
                                 ref={(node) => {
                                   editIngredientNameRefs.current[index] = node;
                                 }}
-                                className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
+                                className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.name ?? ""}
                                 onChange={(e) =>
                                   updateEditIngredient(index, { name: e.target.value })
@@ -2117,7 +2506,7 @@ function ImportPage() {
                                 placeholder={t("import.manualIngredientName")}
                               />
                               <input
-                                className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
+                                className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.amount ?? ""}
                                 onChange={(e) =>
                                   updateEditIngredient(index, { amount: e.target.value })
@@ -2130,7 +2519,7 @@ function ImportPage() {
                       </div>
                     </div>
 
-                    <div className="mt-8">
+                    <div className={`mt-8 ${showVideoEditSteps ? "" : "hidden"}`}>
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <h5 className="text-sm font-medium">{t("import.manualSteps")}</h5>
@@ -2153,21 +2542,50 @@ function ImportPage() {
                         {previewRecipe.steps.map((step, index) => (
                           <div
                             key={index}
-                            className="group flex items-start gap-3 rounded-2xl border border-border bg-background p-4"
+                            className="group rounded-2xl border border-border bg-background p-4"
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const fromIndex = draggedEditStepIndexRef.current;
+                              if (fromIndex !== null) moveEditStep(fromIndex, index);
+                              draggedEditStepIndexRef.current = null;
+                            }}
+                            onBlur={(event) => handleEditStepBlur(event, index)}
                           >
-                            <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-foreground/40 font-display text-xs">
-                              {index + 1}
-                            </span>
-                            <div className="flex-1 space-y-3">
-                              <div className="flex justify-end">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
                                 <button
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                  onClick={() => removeEditStep(index)}
-                                  type="button"
-                                >
-                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                  className="-ml-1 inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-full border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                                draggable
+                                onDragStart={(event) => {
+                                  draggedEditStepIndexRef.current = index;
+                                  event.dataTransfer.effectAllowed = "move";
+                                  event.dataTransfer.setData("text/plain", String(index));
+                                }}
+                                onDragEnd={() => {
+                                  draggedEditStepIndexRef.current = null;
+                                }}
+                                type="button"
+                              >
+                                <GripVertical className="h-4 w-4" strokeWidth={1.75} />
                                 </button>
+                                <span className="font-display text-sm">
+                                  {t("import.step", { count: index + 1 })}
+                                </span>
                               </div>
+                              <button
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                onClick={() => removeEditStep(index)}
+                                type="button"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                            </div>
+
+                            <div className="mt-3">
                               <StepDescriptionField
                                 textareaRef={(node) => {
                                   editStepDescriptionRefs.current[index] = node;
@@ -2176,6 +2594,9 @@ function ImportPage() {
                                 onChange={(value) => updateEditStep(index, { description: value })}
                                 placeholder={t("import.manualStepDescription")}
                               />
+                            </div>
+
+                            <div className="mt-3">
                               <StepMetadataFields
                                 t={t}
                                 durationValue={formatDurationMinutesInput(
@@ -2195,16 +2616,36 @@ function ImportPage() {
                       </div>
                     </div>
 
-                    <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                      <button
-                        className="w-full rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
-                        onClick={resetVideoDraft}
-                        data-voice-label={t("import.startOver")}
-                        data-voice-aliases="重新开始 重置导入 start over reset import"
-                      >
-                        {t("import.startOver")}
-                      </button>
-                    </div>
+                    <RecipeEditShortcuts
+                      ingredientCount={editIngredients.length}
+                      stepCount={editSteps.length}
+                      ingredientsLabel={t("import.manualIngredients")}
+                      stepsLabel={t("import.manualSteps")}
+                      jumpLabel={t("import.editShortcutsJump")}
+                      itemPlaceholder={t("import.editShortcutsItemPlaceholder")}
+                      saveLabel={t("import.saveToRecipes")}
+                      savingLabel={t("import.saving")}
+                      onJumpIngredient={jumpToEditIngredient}
+                      onJumpStep={jumpToEditStep}
+                      onSave={() => void handleSaveVideo()}
+                      disabled={stage === "saving" || stage === "done"}
+                      saving={stage === "saving"}
+                      actions={[
+                        {
+                          label: t("import.restructure"),
+                          onClick: () => void restructureVideoDraft(),
+                          icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} />,
+                          disabled: !transcript.trim(),
+                          voiceAliases: "restructure recipe organize recipe again",
+                        },
+                        {
+                          label: t("import.backToUploadStep"),
+                          onClick: () => void returnToUploadStep(),
+                          icon: <RotateCcw className="h-4 w-4" strokeWidth={1.75} />,
+                          voiceAliases: "back to upload choose another file",
+                        },
+                      ]}
+                    />
                   </div>
                 </div>
               )}
@@ -2215,7 +2656,7 @@ function ImportPage() {
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                          {t("import.guided.step4Label")}
+                          {t("import.guided.step3Label")}
                         </span>
                         <h3 className="mt-2 font-display text-2xl sm:text-3xl">
                           {t("import.readyToSave")}
@@ -2275,7 +2716,18 @@ function ImportPage() {
                       </div>
                     )}
 
-                    <div className="mt-8">
+                    <div className="mt-6 flex justify-center sm:justify-end">
+                      <RecipeContentDisplayToggle
+                        value={videoEditDisplayMode}
+                        onChange={setVideoEditDisplayMode}
+                        allLabel={t("recipeContentDisplay.all")}
+                        ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
+                        stepsLabel={t("recipeContentDisplay.stepsOnly")}
+                        ariaLabel={t("recipeContentDisplay.ariaLabel")}
+                      />
+                    </div>
+
+                    <div className={`mt-8 ${showVideoEditIngredients ? "" : "hidden"}`}>
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <h5 className="text-sm font-medium">{t("import.manualIngredients")}</h5>
@@ -2299,13 +2751,14 @@ function ImportPage() {
                           <div
                             key={`${ingredient.name}-${index}`}
                             className="group rounded-2xl border border-border bg-background p-3"
+                            onBlur={(event) => handleEditIngredientBlur(event, index)}
                           >
-                            <div className="grid gap-2 sm:grid-cols-[1fr_180px_auto]">
+                            <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_180px]">
                               <input
                                 ref={(node) => {
                                   editIngredientNameRefs.current[index] = node;
                                 }}
-                                className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
+                                className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.name ?? ""}
                                 onChange={(e) =>
                                   updateEditIngredient(index, { name: e.target.value })
@@ -2313,7 +2766,7 @@ function ImportPage() {
                                 placeholder={t("import.manualIngredientName")}
                               />
                               <input
-                                className="rounded-xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-clay"
+                                className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay"
                                 value={editIngredients[index]?.amount ?? ""}
                                 onChange={(e) =>
                                   updateEditIngredient(index, { amount: e.target.value })
@@ -2321,7 +2774,7 @@ function ImportPage() {
                                 placeholder={t("import.manualIngredientAmount")}
                               />
                               <button
-                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                                 onClick={() => removeEditIngredient(index)}
                                 type="button"
                               >
@@ -2333,7 +2786,7 @@ function ImportPage() {
                       </div>
                     </div>
 
-                    <div className="mt-8">
+                    <div className={`mt-8 ${showVideoEditSteps ? "" : "hidden"}`}>
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <h5 className="text-sm font-medium">{t("import.manualSteps")}</h5>
@@ -2356,21 +2809,50 @@ function ImportPage() {
                         {previewRecipe.steps.map((step, index) => (
                           <div
                             key={index}
-                            className="group flex items-start gap-3 rounded-2xl border border-border bg-background p-4"
+                            className="group rounded-2xl border border-border bg-background p-4"
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const fromIndex = draggedEditStepIndexRef.current;
+                              if (fromIndex !== null) moveEditStep(fromIndex, index);
+                              draggedEditStepIndexRef.current = null;
+                            }}
+                            onBlur={(event) => handleEditStepBlur(event, index)}
                           >
-                            <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-foreground/40 font-display text-xs">
-                              {index + 1}
-                            </span>
-                            <div className="flex-1 space-y-3">
-                              <div className="flex justify-end">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
                                 <button
-                                  className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                  onClick={() => removeEditStep(index)}
-                                  type="button"
-                                >
-                                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                                  className="-ml-1 inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-full border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                                draggable
+                                onDragStart={(event) => {
+                                  draggedEditStepIndexRef.current = index;
+                                  event.dataTransfer.effectAllowed = "move";
+                                  event.dataTransfer.setData("text/plain", String(index));
+                                }}
+                                onDragEnd={() => {
+                                  draggedEditStepIndexRef.current = null;
+                                }}
+                                type="button"
+                              >
+                                <GripVertical className="h-4 w-4" strokeWidth={1.75} />
                                 </button>
+                                <span className="font-display text-sm">
+                                  {t("import.step", { count: index + 1 })}
+                                </span>
                               </div>
+                              <button
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                onClick={() => removeEditStep(index)}
+                                type="button"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                            </div>
+
+                            <div className="mt-3">
                               <StepDescriptionField
                                 textareaRef={(node) => {
                                   editStepDescriptionRefs.current[index] = node;
@@ -2379,8 +2861,10 @@ function ImportPage() {
                                 onChange={(value) => updateEditStep(index, { description: value })}
                                 placeholder={t("import.manualStepDescription")}
                               />
-                              <div className="flex-1">
-                                <StepMetadataFields
+                            </div>
+
+                            <div className="mt-3">
+                              <StepMetadataFields
                                   t={t}
                                   durationValue={formatDurationMinutesInput(
                                     editSteps[index]?.durationSec,
@@ -2393,30 +2877,49 @@ function ImportPage() {
                                   }
                                   onTipsChange={(value) => updateEditStep(index, { tips: value })}
                                 />
-                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    <div className="mt-8 flex flex-wrap gap-3">
-                      <button
-                        className="rounded-full border border-border px-5 py-3 text-sm hover:border-foreground"
-                        onClick={resetVideoDraft}
-                        data-voice-label={t("import.startOver")}
-                        data-voice-aliases="重新开始 重置导入 start over reset import"
-                      >
-                        {t("import.startOver")}
-                      </button>
-                    </div>
+                    <RecipeEditShortcuts
+                      ingredientCount={editIngredients.length}
+                      stepCount={editSteps.length}
+                      ingredientsLabel={t("import.manualIngredients")}
+                      stepsLabel={t("import.manualSteps")}
+                      jumpLabel={t("import.editShortcutsJump")}
+                      itemPlaceholder={t("import.editShortcutsItemPlaceholder")}
+                      saveLabel={t("import.saveToRecipes")}
+                      savingLabel={t("import.saving")}
+                      onJumpIngredient={jumpToEditIngredient}
+                      onJumpStep={jumpToEditStep}
+                      onSave={() => void handleSaveVideo()}
+                      disabled={stage === "saving" || stage === "done"}
+                      saving={stage === "saving"}
+                      actions={[
+                        {
+                          label: t("import.restructure"),
+                          onClick: () => void restructureVideoDraft(),
+                          icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} />,
+                          disabled: !transcript.trim(),
+                          voiceAliases: "restructure recipe organize recipe again",
+                        },
+                        {
+                          label: t("import.backToUploadStep"),
+                          onClick: () => void returnToUploadStep(),
+                          icon: <RotateCcw className="h-4 w-4" strokeWidth={1.75} />,
+                          voiceAliases: "back to upload choose another file",
+                        },
+                      ]}
+                    />
                   </div>
 
                   <div className="rounded-[2rem] border border-border bg-card p-6 sm:p-8">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <span className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                          {t("import.guided.step4Label")}
+                          {t("import.guided.step3Label")}
                         </span>
                         <h3 className="mt-2 font-display text-2xl sm:text-3xl">
                           {t("import.coverStepTitle")}
@@ -2492,7 +2995,7 @@ function ImportPage() {
                             <span className="text-sm">{t("import.coverMissing")}</span>
                           </div>
                         )}
-                        <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity group-hover/guided-cover:pointer-events-auto group-hover/guided-cover:opacity-100 group-focus-within/guided-cover:pointer-events-auto group-focus-within/guided-cover:opacity-100">
+                        <div className="absolute right-3 top-3 z-20 flex gap-2 opacity-100 transition-opacity sm:pointer-events-none sm:opacity-0 sm:group-hover/guided-cover:pointer-events-auto sm:group-hover/guided-cover:opacity-100 sm:group-focus-within/guided-cover:pointer-events-auto sm:group-focus-within/guided-cover:opacity-100">
                           <AppTooltip
                             content={t("import.uploadCover")}
                             disabled={stage === "saving"}
@@ -2598,35 +3101,37 @@ function ImportPage() {
                       </span>
                     </div>
                     <p className="mt-4 text-sm text-muted-foreground">{transcript}</p>
-                    <div className="mt-5 flex gap-2">
-                      <button
-                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-sm text-background hover:bg-clay disabled:opacity-50"
-                        onClick={() => void handleSaveVideo()}
-                        disabled={stage === "saving" || stage === "done"}
-                        data-voice-label={t("import.saveTranscript")}
-                        data-voice-aliases="保存转录 保存菜谱 保存到菜谱 save transcript save recipe"
-                      >
-                        {stage === "saving" ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" /> {t("import.saving")}
-                          </>
-                        ) : stage === "done" ? (
-                          <>
-                            <CheckCircle2 className="h-4 w-4" /> {t("import.saved")}
-                          </>
-                        ) : (
-                          t("import.saveTranscript")
-                        )}
-                      </button>
-                      <button
-                        className="rounded-full border border-border px-5 py-2.5 text-sm hover:border-foreground"
-                        onClick={resetVideoDraft}
-                        data-voice-label={t("import.startOver")}
-                        data-voice-aliases="重新开始 重置导入 start over reset import"
-                      >
-                        {t("import.startOver")}
-                      </button>
-                    </div>
+                    <RecipeEditShortcuts
+                      ingredientCount={0}
+                      stepCount={0}
+                      ingredientsLabel={t("import.manualIngredients")}
+                      stepsLabel={t("import.manualSteps")}
+                      jumpLabel={t("import.editShortcutsJump")}
+                      itemPlaceholder={t("import.editShortcutsItemPlaceholder")}
+                      saveLabel={t("import.saveTranscript")}
+                      savingLabel={t("import.saving")}
+                      onJumpIngredient={jumpToEditIngredient}
+                      onJumpStep={jumpToEditStep}
+                      onSave={() => void handleSaveVideo()}
+                      disabled={stage === "saving" || stage === "done"}
+                      saving={stage === "saving"}
+                      showJumpControls={false}
+                      actions={[
+                        {
+                          label: t("import.restructure"),
+                          onClick: () => void restructureVideoDraft(),
+                          icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} />,
+                          disabled: !transcript.trim(),
+                          voiceAliases: "restructure recipe organize recipe again",
+                        },
+                        {
+                          label: t("import.backToUploadStep"),
+                          onClick: () => void returnToUploadStep(),
+                          icon: <RotateCcw className="h-4 w-4" strokeWidth={1.75} />,
+                          voiceAliases: "back to upload choose another file",
+                        },
+                      ]}
+                    />
                   </div>
                 )}
 
@@ -2806,7 +3311,18 @@ function ImportPage() {
                     />
                   </label>
 
-                  <div className="mt-8">
+                  <div className="mt-6 flex justify-center sm:justify-end">
+                    <RecipeContentDisplayToggle
+                      value={manualDisplayMode}
+                      onChange={setManualDisplayMode}
+                      allLabel={t("recipeContentDisplay.all")}
+                      ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
+                      stepsLabel={t("recipeContentDisplay.stepsOnly")}
+                      ariaLabel={t("recipeContentDisplay.ariaLabel")}
+                    />
+                  </div>
+
+                  <div className={`mt-8 ${showManualIngredients ? "" : "hidden"}`}>
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
                         <h4 className="font-display text-xl">{t("import.manualIngredients")}</h4>
@@ -2816,15 +3332,16 @@ function ImportPage() {
                       </div>
                       <button
                         className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
-                        onClick={() =>
+                        onClick={() => {
+                          setManualDisplayMode((current) => (current === "steps" ? "all" : current));
                           setManualIngredients((current) => {
-                            const next = [...current, createEmptyIngredient()];
+                            const next = [createEmptyIngredient(), ...current];
                             window.requestAnimationFrame(() => {
-                              manualIngredientNameRefs.current[next.length - 1]?.focus();
+                              manualIngredientNameRefs.current[0]?.focus();
                             });
                             return next;
-                          })
-                        }
+                          });
+                        }}
                         type="button"
                         data-voice-label={t("import.manualAddIngredient")}
                         data-voice-aliases="添加食材 新增食材 add ingredient"
@@ -2839,6 +3356,7 @@ function ImportPage() {
                         <div
                           key={index}
                           className="group rounded-2xl border border-border bg-background p-4"
+                          onBlur={(event) => handleManualIngredientBlur(event, index)}
                         >
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -2896,7 +3414,7 @@ function ImportPage() {
                     </div>
                   </div>
 
-                  <div className="mt-8">
+                  <div className={`mt-8 ${showManualSteps ? "" : "hidden"}`}>
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
                         <h4 className="font-display text-xl">{t("import.manualSteps")}</h4>
@@ -2906,15 +3424,10 @@ function ImportPage() {
                       </div>
                       <button
                         className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground"
-                        onClick={() =>
-                          setManualSteps((current) => {
-                            const next = [...current, createEmptyManualStep()];
-                            window.requestAnimationFrame(() => {
-                              manualStepDescriptionRefs.current[next.length - 1]?.focus();
-                            });
-                            return next;
-                          })
-                        }
+                        onClick={() => {
+                          setManualDisplayMode((current) => (current === "ingredients" ? "all" : current));
+                          addManualStep();
+                        }}
                         type="button"
                         data-voice-label={t("import.manualAddStep")}
                         data-voice-aliases="添加步骤 新增步骤 add step"
@@ -2929,11 +3442,39 @@ function ImportPage() {
                         <div
                           key={index}
                           className="group rounded-2xl border border-border bg-background p-4"
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            const fromIndex = draggedManualStepIndexRef.current;
+                            if (fromIndex !== null) moveManualStep(fromIndex, index);
+                            draggedManualStepIndexRef.current = null;
+                          }}
+                          onBlur={(event) => handleManualStepBlur(event, index)}
                         >
                           <div className="flex items-center justify-between gap-3">
-                            <span className="font-display text-sm">
-                              {t("import.step", { count: index + 1 })}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="-ml-1 inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-full border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing"
+                                draggable
+                                onDragStart={(event) => {
+                                  draggedManualStepIndexRef.current = index;
+                                  event.dataTransfer.effectAllowed = "move";
+                                  event.dataTransfer.setData("text/plain", String(index));
+                                }}
+                                onDragEnd={() => {
+                                  draggedManualStepIndexRef.current = null;
+                                }}
+                                type="button"
+                              >
+                                <GripVertical className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                              <span className="font-display text-sm">
+                                {t("import.step", { count: index + 1 })}
+                              </span>
+                            </div>
                             <button
                               className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                               onClick={() =>
@@ -2995,6 +3536,22 @@ function ImportPage() {
                     </div>
                   </div>
 
+                  <RecipeEditShortcuts
+                    ingredientCount={manualIngredients.length}
+                    stepCount={manualSteps.length}
+                    ingredientsLabel={t("import.manualIngredients")}
+                    stepsLabel={t("import.manualSteps")}
+                    jumpLabel={t("import.editShortcutsJump")}
+                    itemPlaceholder={t("import.editShortcutsItemPlaceholder")}
+                    saveLabel={t("import.manualSave")}
+                    savingLabel={t("import.saving")}
+                    onJumpIngredient={jumpToManualIngredient}
+                    onJumpStep={jumpToManualStep}
+                    onSave={() => void handleSaveManual()}
+                    disabled={isManualSaving}
+                    saving={isManualSaving}
+                  />
+
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                     <button
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay disabled:opacity-50 sm:flex-1"
@@ -3026,169 +3583,130 @@ function ImportPage() {
                   </div>
                 </div>
               )}
-
-              {mode === "video" && !showVideoSidebar && (
-                <div className="flex justify-center">
-                  <button
-                    onClick={() => navigate({ to: "/recipes" })}
-                    className="inline-flex text-sm text-clay hover:underline"
-                  >
-                    {t("import.viewRecipes")} {">"}
-                  </button>
-                </div>
-              )}
             </div>
             {(mode === "video" || mode === "manual") && (
               <div className="min-w-0 lg:col-span-4">
                 {mode === "video" ? (
                   <div className="space-y-4 lg:sticky lg:top-24">
-                    {videoTasksPanel}
                     {showGuidedFollowUp ? (
-                      <>
-                        <div className="rounded-[2rem] border border-border bg-card p-6">
+                      <div className="rounded-[2rem] border-2 border-foreground/85 bg-card p-5 shadow-[0_20px_60px_-32px_oklch(0.24_0.02_60_/_0.45)] sm:p-6">
+                        <div className="flex min-h-[34rem] flex-col sm:min-h-[38rem]">
                           <div className="flex items-start justify-between gap-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-background">
-                                <img
-                                  src="/logo.png"
-                                  alt={`${t("app.name")} logo`}
-                                  className="h-7 w-7 rounded-full object-contain dark:hidden"
-                                />
-                                <img
-                                  src="/logo-dark.png"
-                                  alt={`${t("app.name")} logo`}
-                                  className="hidden h-7 w-7 rounded-full object-contain dark:block"
-                                />
-                              </div>
-                              <div>
-                                <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                                  {t("import.followUpStepTag")}
-                                </div>
-                                <h4 className="font-display text-2xl">
-                                  {t("import.followUpPanelTitle")}
-                                </h4>
-                              </div>
+                            <div className="font-display text-sm text-muted-foreground sm:text-base">
+                              {t("import.followUpStepTag")}
                             </div>
-                            <span className="inline-flex items-center gap-2 rounded-full border border-clay/25 bg-clay/10 px-4 py-2 text-xs text-clay">
+                            <span className="inline-flex items-center gap-1.5 rounded-tl-2xl rounded-br-2xl border border-clay/20 bg-clay/10 px-3 py-2 text-xs text-clay">
                               <MessageCircleMore className="h-3.5 w-3.5" strokeWidth={1.75} />
                               {answeredFollowUpCount}/{followUpQuestions.length}
                             </span>
                           </div>
-                          <div className="mt-5 rounded-[1.5rem] border border-border bg-background p-4">
-                            <div className="flex items-start gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-card">
-                                <AudioLines className="h-4 w-4 text-clay" strokeWidth={1.75} />
-                              </div>
-                              <div className="max-w-full rounded-[1.35rem] rounded-tl-sm border border-border bg-card px-4 py-3 sm:max-w-[88%]">
-                                <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                                  {followUpStatus === "speaking"
-                                    ? t("import.followUpSpeaking")
-                                    : t("import.followUpPromptTitle")}
+
+                          <div className="mt-6 flex-1 space-y-6 overflow-y-auto pr-1">
+                            {followUpMessages.map((message) => (
+                              <div key={message.field} className="space-y-4">
+                                <div className="flex items-start gap-3">
+                                  <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-foreground/85 bg-background sm:h-11 sm:w-11">
+                                    <img
+                                      src="/logo.png"
+                                      alt={`${t("app.name")} logo`}
+                                      className="h-7 w-7 rounded-full object-contain dark:hidden"
+                                    />
+                                    <img
+                                      src="/logo-dark.png"
+                                      alt={`${t("app.name")} logo`}
+                                      className="hidden h-7 w-7 rounded-full object-contain dark:block"
+                                    />
+                                  </div>
+                                  <div
+                                    className={`max-w-[78%] rounded-[0.8rem] border-2 border-foreground/85 bg-background px-4 py-3 text-sm leading-6 text-foreground shadow-sm ${
+                                      followUpStatus === "speaking" && message.isCurrent
+                                        ? "animate-pulse"
+                                        : ""
+                                    }`}
+                                  >
+                                    {message.question || t("import.followUpWaiting")}
+                                  </div>
                                 </div>
-                                <p className="mt-2 text-sm leading-6 text-foreground">
-                                  {currentFollowUp?.question || t("import.followUpWaiting")}
-                                </p>
+
+                                {message.answer && (
+                                  <div className="ml-auto max-w-[58%] break-words px-3 py-1 text-right text-sm leading-6 text-foreground">
+                                    {message.answer}
+                                  </div>
+                                )}
                               </div>
-                            </div>
+                            ))}
                           </div>
+
+                          {followUpError && (
+                            <div className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                              {followUpError}
+                            </div>
+                          )}
+
+                          {currentFollowUp && (
+                            <div className="mt-5 space-y-3">
+                              <div className="flex items-center gap-3">
+                                <Input
+                                  value={followUpInput}
+                                  onChange={(event) => setFollowUpInput(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                                      event.preventDefault();
+                                      if (followUpInput.trim() && !followUpBusy) {
+                                        void handleFollowUpSubmit();
+                                      }
+                                    }
+                                  }}
+                                  placeholder={currentFollowUp.placeholder}
+                                  className="h-11 flex-1 rounded-xl border-2 border-foreground/85 bg-background px-4 text-sm shadow-none focus-visible:ring-0 sm:h-12"
+                                />
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  disabled={
+                                    followUpStatus === "speaking" ||
+                                    followUpStatus === "refining" ||
+                                    (!followUpInput.trim() && !canUseVoiceFollowUp)
+                                  }
+                                  onClick={() => {
+                                    if (followUpInput.trim()) {
+                                      void handleFollowUpSubmit();
+                                      return;
+                                    }
+                                    if (followUpStatus === "listening") {
+                                      stopAnswerRecording();
+                                    } else {
+                                      void startAnswerRecording();
+                                    }
+                                  }}
+                                  className={`h-11 w-11 shrink-0 rounded-full border-2 border-foreground/85 bg-background text-foreground shadow-none transition-all hover:bg-card hover:text-clay sm:h-12 sm:w-12 ${
+                                    followUpStatus === "listening" ? "scale-105 animate-pulse text-clay" : ""
+                                  }`}
+                                  aria-label={
+                                    followUpInput.trim()
+                                      ? t("import.followUpNext")
+                                      : followUpStatus === "listening"
+                                        ? t("import.followUpStopRecording")
+                                        : t("import.followUpRecordAnswer")
+                                  }
+                                >
+                                  {followUpStatus === "transcribing" || followUpStatus === "refining" ? (
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                  ) : followUpInput.trim() ? (
+                                    <Send className="h-5 w-5" />
+                                  ) : followUpStatus === "listening" ? (
+                                    <StopCircle className="h-5 w-5" />
+                                  ) : (
+                                    <Mic className="h-5 w-5" />
+                                  )}
+                                </Button>
+                              </div>
+
+                            </div>
+                          )}
                         </div>
 
-                        {!!followUpAnswers[currentFollowUp?.field ?? "servings"]?.trim() && (
-                          <div className="rounded-[1.5rem] border border-border bg-card px-5 py-4">
-                            <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                              {currentFollowUp?.label}
-                            </div>
-                            <p className="mt-2 text-sm leading-6 text-foreground">
-                              {followUpAnswers[currentFollowUp?.field ?? "servings"]}
-                            </p>
-                          </div>
-                        )}
-
-                        {followUpError && (
-                          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                            {followUpError}
-                          </div>
-                        )}
-
-                        {currentFollowUp && (
-                          <div className="rounded-[2rem] border border-border bg-card/80 p-3 shadow-[0_16px_50px_-24px_oklch(0.28_0.02_60_/_0.32),var(--shadow-soft)] backdrop-blur-xl">
-                            <div className="flex items-center gap-2 rounded-[1.5rem] border border-border/80 bg-card/80 p-1.5">
-                              <Input
-                                value={followUpInput}
-                                onChange={(event) => setFollowUpInput(event.target.value)}
-                                placeholder={currentFollowUp.placeholder}
-                                className="h-10 flex-1 rounded-full border-0 bg-background/55 px-4 text-sm shadow-none focus-visible:ring-1 sm:h-11 sm:px-5 sm:text-base md:text-base"
-                              />
-                              <Button
-                                type="button"
-                                size="icon"
-                                disabled={
-                                  followUpStatus === "speaking" ||
-                                  followUpStatus === "refining" ||
-                                  (!followUpInput.trim() && !canUseVoiceFollowUp)
-                                }
-                                onClick={() => {
-                                  if (followUpInput.trim()) {
-                                    void handleFollowUpSubmit();
-                                    return;
-                                  }
-                                  if (followUpStatus === "listening") {
-                                    stopAnswerRecording();
-                                  } else {
-                                    void startAnswerRecording();
-                                  }
-                                }}
-                                className={`h-10 w-10 shrink-0 rounded-full transition-all sm:h-12 sm:w-12 ${
-                                  followUpStatus === "listening"
-                                    ? "scale-105 animate-pulse border-clay/40 bg-accent/35 text-clay shadow-[0_10px_24px_-16px_oklch(0.48_0.04_55_/_0.45)]"
-                                    : "border-border/70 bg-background/80 text-foreground shadow-[0_10px_24px_-16px_oklch(0.28_0.02_60_/_0.35)] hover:border-clay/40 hover:bg-background hover:text-clay"
-                                }`}
-                                aria-label={
-                                  followUpInput.trim()
-                                    ? t("import.followUpNext")
-                                    : followUpStatus === "listening"
-                                      ? t("import.followUpStopRecording")
-                                      : t("import.followUpRecordAnswer")
-                                }
-                              >
-                                {followUpStatus === "transcribing" ||
-                                followUpStatus === "refining" ? (
-                                  <Loader2 className="h-[18px] w-[18px] animate-spin sm:h-5 sm:w-5" />
-                                ) : followUpInput.trim() ? (
-                                  <Send className="h-[18px] w-[18px] sm:h-5 sm:w-5" />
-                                ) : followUpStatus === "listening" ? (
-                                  <StopCircle className="h-[18px] w-[18px] sm:h-5 sm:w-5" />
-                                ) : (
-                                  <Mic className="h-[18px] w-[18px] sm:h-5 sm:w-5" />
-                                )}
-                              </Button>
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <button
-                                className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm hover:border-foreground disabled:opacity-50"
-                                onClick={() => void askFollowUpQuestion(followUpIndex)}
-                                disabled={
-                                  !canUseVoiceFollowUp ||
-                                  (followUpStatus !== "idle" && followUpStatus !== "done")
-                                }
-                                type="button"
-                              >
-                                <AudioLines className="h-4 w-4" strokeWidth={1.75} />
-                                {t("import.followUpReplay")}
-                              </button>
-                              <button
-                                className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm hover:border-foreground disabled:opacity-50"
-                                onClick={() => void handleFollowUpSkip()}
-                                disabled={followUpBusy}
-                                type="button"
-                              >
-                                {t("import.followUpSkipQuestion")}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex flex-col gap-3 sm:flex-row">
+                        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                           <button
                             className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3.5 text-sm text-background hover:bg-clay disabled:opacity-50"
                             onClick={() => void handleFollowUpContinue()}
@@ -3207,38 +3725,23 @@ function ImportPage() {
                               </>
                             )}
                           </button>
-
-                          <button
-                            onClick={() => navigate({ to: "/recipes" })}
-                            className="inline-flex items-center justify-center rounded-full border border-border px-5 py-3.5 text-sm text-clay hover:border-clay/50 hover:text-foreground"
-                            type="button"
-                          >
-                            {t("import.viewRecipes")}
-                          </button>
                         </div>
-                      </>
-                    ) : showGuidedCover ? (
+                      </div>
+                    ) : null}
+                    {videoTasksPanel}
+                    {showGuidedCover ? (
                       <div className="rounded-[2rem] border border-border bg-card p-6">
                         <div className="flex items-center gap-2">
                           <CheckCircle2 className="h-4 w-4 text-clay" strokeWidth={1.75} />
                           <div>
                             <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                              {t("import.guided.step4Label")}
+                              {t("import.guided.step3Label")}
                             </div>
                             <h4 className="font-display text-2xl">{t("import.coverStepTitle")}</h4>
                           </div>
                         </div>
                       </div>
                     ) : null}
-
-                    {!showGuidedFollowUp && (
-                      <button
-                        onClick={() => navigate({ to: "/recipes" })}
-                        className="inline-flex text-sm text-clay hover:underline"
-                      >
-                        {t("import.viewRecipes")} {">"}
-                      </button>
-                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -3312,7 +3815,7 @@ function ImportPage() {
                             </span>
                           </div>
                         )}
-                        <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2 opacity-0 transition-opacity group-hover/manual-cover:pointer-events-auto group-hover/manual-cover:opacity-100 group-focus-within/manual-cover:pointer-events-auto group-focus-within/manual-cover:opacity-100">
+                        <div className="absolute right-3 top-3 z-20 flex gap-2 opacity-100 transition-opacity sm:pointer-events-none sm:opacity-0 sm:group-hover/manual-cover:pointer-events-auto sm:group-hover/manual-cover:opacity-100 sm:group-focus-within/manual-cover:pointer-events-auto sm:group-focus-within/manual-cover:opacity-100">
                           <AppTooltip content={t("import.uploadCover")} disabled={isManualSaving}>
                             <button
                               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
@@ -3400,12 +3903,6 @@ function ImportPage() {
                         {t("import.manualTextSidebarBody")}
                       </p>
                     </div>
-                    <button
-                      onClick={() => navigate({ to: "/recipes" })}
-                      className="inline-flex text-sm text-clay hover:underline"
-                    >
-                      {t("import.viewRecipes")} {">"}
-                    </button>
                   </div>
                 )}
               </div>
