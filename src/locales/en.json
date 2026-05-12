@@ -145,7 +145,7 @@
     "recipesCount": "{{count}} recipes",
     "searchPlaceholder": "Search recipes…",
     "orSaySearch": "or say \"search spicy\"",
-    "importVideo": "Import a video",
+    "importVideo": "Import",
     "voiceHint": "Say \"open the third one\" or \"show me Sichuan only\"",
     "all": "All",
     "filter": "Filter",

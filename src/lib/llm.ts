@@ -1146,7 +1146,7 @@ const HEAT_OR_TIP_PATTERN =
 const NON_RECIPE_CHATTER_PATTERN =
   /(?:大家好|朋友们|家人们|孩子在家|阿建|分享|帮助|点赞|点个赞|关注|收藏|转发|评论|留言|订阅|感谢观看|下期见|祝大家|天天开心|美美地享用|不知道怎么做|非常地下饭|比红烧肉|背景音乐|sponsor|sponsored|subscribe|like and subscribe|thanks for watching)/i;
 const COOKING_ACTION_PATTERN =
-  /(?:加入|放入|倒入|下入|撒入|加|放|倒|下|切|切成|切好|剁|拍|洗|清洗|冲洗|去皮|削皮|控水|挤出|腌|拌|搅拌|调|调成|翻炒|煸炒|炒|煎|炸|烤|蒸|煮|炖|焖|焯|焯水|爆香|收汁|勾芡|出锅|盛出|装盘|备用|浸泡|预热|刷|填充|封口|包|上色|mix|stir|add|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve|preheat|wash|slice|chop|dice)/i;
+  /(?:加入|放入|倒入|下入|撒入|加|放|倒|下|切|切成|切好|剁|拍|洗|清洗|冲洗|去皮|削皮|控水|挤出|腌|拌|搅拌|调|调成|翻炒|煸炒|炒|煎|炸|烤|蒸|煮|炖|焖|焯|焯水|爆香|收汁|勾芡|出锅|盛出|装盘|备用|浸泡|预热|刷|填充|封口|包|上色|mix|stir|add|cook|boil|simmer|fry|saute|bake|roast|steam|grill|marinate|season|serve|preheat|wash|slice|chop|dice|soften|tear|blend|pass|sieve|strain|reheat|reduce)/i;
 const INGREDIENT_OR_MEASURE_PATTERN =
   /(?:少许|适量|一勺|半勺|两勺|\d+\s*(?:克|g|kg|斤|毫升|ml|升|l|个|颗|粒|片|块|根|把|勺|匙|茶匙|汤匙|杯|碗|分钟|秒|小时|minutes?|mins?|seconds?|secs?|hours?|hrs?)|盐|糖|醋|酱油|生抽|老抽|蚝油|料酒|胡椒|淀粉|清水|油|葱|姜|蒜|肉|蛋|米|面|粉|菜|茄子|土豆|番茄|辣椒)/i;
 const NON_INGREDIENT_PHRASE_PATTERN =
@@ -1157,6 +1157,13 @@ const DISH_TITLE_CUE_PATTERN =
   /(?:鸡|鸭|鱼|虾|蟹|肉|排骨|牛|羊|猪|蛋|豆腐|茄子|土豆|番茄|西红柿|青椒|辣椒|白菜|萝卜|黄瓜|面|粉|饭|米|粥|汤|饼|包子|馒头|蛋糕|沙拉|红烧|清炒|小炒|凉拌|炖|焖|煮|烤|炸|煎|蒸|卤|拌|stew|salad|soup|rice|noodle|chicken|beef|pork|fish|shrimp|egg|tofu|potato|tomato|eggplant)/i;
 const COMMON_INGREDIENT_NAME_PATTERN =
   /^(?:盐|食盐|白糖|糖|生抽|老抽|酱油|蚝油|料酒|胡椒粉|胡椒|白醋|醋|油|食用油|清水|水|葱|姜|蒜|蒜末|葱花|salt|sugar|soy sauce|oil|water|vinegar|pepper|garlic|ginger|scallion)$/i;
+const EN_NARRATIVE_AMOUNT_WORD_PATTERN = String.raw`(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|\d+(?:\.\d+)?(?:/\d+)?)`;
+const EN_NARRATIVE_AMOUNT_MODIFIER_PATTERN = String.raw`(?:about|around|roughly|generous|heaped|level|large|small|medium|good)`;
+const EN_NARRATIVE_UNIT_PATTERN = String.raw`(?:cloves?|kilograms?|kilos?|kg|grams?|g|pounds?|lbs?|ounces?|oz|liters?|litres?|l|milliliters?|millilitres?|ml|cups?|tablespoons?|tbsp|tbsps|teaspoons?|tsp|tsps|knobs?|handfuls?|pinches?|swirls?)`;
+const EN_NARRATIVE_FOOD_SOURCE = String.raw`(?:tomato paste|vegetable stock|crusty bread|basil leaves|olive oil|onions?|garlic|butter|tomatoes?|sugar|stock|basil|salt|pepper|cream|bread|oil|water|vinegar|ginger|scallions?|parsley|cilantro)`;
+const EN_NARRATIVE_FOOD_PATTERN = new RegExp(EN_NARRATIVE_FOOD_SOURCE, "i");
+const EN_NARRATIVE_NON_INGREDIENT_PATTERN =
+  /(?:immersion blender|blender|sieve|bowl|bowls|pot|pan|knife|spoon|heat|evening|texture|side|top|everything)/i;
 
 function hasCookingAction(value: string): boolean {
   return COOKING_ACTION_PATTERN.test(value) || countCookingContentCues(value) > 0;
@@ -1168,7 +1175,8 @@ function isLikelyNonRecipeChatter(value: string): boolean {
   const hasChatter = NON_RECIPE_CHATTER_PATTERN.test(text);
   const hasAction = hasCookingAction(text);
   if (hasChatter && !hasAction) return true;
-  if (hasChatter && hasAction && text.length > 34 && countCookingContentCues(text) <= 1) return true;
+  if (hasChatter && hasAction && text.length > 34 && countCookingContentCues(text) <= 1)
+    return true;
   return false;
 }
 
@@ -1243,7 +1251,10 @@ function inferZhCookingMethod(recipe: RecipePayload): string {
 }
 
 function inferEnCookingMethod(recipe: RecipePayload): string {
-  const steps = recipe.steps.map((step) => step.description).join(" ").toLowerCase();
+  const steps = recipe.steps
+    .map((step) => step.description)
+    .join(" ")
+    .toLowerCase();
   if (/roast|bake/.test(steps)) return "Roasted";
   if (/steam/.test(steps)) return "Steamed";
   if (/stir[-\s]?fry|saute|fry/.test(steps)) return "Stir-Fried";
@@ -1259,13 +1270,18 @@ function generateRecipeTitleFromContent(recipe: RecipePayload, language: AppLang
 
   if (language === "zh") {
     const hasEggplant = ingredients.some((name) => /茄子/.test(name)) || /茄子/.test(stepsText);
-    const hasMincedMeat = ingredients.some((name) => /肉末|肉沫/.test(name)) || /肉末|肉沫/.test(stepsText);
+    const hasMincedMeat =
+      ingredients.some((name) => /肉末|肉沫/.test(name)) || /肉末|肉沫/.test(stepsText);
     if (hasEggplant && hasMincedMeat) return "肉末茄子";
 
     const method = inferZhCookingMethod(recipe);
-    const primary = ingredients.find((name) => /肉|鸡|鸭|鱼|虾|蛋|豆腐|茄子|土豆|番茄|西红柿|白菜|萝卜|黄瓜|面|饭/.test(name)) ?? ingredients[0];
+    const primary =
+      ingredients.find((name) =>
+        /肉|鸡|鸭|鱼|虾|蛋|豆腐|茄子|土豆|番茄|西红柿|白菜|萝卜|黄瓜|面|饭/.test(name),
+      ) ?? ingredients[0];
     if (!primary) return "";
-    if (ingredients.length >= 2 && ingredients.join("").length <= 10) return ingredients.slice(0, 2).join("");
+    if (ingredients.length >= 2 && ingredients.join("").length <= 10)
+      return ingredients.slice(0, 2).join("");
     return `${method}${primary}`;
   }
 
@@ -1274,6 +1290,27 @@ function generateRecipeTitleFromContent(recipe: RecipePayload, language: AppLang
   const method = inferEnCookingMethod(recipe);
   const secondary = ingredients[1];
   return secondary ? `${method} ${primary} with ${secondary}` : `${method} ${primary}`;
+}
+
+function findNarrativeRecipeTitle(text: string): string {
+  const lines = text
+    .replace(/\r/g, "\n")
+    .split(/\n+/)
+    .map((line) => cleanRecipeContentText(stripListMarker(line)))
+    .filter(Boolean);
+
+  const firstLine = omitSchemaPlaceholder(lines[0] ?? "");
+  if (
+    firstLine &&
+    firstLine.length <= 60 &&
+    !findInlineLabel(firstLine, RECIPE_FIELD_LABELS) &&
+    !isSchemaNoiseLine(firstLine) &&
+    !hasCookingAction(firstLine)
+  ) {
+    return firstLine;
+  }
+
+  return "";
 }
 
 function isLikelyInstructionIngredient(item: RecipePayload["ingredients"][number]): boolean {
@@ -1478,10 +1515,10 @@ function normalizeStep(value: unknown, index: number): RecipePayload["steps"][nu
       readInlineLabeledValue(text, STEP_TEXT_LABELS) || text,
     );
     if (isRecipeSchemaPlaceholder(description) || isSchemaNoiseLine(description)) return null;
-      if (containsMetaReasoning(description)) return null;
-      if (!isLikelyCookingStepText(description)) return null;
-      const durationSec = parseDurationToSeconds(description);
-      return description
+    if (containsMetaReasoning(description)) return null;
+    if (!isLikelyCookingStepText(description)) return null;
+    const durationSec = parseDurationToSeconds(description);
+    return description
       ? { order: index + 1, description, ...(durationSec ? { durationSec } : {}) }
       : null;
   }
@@ -1990,7 +2027,16 @@ function splitHeuristicSegments(text: string): string[] {
     )
     .replace(/(?:Instructions|步骤|做法)\s*:\s*/gi, "\n")
     .replace(/[。！？!?；;]/g, "\n")
+    .replace(/\. +(?=(?:Roughly|Add|Bring|Tear|Pass|Serve|Blend|Reheat)\b)/g, "\n")
     .replace(/([，,])\s*(然后|再|接着|随后|最后|最后再|下一步)/g, "\n$2")
+    .replace(
+      /([，,])\s*(?=(?:then\s+)?(?:soften|add|bring|reduce|let|tear|season|blend|pass|reheat|serve)\b)/gi,
+      "\n",
+    )
+    .replace(
+      /\bthen\s+(?=(?:soften|add|bring|reduce|let|tear|season|blend|pass|reheat|serve)\b)/gi,
+      "",
+    )
     .replace(/(?:\n|^)\s*(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*/g, "\n");
 
   return normalized
@@ -2005,6 +2051,7 @@ function isLikelyRecipeStep(text: string): boolean {
   if (HEURISTIC_FILLER_PATTERN.test(text) && !HEURISTIC_STEP_PATTERN.test(text)) return false;
   if (containsMetaReasoning(text)) return false;
   return (
+    hasCookingAction(text) ||
     HEURISTIC_STEP_PATTERN.test(text) ||
     HEAT_OR_TIP_PATTERN.test(text) ||
     Boolean(parseDurationToSeconds(text))
@@ -2021,6 +2068,11 @@ function inferRecipeTitleFromText(text: string): string {
     return normalizedLabeledTitle;
   }
 
+  const narrativeTitle = findNarrativeRecipeTitle(text);
+  if (narrativeTitle && !HEURISTIC_FILLER_PATTERN.test(narrativeTitle)) {
+    return narrativeTitle;
+  }
+
   const patterns = [
     /(?:今天(?:给大家)?(?:分享|做|教大家做|来做)|这次做|我们做|来做一道|教你做|做一道|做一个)\s*["“]?([^"，。！？,.!?\n]{2,24})["”]?/i,
     /([^"，。！？,.!?\n]{2,24})(?:的做法|教程|怎么做)/i,
@@ -2033,6 +2085,94 @@ function inferRecipeTitleFromText(text: string): string {
   }
 
   return "";
+}
+
+function stripEnglishIngredientPreparation(value: string): string {
+  return cleanRecipeContentText(
+    value
+      .replace(
+        /\b(?:roughly|finely|thinly|coarsely)\s+(?:chopped|sliced|diced|minced|torn)\b/gi,
+        "",
+      )
+      .replace(
+        /\b(?:chopped|sliced|diced|minced|torn|fresh|ripe|tinned|canned|large|small|medium)\b/gi,
+        "",
+      )
+      .replace(/\s+/g, " "),
+  );
+}
+
+function parseEnglishNarrativeIngredientName(value: string): string {
+  const cleaned = stripEnglishIngredientPreparation(value)
+    .replace(/^(?:of|from)\s+/i, "")
+    .replace(/\b(?:if using|if fresh|for serving|for dunking)\b[\s\S]*$/i, "")
+    .replace(/\b(?:to|over|until|with|along|straight)\b[\s\S]*$/i, "")
+    .trim();
+  if (!cleaned || EN_NARRATIVE_NON_INGREDIENT_PATTERN.test(cleaned)) return "";
+
+  const explicitFood = cleaned.match(EN_NARRATIVE_FOOD_PATTERN)?.[0];
+  if (explicitFood) return cleanRecipeContentText(explicitFood);
+
+  const words = cleaned.split(/\s+/).filter(Boolean).slice(0, 3).join(" ");
+  if (!/^[A-Za-z][A-Za-z\s-]{1,24}$/.test(words)) return "";
+  return cleanRecipeContentText(words);
+}
+
+function inferNarrativeIngredientsFromText(text: string): RecipePayload["ingredients"] {
+  const source = trimRecipeSourceText(text);
+  const candidates: RecipePayload["ingredients"] = [];
+
+  const amountUnitFood = new RegExp(
+    `\\b((?:(?:${EN_NARRATIVE_AMOUNT_MODIFIER_PATTERN})\\s+)*(?:${EN_NARRATIVE_AMOUNT_WORD_PATTERN})\\s+(?:${EN_NARRATIVE_UNIT_PATTERN}))\\s+(?:of\\s+)?([A-Za-z][A-Za-z\\s-]{1,48})`,
+    "gi",
+  );
+  for (const match of source.matchAll(amountUnitFood)) {
+    const amount = cleanRecipeContentText(match[1] ?? "");
+    const name = parseEnglishNarrativeIngredientName(match[2] ?? "");
+    if (name && amount) candidates.push({ name, amount });
+  }
+
+  const amountFood = new RegExp(
+    `\\b((?:(?:${EN_NARRATIVE_AMOUNT_MODIFIER_PATTERN})\\s+)*(?:${EN_NARRATIVE_AMOUNT_WORD_PATTERN}))\\s+((?:\\w+\\s+){0,3}?${EN_NARRATIVE_FOOD_SOURCE})\\b`,
+    "gi",
+  );
+  for (const match of source.matchAll(amountFood)) {
+    const amount = cleanRecipeContentText(match[1] ?? "");
+    const name = parseEnglishNarrativeIngredientName(match[2] ?? "");
+    if (name && amount && EN_NARRATIVE_FOOD_PATTERN.test(name)) {
+      candidates.push({ name, amount });
+    }
+  }
+
+  const enoughStock = source.match(/\benough\s+([A-Za-z\s-]*stock)\s+to\b/i)?.[1];
+  if (enoughStock)
+    candidates.push({ name: cleanRecipeContentText(enoughStock), amount: "enough to cover" });
+
+  for (const match of source.matchAll(
+    /\bseason\s+well\s+with\s+([A-Za-z\s,\sand-]+?)(?:,|\.|and\s+blend|$)/gi,
+  )) {
+    const seasonings = (match[1] ?? "")
+      .split(/\s+and\s+|,/i)
+      .map((item) => parseEnglishNarrativeIngredientName(item))
+      .filter(Boolean);
+    for (const name of seasonings) candidates.push({ name, amount: "to taste" });
+  }
+
+  const byName = new Map<string, RecipePayload["ingredients"][number]>();
+  for (const candidate of candidates) {
+    const key = normalizePlaceholderText(candidate.name);
+    if (!key) continue;
+    const current = byName.get(key);
+    if (
+      !current ||
+      candidate.amount.length > current.amount.length ||
+      (!/^(?:a|an)$/i.test(candidate.amount) && /^(?:a|an)$/i.test(current.amount))
+    ) {
+      byName.set(key, candidate);
+    }
+  }
+
+  return [...byName.values()];
 }
 
 function inferIngredientsFromText(text: string): RecipePayload["ingredients"] {
@@ -2048,7 +2188,10 @@ function inferIngredientsFromText(text: string): RecipePayload["ingredients"] {
     .map((item) => cleanRecipeTextValue(item))
     .filter(Boolean);
 
-  return sanitizeRecipeIngredients(normalizeIngredients(candidates));
+  return sanitizeRecipeIngredients([
+    ...normalizeIngredients(candidates),
+    ...inferNarrativeIngredientsFromText(text),
+  ]);
 }
 
 function inferStepsFromText(text: string): RecipePayload["steps"] {
@@ -2080,6 +2223,23 @@ function inferStepsFromText(text: string): RecipePayload["steps"] {
   return sanitizeRecipeSteps(steps)
     .slice(0, 20)
     .map((step, index) => ({ ...step, order: index + 1 }));
+}
+
+function shouldPreferHeuristicSteps(
+  currentSteps: RecipePayload["steps"],
+  heuristicSteps?: RecipePayload["steps"],
+): boolean {
+  if (!heuristicSteps?.length) return false;
+  if (currentSteps.length === 0) return true;
+  if (heuristicSteps.length <= currentSteps.length) return false;
+
+  const currentText = currentSteps.map((step) => step.description).join(" ");
+  const currentCueCount = countCookingContentCues(currentText);
+  return (
+    (currentSteps.length === 1 && currentText.length > 180) ||
+    (currentSteps.length === 1 && currentCueCount >= 4) ||
+    heuristicSteps.length >= currentSteps.length + 3
+  );
 }
 
 function buildHeuristicRecipePayload(text: string): RecipePayload | null {
@@ -2132,7 +2292,9 @@ function enrichRecipePayload(
         enriched.ingredients.length > 0
           ? enriched.ingredients
           : sanitizeRecipeIngredients(heuristic.ingredients),
-      steps: enriched.steps.length > 0 ? enriched.steps : sanitizeRecipeSteps(heuristic.steps),
+      steps: shouldPreferHeuristicSteps(enriched.steps, heuristic.steps)
+        ? sanitizeRecipeSteps(heuristic.steps)
+        : enriched.steps,
       tags: mergeRecipeTags(enriched.tags, heuristic.tags),
     };
   }
@@ -2232,8 +2394,9 @@ export function cleanStructuredRecipePayload(
         : heuristic
           ? sanitizeRecipeIngredients(heuristic.ingredients)
           : [],
-    steps:
-      localized.steps.length > 0
+    steps: shouldPreferHeuristicSteps(localized.steps, heuristic?.steps)
+      ? sanitizeRecipeSteps(heuristic?.steps ?? [])
+      : localized.steps.length > 0
         ? localized.steps
         : heuristic
           ? sanitizeRecipeSteps(heuristic.steps)
@@ -2316,7 +2479,10 @@ export class LLMService {
 
     if (!response.ok) throw await createLLMError(response);
     const data = (await response.json()) as ChatCompletionResponse;
-    return data.choices[0].message.content;
+    const message = data.choices[0]?.message;
+    if (typeof message?.content === "string") return message.content;
+    if (typeof message?.reasoning_content === "string") return message.reasoning_content;
+    return "";
   }
 
   async chatStream(messages: ChatMessage[], options: ChatStreamOptions = {}): Promise<string> {
@@ -2452,7 +2618,9 @@ export class LLMService {
       '  "tags": {"flavor": ["savory"], "difficulty": "easy|medium|hard", "cuisine": "cuisine name", "totalTimeMin": 20}',
       "}",
       "",
-      fallbackSourceText ? `Original recipe text:\n${trimRecipeSourceText(fallbackSourceText)}` : "",
+      fallbackSourceText
+        ? `Original recipe text:\n${trimRecipeSourceText(fallbackSourceText)}`
+        : "",
       fallbackSourceText ? "" : "",
       `Failed response:\n${trimRecipeSourceText(result)}`,
     ]
@@ -2585,7 +2753,10 @@ ${JSON.stringify(draftRecipe, null, 2)}`;
 
       return {
         ...reviewed,
-        title: reviewedTitle || generateRecipeTitleFromContent(draftRecipe, language) || draftRecipe.title,
+        title:
+          reviewedTitle ||
+          generateRecipeTitleFromContent(draftRecipe, language) ||
+          draftRecipe.title,
         tags: mergeRecipeTags(reviewed.tags, draftRecipe.tags),
       };
     } catch (err) {

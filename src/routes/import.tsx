@@ -260,7 +260,7 @@ function formatImportError(err: unknown, fallback: string, t: TFunction): string
   const rawMessage = err instanceof Error ? err.message.trim() : "";
   if (!rawMessage) return fallback;
 
-  if (/not a function|is not defined|Cannot read properties of undefined/i.test(rawMessage)) {
+  if (/not a function|is not defined|Cannot read properties of (?:undefined|null)/i.test(rawMessage)) {
     return t("import.pipelineFailed");
   }
 
