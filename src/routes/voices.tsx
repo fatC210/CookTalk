@@ -792,6 +792,9 @@ function VoicesPage() {
           closeCloneDialog();
           return;
         }
+
+        customEvent.preventDefault();
+        return;
       }
 
       const target = findVoiceTarget(text);
