@@ -69,6 +69,9 @@ const hiddenQaTranscriptIntentTypes = new Set<VoiceIntentType>([
   "previous_step",
   "pause",
   "resume",
+  "set_timer",
+  "cancel_timer",
+  "extend_timer",
   "jump_step",
   "end_cooking",
   "show_badges",
@@ -79,6 +82,15 @@ const hiddenQaTranscriptIntentTypes = new Set<VoiceIntentType>([
 
 function shouldAppendTranscriptToQa(intentType: VoiceIntentType): boolean {
   return !hiddenQaTranscriptIntentTypes.has(intentType);
+}
+
+function resolveTimerSeconds(
+  intentSeconds: number | undefined,
+  stepDurationSec: number | undefined,
+): number {
+  if (intentSeconds && intentSeconds > 0) return intentSeconds;
+  if (stepDurationSec && stepDurationSec > 0) return stepDurationSec;
+  return 60;
 }
 
 function cleanRecipeForCooking(recipe: Recipe, language: AppLanguage): Recipe {
@@ -434,7 +446,8 @@ function CookPage() {
           return;
         }
         case "set_timer": {
-          const seconds = Math.max(1, intent.seconds ?? 60);
+          const stepDurationSec = currentRecipe.steps[stepIndex]?.durationSec;
+          const seconds = Math.max(1, resolveTimerSeconds(intent.seconds, stepDurationSec));
           const label =
             intent.label?.trim() ||
             (language === "zh"

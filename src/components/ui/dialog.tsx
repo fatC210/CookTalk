@@ -7,6 +7,9 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
+const sharedCloseButtonClassName =
+  "absolute right-4 top-4 z-50 inline-flex h-9 w-9 items-center justify-center rounded-full border-none bg-background/90 text-foreground shadow-none ring-0 backdrop-blur-sm transition-colors hover:bg-foreground/10 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none";
+
 const Dialog = DialogPrimitive.Root;
 
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -48,7 +51,7 @@ const DialogContent = React.forwardRef<
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-background/95 text-foreground opacity-100 shadow-[0_10px_24px_-10px_oklch(0.18_0.02_60_/_0.65)] ring-1 ring-black/20 backdrop-blur transition-colors hover:bg-foreground hover:text-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+        <DialogPrimitive.Close className={sharedCloseButtonClassName}>
           <X className="h-5 w-5" strokeWidth={2.25} />
           <span className="sr-only">{t("common.close")}</span>
         </DialogPrimitive.Close>
@@ -59,7 +62,10 @@ const DialogContent = React.forwardRef<
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-1.5 text-center sm:text-left", className)} {...props} />
+  <div
+    className={cn("flex flex-col space-y-1.5 pr-12 text-center sm:pr-14 sm:text-left", className)}
+    {...props}
+  />
 );
 DialogHeader.displayName = "DialogHeader";
 

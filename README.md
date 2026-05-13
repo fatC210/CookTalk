@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  <img src="./public/readme-cover.png" alt="CookTalk cover" width="100%" />
+</p>
+
+<p align="center">
   <a href="README.zh-CN.md">简体中文</a>
   ·
   <a href="#features">Features</a>

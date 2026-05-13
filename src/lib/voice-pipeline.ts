@@ -48,6 +48,7 @@ export interface VoiceIntent {
   stepNumber?: number;
   label?: string;
   answer?: string;
+  durationExplicitlyRequested?: boolean;
 }
 
 interface AnswerCookingQuestionOptions {
@@ -201,14 +202,20 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
   }
 
   if (/(加|延长|extend).*(分钟|秒|minute|second)/i.test(text)) {
-    return { type: "extend_timer", seconds: parseDurationSeconds(text) ?? 60 };
+    const duration = parseDurationSeconds(text);
+    return {
+      type: "extend_timer",
+      seconds: duration?.seconds ?? 60,
+      durationExplicitlyRequested: duration?.explicit ?? false,
+    };
   }
 
   if (/(计时|定时|timer|remind)/i.test(text) || isEnglishSetTimerIntent(text)) {
     return {
       type: "set_timer",
-      seconds: parseDurationSeconds(text) ?? 60,
+      seconds: parseDurationSeconds(text)?.seconds,
       label: parseTimerLabel(transcript),
+      durationExplicitlyRequested: parseDurationSeconds(text)?.explicit ?? false,
     };
   }
 
@@ -392,16 +399,16 @@ export function formatDurationForSpeech(seconds: number, language: "en" | "zh" =
     : `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
-function parseDurationSeconds(text: string): number | null {
+function parseDurationSeconds(text: string): { seconds: number; explicit: boolean } | null {
   const minuteMatch = text.match(
     /([0-9]+|[一二两三四五六七八九十]+)\s*(?:分钟|分|minute|minutes)/i,
   );
   const secondMatch = text.match(/([0-9]+|[一二两三四五六七八九十]+)\s*(?:秒|second|seconds)/i);
   const englishMinuteMatch = text.match(
-    new RegExp(`\b(${enSpokenNumberPattern})\s*(?:minute|minutes|min|mins|m)\b`, "i"),
+    new RegExp(`\\b(${enSpokenNumberPattern})\\s*(?:minute|minutes|min|mins|m)\\b`, "i"),
   );
   const englishSecondMatch = text.match(
-    new RegExp(`\b(${enSpokenNumberPattern})\s*(?:second|seconds|sec|secs|s)\b`, "i"),
+    new RegExp(`\\b(${enSpokenNumberPattern})\\s*(?:second|seconds|sec|secs|s)\\b`, "i"),
   );
   const minutes = minuteMatch?.[1]
     ? parseSpokenNumber(minuteMatch[1])
@@ -414,7 +421,7 @@ function parseDurationSeconds(text: string): number | null {
       ? parseSpokenNumber(englishSecondMatch[1])
       : 0;
   const total = minutes * 60 + seconds;
-  return total > 0 ? total : null;
+  return total > 0 ? { seconds: total, explicit: true } : null;
 }
 
 function isEnglishSetTimerIntent(text: string): boolean {

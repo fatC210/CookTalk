@@ -1420,6 +1420,14 @@ function ImportPage() {
     ],
   );
 
+  const startFreshManualRecipe = useCallback(() => {
+    clearManualDraft();
+
+    setMode("manual");
+
+    if (manualCoverInputRef.current) manualCoverInputRef.current.value = "";
+  }, [clearManualDraft, setMode]);
+
   const clearCurrentVideoTask = useCallback(async () => {
     stopAnswerRecording();
 
@@ -1437,10 +1445,16 @@ function ImportPage() {
 
     lastSavedTaskSignatureRef.current = "";
 
-    setMode("manual");
+    startFreshManualRecipe();
 
     if (fileInputRef.current) fileInputRef.current.value = "";
-  }, [cleanupAnswerRecording, clearVideoDraft, currentTaskId, setMode, stopAnswerRecording]);
+  }, [
+    cleanupAnswerRecording,
+    clearVideoDraft,
+    currentTaskId,
+    startFreshManualRecipe,
+    stopAnswerRecording,
+  ]);
 
   const handleDeleteVideoTask = useCallback(
     async (taskId: string) => {
@@ -1475,7 +1489,7 @@ function ImportPage() {
 
     replaceVideoDraft(createInitialVideoDraftSnapshot());
 
-    setMode("manual");
+    startFreshManualRecipe();
 
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -2834,7 +2848,8 @@ function ImportPage() {
       }
     : null;
 
-  const isPreviewStage = stage === "preview" || stage === "saving" || stage === "done";
+  const isPreviewStage =
+    stage === "generating-cover" || stage === "preview" || stage === "saving" || stage === "done";
 
   const isGeneratingCover = stage === "generating-cover";
 
@@ -2927,7 +2942,7 @@ function ImportPage() {
                     <div className="truncate text-sm font-medium">{displayTitle}</div>
 
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {showFileName ? `${task.fileName} �� ` : ""}
+                      {showFileName ? `${task.fileName} · ` : ""}
 
                       {formatBytes(task.fileSize)}
                     </div>
@@ -3074,7 +3089,7 @@ function ImportPage() {
                     aria-disabled={!canCreateAnotherVideoTask}
                     aria-label={t("import.chooseMedia")}
                     data-voice-label={t("import.chooseMedia")}
-                    data-voice-aliases="闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡介柛鎺戯躬楠炴帒顓奸崶�?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡块柟鍙夋尦瀹曞崬鈽夋潏銊︻�?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾茬劍閸犲棝鏌涢埄鍐х繁�?闂佽娴烽弫鎼佸储瑜斿畷锝夊幢濞嗘劕鏋傞梺绯曞墲娓氭寮?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛顐ｆ礃椤ュ﹪鏌熼崜浣烘憘闁?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濮傛俊顐㈡嚇楠炲海绮电€ｎ偅�?select media choose media upload video import video choose video"
+                    data-voice-aliases="闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵′粙鏌涢幒鎴含妤犵偞甯掗濂稿炊閳?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″潡鏌熼崣澶嬪唉鐎规洖宕埥澶嬫綇閵婏富鍟?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鑼妽闁哥姴妫濋弻娑㈠焺閸愌呯箒闂?闂備浇顕уù鐑藉极閹间礁鍌ㄧ憸鏂跨暦閿濆骞㈡繛鍡樺姇閺嬪倿姊虹化鏇炲⒉濞撴碍顨婂?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢锝嗙妞ゃ儱锕弻鐔煎礈娴ｇ儤鎲橀梺?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵倹淇婇銏″殗妤犵偛娴风划鐢碘偓锝庡亝椤?select media choose media upload video import video choose video"
                   >
                     <VoiceBadge n={1} className="absolute left-5 top-5" />
 
@@ -3095,7 +3110,7 @@ function ImportPage() {
                         <button
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
                           data-voice-label={t("import.startProcessing")}
-                          data-voice-aliases="闁诲孩顔栭崰鎺楀磻閹炬枼鏀芥い鏃傗拡閸庡繑銇勯敂瑙勬珚�?闁诲孩顔栭崰鎺楀磻閹炬枼鏀芥い鏃傗拡閸庢挻绻涢弶鎴烆棦闁圭绲介…銊╁幢濡吋顓?濠电姰鍨煎▔娑氣偓姘煎櫍楠炲啯绻濋崟顒€鏋傞梺绯曞墲娓氭寮?闂備礁婀辩划顖炲礉閺嚶颁汗闁搞儺鍓氶崵鏇熺節婵犲倹顥為柣?start processing process video extract recipe"
+                          data-voice-aliases="闂佽瀛╅鏍窗閹烘纾婚柟鐐灱閺€鑺ャ亜閺冨倵鎷￠柛搴＄箲閵囧嫰鏁傜憴鍕彋闂?闂佽瀛╅鏍窗閹烘纾婚柟鐐灱閺€鑺ャ亜閺冨倵鎷￠柛搴㈡尰缁绘盯寮堕幋鐑嗘＆闂佸湱顒茬徊浠嬧€﹂妸鈺佸耿婵☆垰鍚嬮?婵犵數濮伴崹鐓庘枖濞戞埃鍋撳鐓庢珝妤犵偛鍟换婵嬪礋椤掆偓閺嬪倿姊虹化鏇炲⒉濞撴碍顨婂?闂傚倷绀佸﹢杈╁垝椤栫偛绀夐柡鍤堕姹楅梺鎼炲労閸撴岸宕甸弴鐔虹瘈濠电姴鍊归ˉ鐐烘煟?start processing process video extract recipe"
                           onClick={(e) => {
                             e.stopPropagation();
 
@@ -3131,7 +3146,7 @@ function ImportPage() {
                           }}
                           disabled={!canCreateAnotherVideoTask}
                           data-voice-label={t("import.chooseMedia")}
-                          data-voice-aliases="闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡介柛鎺戯躬楠炴帒顓奸崶�?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡块柟鍙夋尦瀹曞崬鈽夋潏銊︻�?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾茬劍閸犲棝鏌涢埄鍐х繁�?闂佽娴烽弫鎼佸储瑜斿畷锝夊幢濞嗘劕鏋傞梺绯曞墲娓氭寮?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛顐ｆ礃椤ュ﹪鏌熼崜浣烘憘闁?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濮傛俊顐㈡嚇楠炲海绮电€ｎ偅�?select media choose media upload video import video choose video"
+                          data-voice-aliases="闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵′粙鏌涢幒鎴含妤犵偞甯掗濂稿炊閳?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″潡鏌熼崣澶嬪唉鐎规洖宕埥澶嬫綇閵婏富鍟?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鑼妽闁哥姴妫濋弻娑㈠焺閸愌呯箒闂?闂備浇顕уù鐑藉极閹间礁鍌ㄧ憸鏂跨暦閿濆骞㈡繛鍡樺姇閺嬪倿姊虹化鏇炲⒉濞撴碍顨婂?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢锝嗙妞ゃ儱锕弻鐔煎礈娴ｇ儤鎲橀梺?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵倹淇婇銏″殗妤犵偛娴风划鐢碘偓锝庡亝椤?select media choose media upload video import video choose video"
                         >
                           <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3183,7 +3198,7 @@ function ImportPage() {
                     className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
                     onClick={() => void returnToUploadStep()}
                     data-voice-label={t("import.backToUploadStep")}
-                    data-voice-aliases="闂佸搫顦弲婊堝蓟閵娿儍娲冀閵娧€鏋栨繝鐢靛С閼冲爼鎮?闂佸搫顦弲婊堝蓟閵娿儍娲冀椤撶喓鍔垫繝銏ｆ硾椤戝懘顢旈妷鈺傜厸闁稿本纰嶉惌妤呮�?闂備焦鎮堕崕鎶藉磻濞戙垹鏄ラ悘鐐插⒔閳绘柨鈹戦悩杈厡闁绘劕锕弻锟犲磼濮橆厾鐓戦梺?闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閻掕顭跨捄渚剰妞ゅ繈鍎甸弻锟犲磼濮橆厾鐓戦梺?back to upload choose another file"
+                    data-voice-aliases="闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€闁靛ě鈧弸鏍ㄧ節閻㈤潧小闁煎啿鐖奸幃?闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€妞ゆ挾鍠撻崝鍨節閵忥絾纭炬い鎴濇嚇椤㈡棃濡烽埡鍌滃幐闂佺ǹ鏈喊宥夋儗濡ゅ懏鐓?闂傚倷鐒﹂幃鍫曞磿閹惰棄纾绘繛鎴欏灩閺勩儵鎮橀悙鎻掆挃闁崇粯鏌ㄩ埞鎴︽偐鏉堫偄鍘￠梺缁樺姇閿曨亪寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?闂傚倸鍊烽悞锕併亹閸愵亞鐭撻柣銏㈩焾閽冪喎鈹戦悩鍙夊闁绘帟顕ч…璺ㄦ崉娓氼垰鍓板銈呯箞閸庣敻寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?back to upload choose another file"
                   >
                     <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3227,7 +3242,7 @@ function ImportPage() {
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-6 py-3 text-sm hover:border-foreground sm:w-auto"
                       onClick={() => void returnToUploadStep()}
                       data-voice-label={t("import.backToUploadStep")}
-                      data-voice-aliases="闂佸搫顦弲婊堝蓟閵娿儍娲冀閵娧€鏋栨繝鐢靛С閼冲爼鎮?闂佸搫顦弲婊堝蓟閵娿儍娲冀椤撶喓鍔垫繝銏ｆ硾椤戝懘顢旈妷鈺傜厸闁稿本纰嶉惌妤呮�?闂備焦鎮堕崕鎶藉磻濞戙垹鏄ラ悘鐐插⒔閳绘柨鈹戦悩杈厡闁绘劕锕弻锟犲磼濮橆厾鐓戦梺?闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閻掕顭跨捄渚剰妞ゅ繈鍎甸弻锟犲磼濮橆厾鐓戦梺?back to upload choose another file"
+                      data-voice-aliases="闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€闁靛ě鈧弸鏍ㄧ節閻㈤潧小闁煎啿鐖奸幃?闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€妞ゆ挾鍠撻崝鍨節閵忥絾纭炬い鎴濇嚇椤㈡棃濡烽埡鍌滃幐闂佺ǹ鏈喊宥夋儗濡ゅ懏鐓?闂傚倷鐒﹂幃鍫曞磿閹惰棄纾绘繛鎴欏灩閺勩儵鎮橀悙鎻掆挃闁崇粯鏌ㄩ埞鎴︽偐鏉堫偄鍘￠梺缁樺姇閿曨亪寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?闂傚倸鍊烽悞锕併亹閸愵亞鐭撻柣銏㈩焾閽冪喎鈹戦悩鍙夊闁绘帟顕ч…璺ㄦ崉娓氼垰鍓板銈呯箞閸庣敻寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?back to upload choose another file"
                     >
                       <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3863,7 +3878,7 @@ function ImportPage() {
                         }}
                         type="button"
                         data-voice-label={t("import.manualAddIngredient")}
-                        data-voice-aliases="婵犵數鍎戠紞鈧い鏇嗗嫭鍙忛柣鎰儗濡插綊鏌ｉ弬鎸庡暈缂?闂備礁鎼崐鐟邦熆濮椻偓璺柛鎰ㄦ櫓濡插綊鏌ｉ弬鎸庡暈缂?add ingredient"
+                        data-voice-aliases="濠电姷鏁搁崕鎴犵礊閳ь剚銇勯弴鍡楀閸欏繘鏌ｉ幇顓熷剹婵℃彃缍婇弻锝夊棘閹稿骸鏆堢紓?闂傚倷绀侀幖顐﹀磹閻熼偊鐔嗘慨妞诲亾鐠侯垶鏌涢幇銊︽珦婵℃彃缍婇弻锝夊棘閹稿骸鏆堢紓?add ingredient"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3959,7 +3974,7 @@ function ImportPage() {
                         }}
                         type="button"
                         data-voice-label={t("import.manualAddStep")}
-                        data-voice-aliases="婵犵數鍎戠紞鈧い鏇嗗嫭鍙忛柣鎰▕濞间即鏌曟径鍡樻珨闁?闂備礁鎼崐鐟邦熆濮椻偓璺柛鎰电厛濞间即鏌曟径鍡樻珨闁?add step"
+                        data-voice-aliases="濠电姷鏁搁崕鎴犵礊閳ь剚銇勯弴鍡楀閸欏繘鏌ｉ幇顒佲枙婵為棿鍗抽弻鏇熷緞閸℃ɑ鐝ㄩ梺?闂傚倷绀侀幖顐﹀磹閻熼偊鐔嗘慨妞诲亾鐠侯垶鏌涢幇鐢靛帥婵為棿鍗抽弻鏇熷緞閸℃ɑ鐝ㄩ梺?add step"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
 
@@ -4287,7 +4302,7 @@ function ImportPage() {
                             ? t("import.coverPreviewOpen")
                             : t("import.uploadCover")
                         }
-                        data-voice-aliases="濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾叉閻掑﹤銆掑锝呬壕闂?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡垮ù婊冩啞缁楃喖鍩€椤掑嫭鏅?闂備胶鎳撶粻宥夊垂閸︻厽顫曢柛鎾叉閻掑﹤銆掑锝呬壕闂?闂備礁鎼悮顐﹀磿閸愯鑰块柛娑卞灟閻掑﹤銆掑锝呬壕闂?闂備浇銆€閸嬫捇鏌熼鍡曟濞寸兘鏌ｈ箛鎾剁缂佽埖宀搁弫?upload cover choose cover replace cover preview cover"
+                        data-voice-aliases="婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″灝霉濠婂啯鍟炵紒妤冨枛閸┾偓妞ゆ帒瀚弲?闂傚倷鑳堕幊鎾剁不瀹ュ鍨傞柛锔诲幗椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倷绀侀幖顐ゆ偖椤愶箑纾块柛鎰嚋閼板潡鏌涘☉鍗炵仧闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倷娴囬妴鈧柛瀣崌閺岀喖顢涢崱鏇燁樂婵炲鍏橀弻锝堢疀閹惧墎顓虹紓浣藉煐瀹€鎼佸极?upload cover choose cover replace cover preview cover"
                         onClick={() => {
                           if (isManualSaving) return;
 
@@ -4355,7 +4370,7 @@ function ImportPage() {
                               type="button"
                               aria-label={t("import.uploadCover")}
                               data-voice-label={t("import.uploadCover")}
-                              data-voice-aliases="濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾叉閻掑﹤銆掑锝呬壕闂?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡垮ù婊冩啞缁楃喖鍩€椤掑嫭鏅?闂備胶鎳撶粻宥夊垂閸︻厽顫曢柛鎾叉閻掑﹤銆掑锝呬壕闂?upload cover choose cover replace cover"
+                              data-voice-aliases="婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″灝霉濠婂啯鍟炵紒妤冨枛閸┾偓妞ゆ帒瀚弲?闂傚倷鑳堕幊鎾剁不瀹ュ鍨傞柛锔诲幗椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?upload cover choose cover replace cover"
                             >
                               <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                             </button>
@@ -4377,7 +4392,7 @@ function ImportPage() {
                               type="button"
                               aria-label={t("import.aiGenerateCover")}
                               data-voice-label={t("import.aiGenerateCover")}
-                              data-voice-aliases="闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閸嬨劑鏌ｉ弮鍌ょ劸闁诲繐娲幃妯跨疀鎼达絿鐛㈤梺?闂備焦鐪归崹濠氬窗閹版澘鍨傛慨妯哄綁閻掑﹤銆掑锝呬壕闂?AI闂備焦鐪归崹濠氬窗閹版澘鍨傛慨妯哄綁閻掑﹤銆掑锝呬壕闂?regenerate cover generate cover ai generate cover"
+                              data-voice-aliases="闂傚倸鍊烽悞锕併亹閸愵亞鐭撻柣銏㈩焾閽冪喎鈹戦悩鍙夊闁稿鍔戦弻锝夊籍閸屻倗鍔搁梺璇茬箰濞差參骞冨Ο璺ㄧ杸閹艰揪绲块悰銏ゆ⒑?闂傚倷鐒﹂惇褰掑垂婵犳艾绐楅柟鐗堟緲閸ㄥ倹鎱ㄥΟ鍝勭秮闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?AI闂傚倷鐒﹂惇褰掑垂婵犳艾绐楅柟鐗堟緲閸ㄥ倹鎱ㄥΟ鍝勭秮闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?regenerate cover generate cover ai generate cover"
                             >
                               {isManualGeneratingCover ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />

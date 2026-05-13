@@ -1175,10 +1175,16 @@ const COMMON_INGREDIENT_NAME_PATTERN =
 const EN_NARRATIVE_AMOUNT_WORD_PATTERN = String.raw`(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|\d+(?:\.\d+)?(?:/\d+)?)`;
 const EN_NARRATIVE_AMOUNT_MODIFIER_PATTERN = String.raw`(?:about|around|roughly|generous|heaped|level|large|small|medium|good)`;
 const EN_NARRATIVE_UNIT_PATTERN = String.raw`(?:cloves?|kilograms?|kilos?|kg|grams?|g|pounds?|lbs?|ounces?|oz|liters?|litres?|l|milliliters?|millilitres?|ml|cups?|tablespoons?|tbsp|tbsps|teaspoons?|tsp|tsps|knobs?|handfuls?|pinches?|swirls?)`;
-const EN_NARRATIVE_FOOD_SOURCE = String.raw`(?:tomato paste|vegetable stock|crusty bread|basil leaves|olive oil|onions?|garlic|butter|tomatoes?|sugar|stock|basil|salt|pepper|cream|bread|oil|water|vinegar|ginger|scallions?|parsley|cilantro)`;
+const EN_NARRATIVE_FOOD_SOURCE = String.raw`(?:self-raising flour|all-purpose flour|plain flour|vanilla extract|maple syrup|fresh banana(?: slices)?|banana slices|toasted walnuts|walnuts|bananas?|eggs?|milk|flour|tomato paste|vegetable stock|crusty bread|basil leaves|olive oil|onions?|garlic|butter|tomatoes?|sugar|stock|basil|salt|pepper|cream|bread|oil|water|vinegar|ginger|scallions?|parsley|cilantro|honey|yogurt|berries?)`;
 const EN_NARRATIVE_FOOD_PATTERN = new RegExp(EN_NARRATIVE_FOOD_SOURCE, "i");
 const EN_NARRATIVE_NON_INGREDIENT_PATTERN =
   /(?:immersion blender|blender|sieve|bowl|bowls|pot|pan|knife|spoon|heat|evening|texture|side|top|everything)/i;
+const EN_INGREDIENT_SECTION_LABEL_PATTERN =
+  /^(?:for serving|to serve|for the topping|for toppings|topping|toppings|garnish|to garnish|optional|optional toppings?)$/i;
+const EN_INGREDIENT_FRAGMENT_PATTERN =
+  /^(?:a|an)\s+(?:scattering|drizzle|splash|pinch|knob|handful|few|little)(?:\s+of)?$/i;
+const EN_META_RECIPE_NOTE_PATTERN =
+  /(?:should we include|these are(?: just)? toppings|part of the recipe|we['’]ll include|amounts?\s*:)/i;
 
 function hasCookingAction(value: string): boolean {
   return (
@@ -1199,14 +1205,39 @@ function isLikelyNonRecipeChatter(value: string): boolean {
   return false;
 }
 
+function isEnglishIngredientSectionLabel(value: string): boolean {
+  const text = cleanRecipeTextValue(value).replace(/[:.,;]+$/g, "");
+  return EN_INGREDIENT_SECTION_LABEL_PATTERN.test(text);
+}
+
+function isIngredientFragmentText(value: string): boolean {
+  const text = cleanRecipeTextValue(value).replace(/[:.,;]+$/g, "");
+  return EN_INGREDIENT_FRAGMENT_PATTERN.test(text);
+}
+
+function isLikelyIngredientOnlyStep(value: string): boolean {
+  const text = cleanRecipeTextValue(value);
+  if (!text) return false;
+  if (isEnglishIngredientSectionLabel(text) || isIngredientFragmentText(text)) return true;
+  if (EN_META_RECIPE_NOTE_PATTERN.test(text)) return true;
+  if (hasCookingAction(text) || HEAT_OR_TIP_PATTERN.test(text)) return false;
+
+  const normalized = normalizeIngredient(text);
+  if (!normalized?.name) return false;
+  if (normalized.amount && !INGREDIENT_OR_MEASURE_PATTERN.test(normalized.amount)) return false;
+  return isLikelyIngredientName(normalized.name);
+}
+
 function isLikelyIngredientName(value: string): boolean {
   const text = cleanRecipeTextValue(value);
   if (!text) return false;
-  if (text.length > 18) return false;
+  if (text.length > 32) return false;
   if (isLikelyNonRecipeChatter(text)) return false;
+  if (isEnglishIngredientSectionLabel(text) || isIngredientFragmentText(text)) return false;
+  if (EN_META_RECIPE_NOTE_PATTERN.test(text)) return false;
   if (NON_INGREDIENT_PHRASE_PATTERN.test(text)) return false;
   if (hasCookingAction(text)) return false;
-  return INGREDIENT_OR_MEASURE_PATTERN.test(text) || /^[\u4e00-\u9fffA-Za-z\s-]{1,18}$/.test(text);
+  return INGREDIENT_OR_MEASURE_PATTERN.test(text) || /^[\u4e00-\u9fffA-Za-z\s-]{1,32}$/.test(text);
 }
 
 function isLikelyCookingStepText(value: string): boolean {
@@ -1337,6 +1368,8 @@ function isLikelyInstructionIngredient(item: RecipePayload["ingredients"][number
   const name = item.name.trim();
   const amount = item.amount.trim();
   if (!name) return false;
+  if (isEnglishIngredientSectionLabel(name) || isIngredientFragmentText(name)) return true;
+  if (EN_META_RECIPE_NOTE_PATTERN.test(`${name} ${amount}`)) return true;
   if (amount && name.length <= 24 && countCookingContentCues(name) <= 1) return false;
 
   const cueCount = countCookingContentCues(name);
@@ -1503,6 +1536,9 @@ function sanitizeRecipeIngredients(
       if (!item.name && !item.amount) return false;
       if (item.name && isSchemaNoiseLine(item.name)) return false;
       if (item.amount && isSchemaNoiseLine(item.amount)) return false;
+      if (item.name && isEnglishIngredientSectionLabel(item.name)) return false;
+      if (item.name && isIngredientFragmentText(item.name) && !item.amount) return false;
+      if (EN_META_RECIPE_NOTE_PATTERN.test(`${item.name} ${item.amount}`)) return false;
       if (isLikelyInstructionIngredient(item)) return false;
       if (!isLikelyIngredientName(item.name) && !INGREDIENT_OR_MEASURE_PATTERN.test(item.amount)) {
         return false;
@@ -1659,6 +1695,10 @@ function sanitizeRecipeSteps(steps: RecipePayload["steps"]): RecipePayload["step
         return false;
       }
       if (containsMetaReasoning(step.description)) return false;
+      if (EN_META_RECIPE_NOTE_PATTERN.test(step.description)) return false;
+      if (isEnglishIngredientSectionLabel(step.description)) return false;
+      if (isIngredientFragmentText(step.description)) return false;
+      if (isLikelyIngredientOnlyStep(step.description)) return false;
       if (!isLikelyCookingStepText(step.description)) return false;
 
       const key = normalizePlaceholderText(step.description);
@@ -2156,8 +2196,12 @@ function parseEnglishNarrativeIngredientName(value: string): string {
     .replace(/^(?:of|from)\s+/i, "")
     .replace(/\b(?:if using|if fresh|for serving|for dunking)\b[\s\S]*$/i, "")
     .replace(/\b(?:to|over|until|with|along|straight)\b[\s\S]*$/i, "")
+    .replace(/^(?:a|an)\s+(?:few|little|small|good|generous)\s+/i, "")
+    .replace(/^(?:a|an)\s+(?:scattering|drizzle|splash|pinch|knob|handful)\s+of\s+/i, "")
     .trim();
   if (!cleaned || EN_NARRATIVE_NON_INGREDIENT_PATTERN.test(cleaned)) return "";
+  if (isEnglishIngredientSectionLabel(cleaned) || isIngredientFragmentText(cleaned)) return "";
+  if (EN_META_RECIPE_NOTE_PATTERN.test(cleaned)) return "";
 
   const explicitFood = cleaned.match(EN_NARRATIVE_FOOD_PATTERN)?.[0];
   if (explicitFood) return cleanRecipeContentText(explicitFood);
@@ -2205,6 +2249,16 @@ function inferNarrativeIngredientsFromText(text: string): RecipePayload["ingredi
       .map((item) => parseEnglishNarrativeIngredientName(item))
       .filter(Boolean);
     for (const name of seasonings) candidates.push({ name, amount: "to taste" });
+  }
+
+  for (const match of source.matchAll(
+    /\b(?:finish|serve)\s+with\s+([A-Za-z\s,\-]+?)(?:\.|$)/gi,
+  )) {
+    const extras = (match[1] ?? "")
+      .split(/\s+and\s+|,/i)
+      .map((item) => parseEnglishNarrativeIngredientName(item))
+      .filter(Boolean);
+    for (const name of extras) candidates.push({ name, amount: "" });
   }
 
   const byName = new Map<string, RecipePayload["ingredients"][number]>();
@@ -2945,6 +2999,12 @@ ${trimRecipeSourceText(transcript)}`;
       outputLanguage === "zh"
         ? "- 步骤文字要简洁，适合做菜时朗读。"
         : "- Keep step text concise and readable for cooking playback.",
+      outputLanguage === "zh"
+        ? "- 装盘、点缀、for serving 这类上桌配料要保留在 ingredients 里，但 'for serving'、'toppings' 这类标签本身不是食材。"
+        : "- Include garnish, topping, and for-serving items in ingredients when they are actual foods, but never keep labels like 'for serving' or 'toppings' as ingredient names.",
+      outputLanguage === "zh"
+        ? "- 不要把食材行、配料短语或 topping 说明写成步骤；步骤必须是明确的烹饪动作。"
+        : "- Never turn ingredient lines, topping phrases, or serving notes into steps. Steps must be actual cooking actions.",
       outputLanguage === "zh"
         ? "- 标题、食材、步骤、菜系、口味、辣度、备注要跟随输入菜谱的主要语言；如果粘贴的菜谱是英文，回填结果也必须是英文；不要因为界面语言而翻译；difficulty 只能用 easy、medium、hard。"
         : "- Match the main language of the pasted recipe for title, ingredients, steps, cuisine, flavor, spice level, and notes. If the pasted recipe is English, the structured recipe must stay English; do not translate it because of the interface language. difficulty must be easy, medium, or hard.",

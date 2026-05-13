@@ -8,6 +8,9 @@ import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 
+const sharedCloseButtonClassName =
+  "absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border-none bg-background/90 text-foreground shadow-none ring-0 backdrop-blur-sm transition-colors hover:bg-foreground/10 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none";
+
 const Sheet = SheetPrimitive.Root;
 
 const SheetTrigger = SheetPrimitive.Trigger;
@@ -69,7 +72,7 @@ const SheetContent = React.forwardRef<
         className={cn(sheetVariants({ side }), className)}
         {...props}
       >
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
+        <SheetPrimitive.Close className={sharedCloseButtonClassName}>
           <X className="h-4 w-4" />
           <span className="sr-only">{t("common.close")}</span>
         </SheetPrimitive.Close>
@@ -81,7 +84,10 @@ const SheetContent = React.forwardRef<
 SheetContent.displayName = SheetPrimitive.Content.displayName;
 
 const SheetHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex flex-col space-y-2 text-center sm:text-left", className)} {...props} />
+  <div
+    className={cn("flex flex-col space-y-2 pr-12 text-center sm:pr-14 sm:text-left", className)}
+    {...props}
+  />
 );
 SheetHeader.displayName = "SheetHeader";
 
