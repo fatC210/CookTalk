@@ -50,6 +50,8 @@ import {
 
 import { getApiKey } from "@/lib/crypto";
 
+import { promptConfigureApiKey } from "@/lib/api-key-prompts";
+
 import { db } from "@/lib/db";
 
 import { deleteVideoImportTask, saveVideoImportTask, type Recipe } from "@/lib/db";
@@ -1152,6 +1154,12 @@ function ImportPage() {
     );
   };
 
+  const resetVideoEditForm = () => {
+    if (!structuredRecipe) return;
+
+    syncRecipeEditor(structuredRecipe);
+  };
+
   const updateEditIngredient = (index: number, patch: Partial<ManualIngredient>) => {
     setEditIngredients((current) =>
       current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
@@ -1657,7 +1665,7 @@ function ImportPage() {
     if (followUpStatus === "speaking" || followUpStatus === "refining") return;
 
     if (!canUseVoiceFollowUp) {
-      toast.error(t("import.elevenLabsKeyMissing"));
+      promptConfigureApiKey("elevenlabs", t, navigate);
 
       return;
     }
@@ -1929,7 +1937,7 @@ function ImportPage() {
     }
 
     if (!hasElevenLabsKey) {
-      toast.error(t("import.elevenLabsKeyMissing"));
+      promptConfigureApiKey("elevenlabs", t, navigate);
 
       return;
     }
@@ -1998,6 +2006,7 @@ function ImportPage() {
       const elevenLabsKey = await getApiKey("elevenlabs");
 
       if (!elevenLabsKey) {
+        promptConfigureApiKey("elevenlabs", t, navigate);
         throw new Error(t("import.elevenLabsKeyMissing"));
       }
 
@@ -2368,7 +2377,7 @@ function ImportPage() {
     }
 
     if (!canStructureWithLlm) {
-      toast.error(t("import.manualTextLlmRequired"));
+      promptConfigureApiKey("llm", t, navigate);
 
       return;
     }
@@ -2382,6 +2391,12 @@ function ImportPage() {
     setManualTextImportStatus("structuring");
 
     setManualTextImportError(null);
+
+    setIsManualTextDialogOpen(false);
+
+    setManualRawText("");
+
+    setManualTextImportStatus("idle");
 
     const initialTaskSnapshot: VideoImportDraftSnapshot = {
       ...createInitialVideoDraftSnapshot(),
@@ -2402,6 +2417,8 @@ function ImportPage() {
     await saveVideoImportTask(task);
 
     setCurrentTaskId(task.id);
+
+    replaceVideoDraft(initialTaskSnapshot);
 
     creatingNewVideoTaskRef.current = false;
 
@@ -2455,15 +2472,9 @@ function ImportPage() {
 
       applyStructuredRecipeToManualForm(cleanedRecipe);
 
-      resetManualTextDialog();
-
       toast.success(t("import.manualTextStructured"));
     } catch (err) {
       const message = formatImportError(err, t("import.manualTextStructureFailed"), t);
-
-      setManualTextImportStatus("idle");
-
-      setManualTextImportError(message);
 
       const errorSnapshot: VideoImportDraftSnapshot = {
         ...initialTaskSnapshot,
@@ -2529,7 +2540,7 @@ function ImportPage() {
     if (!structuredRecipe) return;
 
     if (!canGenerateAiCover) {
-      toast.error(t("import.coverGenerationUnavailable"));
+      promptConfigureApiKey(!hasLlmKey ? "llm" : "imagegen", t, navigate);
 
       return;
     }
@@ -2544,7 +2555,7 @@ function ImportPage() {
       const imageModel = await getApiKey("imagegen-model");
 
       if (!llmService || !imageKey || !imageEndpoint) {
-        toast.error(t("import.coverGenerationUnavailable"));
+        promptConfigureApiKey(!llmService ? "llm" : "imagegen", t, navigate);
 
         return;
       }
@@ -2589,7 +2600,7 @@ function ImportPage() {
     }
 
     if (!canGenerateAiCover) {
-      toast.error(t("import.coverGenerationUnavailable"));
+      promptConfigureApiKey(!hasLlmKey ? "llm" : "imagegen", t, navigate);
 
       return;
     }
@@ -2606,7 +2617,7 @@ function ImportPage() {
       const imageModel = await getApiKey("imagegen-model");
 
       if (!llmService || !imageKey || !imageEndpoint) {
-        toast.error(t("import.coverGenerationUnavailable"));
+        promptConfigureApiKey(!llmService ? "llm" : "imagegen", t, navigate);
 
         return;
       }
@@ -2847,7 +2858,12 @@ function ImportPage() {
 
   const showImportSidePanel = mode === "manual" || mode === "video";
 
-  const showVideoTasksPanel = mode === "video";
+  const showVideoTasksPanel = mode === "manual" || mode === "video";
+
+  const shouldPrioritizeImportSidePanel =
+    mode === "manual" ||
+    (mode === "video" &&
+      (videoTasks.length > 0 || (showGuidedCover && Boolean(previewRecipe))));
 
   const videoTasksPanel = (
     <div className="flex flex-col rounded-2xl border border-border bg-card p-5">
@@ -2882,7 +2898,7 @@ function ImportPage() {
 
             const displayTitle = deriveTaskDisplayTitle(task.snapshot, task.fileName);
 
-            const showFileName = displayTitle !== task.fileName;
+            const showFileName = task.kind === "media" && task.fileName.trim().length > 0 && displayTitle !== task.fileName;
 
             return (
               <div
@@ -2911,7 +2927,7 @@ function ImportPage() {
                     <div className="truncate text-sm font-medium">{displayTitle}</div>
 
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {showFileName ? `${task.fileName} 閻?` : ""}
+                      {showFileName ? `${task.fileName} �� ` : ""}
 
                       {formatBytes(task.fileSize)}
                     </div>
@@ -3032,7 +3048,7 @@ function ImportPage() {
 
           <div className="grid gap-8 lg:grid-cols-12">
             <div
-              className={`min-w-0 space-y-6 ${showImportSidePanel ? "lg:col-span-8" : "lg:col-span-12"}`}
+              className={`min-w-0 space-y-6 ${shouldPrioritizeImportSidePanel ? "order-2 lg:order-1" : ""} ${showImportSidePanel ? "lg:col-span-8" : "lg:col-span-12"}`}
             >
               {mode === "video" && stage === "idle" && (
                 <>
@@ -3058,7 +3074,7 @@ function ImportPage() {
                     aria-disabled={!canCreateAnotherVideoTask}
                     aria-label={t("import.chooseMedia")}
                     data-voice-label={t("import.chooseMedia")}
-                    data-voice-aliases="闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡介柛鎺戯躬楠炴帒顓奸崶鈹?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡块柟鍙夋尦瀹曞崬鈽夋潏銊︻啍 濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾茬劍閸犲棝鏌涢埄鍐х繁闁?闂佽娴烽弫鎼佸储瑜斿畷锝夊幢濞嗘劕鏋傞梺绯曞墲娓氭寮?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛顐ｆ礃椤ュ﹪鏌熼崜浣烘憘闁?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濮傛俊顐㈡嚇楠炲海绮电€ｎ偅顔?select media choose media upload video import video choose video"
+                    data-voice-aliases="闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡介柛鎺戯躬楠炴帒顓奸崶�?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡块柟鍙夋尦瀹曞崬鈽夋潏銊︻�?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾茬劍閸犲棝鏌涢埄鍐х繁�?闂佽娴烽弫鎼佸储瑜斿畷锝夊幢濞嗘劕鏋傞梺绯曞墲娓氭寮?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛顐ｆ礃椤ュ﹪鏌熼崜浣烘憘闁?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濮傛俊顐㈡嚇楠炲海绮电€ｎ偅�?select media choose media upload video import video choose video"
                   >
                     <VoiceBadge n={1} className="absolute left-5 top-5" />
 
@@ -3079,13 +3095,17 @@ function ImportPage() {
                         <button
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
                           data-voice-label={t("import.startProcessing")}
-                          data-voice-aliases="闁诲孩顔栭崰鎺楀磻閹炬枼鏀芥い鏃傗拡閸庡繑銇勯敂瑙勬珚闁?闁诲孩顔栭崰鎺楀磻閹炬枼鏀芥い鏃傗拡閸庢挻绻涢弶鎴烆棦闁圭绲介…銊╁幢濡吋顓?濠电姰鍨煎▔娑氣偓姘煎櫍楠炲啯绻濋崟顒€鏋傞梺绯曞墲娓氭寮?闂備礁婀辩划顖炲礉閺嚶颁汗闁搞儺鍓氶崵鏇熺節婵犲倹顥為柣?start processing process video extract recipe"
+                          data-voice-aliases="闁诲孩顔栭崰鎺楀磻閹炬枼鏀芥い鏃傗拡閸庡繑銇勯敂瑙勬珚�?闁诲孩顔栭崰鎺楀磻閹炬枼鏀芥い鏃傗拡閸庢挻绻涢弶鎴烆棦闁圭绲介…銊╁幢濡吋顓?濠电姰鍨煎▔娑氣偓姘煎櫍楠炲啯绻濋崟顒€鏋傞梺绯曞墲娓氭寮?闂備礁婀辩划顖炲礉閺嚶颁汗闁搞儺鍓氶崵鏇熺節婵犲倹顥為柣?start processing process video extract recipe"
                           onClick={(e) => {
                             e.stopPropagation();
 
+                            if (!hasElevenLabsKey) {
+                              promptConfigureApiKey("elevenlabs", t, navigate);
+                              return;
+                            }
+
                             void startPipeline();
                           }}
-                          disabled={!hasElevenLabsKey}
                         >
                           <Wand2 className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3111,7 +3131,7 @@ function ImportPage() {
                           }}
                           disabled={!canCreateAnotherVideoTask}
                           data-voice-label={t("import.chooseMedia")}
-                          data-voice-aliases="闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡介柛鎺戯躬楠炴帒顓奸崶鈹?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡块柟鍙夋尦瀹曞崬鈽夋潏銊︻啍 濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾茬劍閸犲棝鏌涢埄鍐х繁闁?闂佽娴烽弫鎼佸储瑜斿畷锝夊幢濞嗘劕鏋傞梺绯曞墲娓氭寮?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛顐ｆ礃椤ュ﹪鏌熼崜浣烘憘闁?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濮傛俊顐㈡嚇楠炲海绮电€ｎ偅顔?select media choose media upload video import video choose video"
+                          data-voice-aliases="闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡介柛鎺戯躬楠炴帒顓奸崶�?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濡块柟鍙夋尦瀹曞崬鈽夋潏銊︻�?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛鎾茬劍閸犲棝鏌涢埄鍐х繁�?闂佽娴烽弫鎼佸储瑜斿畷锝夊幢濞嗘劕鏋傞梺绯曞墲娓氭寮?濠电偞鍨堕幐鎼佹晝閿濆洦顫曢柛顐ｆ礃椤ュ﹪鏌熼崜浣烘憘闁?闂傚倷绶￠崑鍕囬幍顔瑰亾濮樸儱濮傛俊顐㈡嚇楠炲海绮电€ｎ偅�?select media choose media upload video import video choose video"
                         >
                           <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3163,7 +3183,7 @@ function ImportPage() {
                     className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
                     onClick={() => void returnToUploadStep()}
                     data-voice-label={t("import.backToUploadStep")}
-                    data-voice-aliases="闂佸搫顦弲婊堝蓟閵娿儍娲冀閵娧€鏋栨繝鐢靛С閼冲爼鎮?闂佸搫顦弲婊堝蓟閵娿儍娲冀椤撶喓鍔垫繝銏ｆ硾椤戝懘顢旈妷鈺傜厸闁稿本纰嶉惌妤呮煥?闂備焦鎮堕崕鎶藉磻濞戙垹鏄ラ悘鐐插⒔閳绘柨鈹戦悩杈厡闁绘劕锕弻锟犲磼濮橆厾鐓戦梺?闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閻掕顭跨捄渚剰妞ゅ繈鍎甸弻锟犲磼濮橆厾鐓戦梺?back to upload choose another file"
+                    data-voice-aliases="闂佸搫顦弲婊堝蓟閵娿儍娲冀閵娧€鏋栨繝鐢靛С閼冲爼鎮?闂佸搫顦弲婊堝蓟閵娿儍娲冀椤撶喓鍔垫繝銏ｆ硾椤戝懘顢旈妷鈺傜厸闁稿本纰嶉惌妤呮�?闂備焦鎮堕崕鎶藉磻濞戙垹鏄ラ悘鐐插⒔閳绘柨鈹戦悩杈厡闁绘劕锕弻锟犲磼濮橆厾鐓戦梺?闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閻掕顭跨捄渚剰妞ゅ繈鍎甸弻锟犲磼濮橆厾鐓戦梺?back to upload choose another file"
                   >
                     <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3191,8 +3211,13 @@ function ImportPage() {
                   <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row sm:flex-wrap">
                     <button
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
-                      onClick={() => void startPipeline()}
-                      disabled={!hasElevenLabsKey}
+                      onClick={() => {
+                        if (!hasElevenLabsKey) {
+                          promptConfigureApiKey("elevenlabs", t, navigate);
+                          return;
+                        }
+                        void startPipeline();
+                      }}
                     >
                       {t("import.retry")}
                     </button>
@@ -3202,7 +3227,7 @@ function ImportPage() {
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-6 py-3 text-sm hover:border-foreground sm:w-auto"
                       onClick={() => void returnToUploadStep()}
                       data-voice-label={t("import.backToUploadStep")}
-                      data-voice-aliases="闂佸搫顦弲婊堝蓟閵娿儍娲冀閵娧€鏋栨繝鐢靛С閼冲爼鎮?闂佸搫顦弲婊堝蓟閵娿儍娲冀椤撶喓鍔垫繝銏ｆ硾椤戝懘顢旈妷鈺傜厸闁稿本纰嶉惌妤呮煥?闂備焦鎮堕崕鎶藉磻濞戙垹鏄ラ悘鐐插⒔閳绘柨鈹戦悩杈厡闁绘劕锕弻锟犲磼濮橆厾鐓戦梺?闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閻掕顭跨捄渚剰妞ゅ繈鍎甸弻锟犲磼濮橆厾鐓戦梺?back to upload choose another file"
+                      data-voice-aliases="闂佸搫顦弲婊堝蓟閵娿儍娲冀閵娧€鏋栨繝鐢靛С閼冲爼鎮?闂佸搫顦弲婊堝蓟閵娿儍娲冀椤撶喓鍔垫繝銏ｆ硾椤戝懘顢旈妷鈺傜厸闁稿本纰嶉惌妤呮�?闂備焦鎮堕崕鎶藉磻濞戙垹鏄ラ悘鐐插⒔閳绘柨鈹戦悩杈厡闁绘劕锕弻锟犲磼濮橆厾鐓戦梺?闂傚倷鐒﹁ぐ鍐矓閻㈢钃熷┑鐘叉处閻掕顭跨捄渚剰妞ゅ繈鍎甸弻锟犲磼濮橆厾鐓戦梺?back to upload choose another file"
                     >
                       <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3258,52 +3283,247 @@ function ImportPage() {
                     />
                   </div>
 
+                  <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("import.manualRecipeTitle")}</span>
+
+                      <input
+                        className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay disabled:cursor-not-allowed disabled:opacity-60"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        placeholder={t("import.manualRecipeTitlePlaceholder")}
+                        disabled={stage === "saving" || stage === "done"}
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium">{t("import.manualDifficulty")}</span>
+
+                      <Select
+                        value={editDifficulty || EMPTY_MANUAL_DIFFICULTY_VALUE}
+                        onValueChange={(value) =>
+                          setEditDifficulty(
+                            value === EMPTY_MANUAL_DIFFICULTY_VALUE ? "" : (value as ManualDifficulty),
+                          )
+                        }
+                        disabled={stage === "saving" || stage === "done"}
+                      >
+                        <SelectTrigger className="h-12 rounded-2xl border-border bg-background text-sm">
+                          <SelectValue placeholder={t("import.manualDifficultyPlaceholder")} />
+                        </SelectTrigger>
+
+                        <SelectContent>
+                          <SelectItem value={EMPTY_MANUAL_DIFFICULTY_VALUE}>
+                            {t("import.manualDifficultyPlaceholder")}
+                          </SelectItem>
+
+                          <SelectItem value="easy">{t("recipes.difficulty.easy")}</SelectItem>
+
+                          <SelectItem value="medium">{t("recipes.difficulty.medium")}</SelectItem>
+
+                          <SelectItem value="hard">{t("recipes.difficulty.hard")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </label>
+
+                    <label className="space-y-2 lg:col-span-2">
+                      <span className="text-sm font-medium">{t("import.manualTotalTime")}</span>
+
+                      <input
+                        className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-clay disabled:cursor-not-allowed disabled:opacity-60"
+                        value={editTotalTime}
+                        onChange={(e) => setEditTotalTime(e.target.value)}
+                        placeholder={t("import.manualTotalTimePlaceholder")}
+                        inputMode="numeric"
+                        disabled={stage === "saving" || stage === "done"}
+                      />
+                    </label>
+                  </div>
+
                   <div className={`mt-8 ${showVideoEditIngredients ? "" : "hidden"}`}>
-                    <h4 className="font-display text-xl">{t("import.manualIngredients")}</h4>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <h4 className="font-display text-xl">{t("import.manualIngredients")}</h4>
+
+                        <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                          {editIngredients.length}
+                        </span>
+                      </div>
+
+                      <button
+                        className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={addEditIngredient}
+                        type="button"
+                        disabled={stage === "saving" || stage === "done"}
+                        data-voice-label={t("import.manualAddIngredient")}
+                        data-voice-aliases="add ingredient"
+                      >
+                        <Plus className="h-4 w-4" strokeWidth={1.75} />
+
+                        {t("import.manualAddIngredient")}
+                      </button>
+                    </div>
 
                     <div className="mt-4 space-y-3">
-                      {previewRecipe.ingredients.map((ingredient, index) => (
+                      {editIngredients.map((ingredient, index) => (
                         <div
-                          key={`${ingredient.name}-${index}`}
-                          className="rounded-2xl border border-border bg-background p-4 text-sm"
+                          key={index}
+                          className="group rounded-2xl border border-border bg-background p-4"
+                          onBlur={(event) => handleEditIngredientBlur(event, index)}
                         >
-                          <div className="font-medium">{ingredient.name}</div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                              {t("import.manualIngredients")}
+                            </span>
 
-                          {ingredient.amount && (
-                            <div className="mt-1 text-muted-foreground">{ingredient.amount}</div>
-                          )}
+                            {editIngredients.length > 1 && (
+                              <button
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                onClick={() => removeEditIngredient(index)}
+                                disabled={stage === "saving" || stage === "done"}
+                                type="button"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_180px]">
+                            <input
+                              ref={(node) => {
+                                editIngredientNameRefs.current[index] = node;
+                              }}
+                              className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay disabled:cursor-not-allowed disabled:opacity-60"
+                              value={ingredient.name}
+                              onChange={(e) => updateEditIngredient(index, { name: e.target.value })}
+                              placeholder={t("import.manualIngredientName")}
+                              disabled={stage === "saving" || stage === "done"}
+                            />
+
+                            <input
+                              className="rounded-xl border border-border bg-card px-3 py-2.5 text-sm outline-none focus:border-clay disabled:cursor-not-allowed disabled:opacity-60"
+                              value={ingredient.amount}
+                              onChange={(e) => updateEditIngredient(index, { amount: e.target.value })}
+                              placeholder={t("import.manualIngredientAmount")}
+                              disabled={stage === "saving" || stage === "done"}
+                            />
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
                   <div className={`mt-8 ${showVideoEditSteps ? "" : "hidden"}`}>
-                    <h4 className="font-display text-xl">{t("import.manualSteps")}</h4>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <h4 className="font-display text-xl">{t("import.manualSteps")}</h4>
+
+                        <span className="inline-flex min-w-9 items-center justify-center rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                          {editSteps.length}
+                        </span>
+                      </div>
+
+                      <button
+                        className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={addEditStep}
+                        type="button"
+                        disabled={stage === "saving" || stage === "done"}
+                        data-voice-label={t("import.manualAddStep")}
+                        data-voice-aliases="add step"
+                      >
+                        <Plus className="h-4 w-4" strokeWidth={1.75} />
+
+                        {t("import.manualAddStep")}
+                      </button>
+                    </div>
 
                     <div className="mt-4 space-y-3">
-                      {previewRecipe.steps.map((step, index) => (
+                      {editSteps.map((step, index) => (
                         <div
-                          key={`${step.description}-${index}`}
-                          className="rounded-2xl border border-border bg-background p-4 text-sm"
+                          key={index}
+                          className="group rounded-2xl border border-border bg-background p-4"
+                          onDragOver={(event) => {
+                            event.preventDefault();
+
+                            event.dataTransfer.dropEffect = "move";
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+
+                            const fromIndex = draggedEditStepIndexRef.current;
+
+                            if (fromIndex !== null) moveEditStep(fromIndex, index);
+
+                            draggedEditStepIndexRef.current = null;
+                          }}
+                          onBlur={(event) => handleEditStepBlur(event, index)}
                         >
-                          <div className="font-display text-sm">
-                            {t("import.step", { count: index + 1 })}
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="-ml-1 inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-full border border-transparent bg-transparent text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"
+                                draggable={stage !== "saving" && stage !== "done"}
+                                onDragStart={(event) => {
+                                  draggedEditStepIndexRef.current = index;
+
+                                  event.dataTransfer.effectAllowed = "move";
+
+                                  event.dataTransfer.setData("text/plain", String(index));
+                                }}
+                                onDragEnd={() => {
+                                  draggedEditStepIndexRef.current = null;
+                                }}
+                                disabled={stage === "saving" || stage === "done"}
+                                type="button"
+                              >
+                                <GripVertical className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+
+                              <span className="font-display text-sm">
+                                {t("import.step", { count: index + 1 })}
+                              </span>
+                            </div>
+
+                            {editSteps.length > 1 && (
+                              <button
+                                className="inline-flex items-center justify-center rounded-xl border border-transparent bg-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:border-destructive/35 hover:bg-destructive/5 hover:text-destructive focus-visible:border-destructive/35 disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                onClick={() => removeEditStep(index)}
+                                disabled={stage === "saving" || stage === "done"}
+                                type="button"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.75} />
+                              </button>
+                            )}
                           </div>
 
-                          <p className="mt-2 leading-6 text-muted-foreground">{step.description}</p>
+                          <div className="mt-3">
+                            <StepDescriptionField
+                              textareaRef={(node) => {
+                                editStepDescriptionRefs.current[index] = node;
+                              }}
+                              value={step.description}
+                              onChange={(value) => updateEditStep(index, { description: value })}
+                              placeholder={t("import.manualStepDescription")}
+                              disabled={stage === "saving" || stage === "done"}
+                            />
+                          </div>
 
-                          {(step.durationSec || step.tips) && (
-                            <div className="mt-3 text-xs text-muted-foreground">
-                              {step.durationSec ? `${formatDurationMinutesInput(step.durationSec)} ${t("import.manualStepDurationUnit")}` : ""}
-                              {step.durationSec && step.tips ? " · " : ""}
-                              {step.tips ?? ""}
-                            </div>
-                          )}
+                          <div className="mt-3">
+                            <StepMetadataFields
+                              t={t}
+                              durationValue={formatDurationMinutesInput(step.durationSec)}
+                              tipsValue={step.tips ?? ""}
+                              onDurationChange={(value) =>
+                                updateEditStep(index, { durationSec: parseDurationMinutesInput(value) })
+                              }
+                              onTipsChange={(value) => updateEditStep(index, { tips: value })}
+                              disabled={stage === "saving" || stage === "done"}
+                            />
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
-
                   <RecipeEditShortcuts
                     ingredientCount={editIngredients.length}
                     stepCount={editSteps.length}
@@ -3318,7 +3538,16 @@ function ImportPage() {
                     onSave={() => void handleSaveVideo()}
                     disabled={stage === "saving" || stage === "done"}
                     saving={stage === "saving"}
-                    showJumpControls={false}
+                    actionsPosition="before-save"
+                    actions={[
+                      {
+                        label: t("import.manualReset"),
+                        onClick: resetVideoEditForm,
+                        icon: <RotateCcw className="h-4 w-4" strokeWidth={1.75} />,
+                        disabled: !structuredRecipe,
+                        voiceAliases: "reset recipe reset form clear form",
+                      },
+                    ]}
                   />
                 </div>
               )}
@@ -3479,10 +3708,14 @@ function ImportPage() {
                                 ? "bg-foreground"
                                 : "bg-foreground hover:bg-clay"
                             }`}
-                            onClick={() => void handleStructureManualText()}
-                            disabled={
-                              isManualTextStructuring || isManualSaving || !canStructureWithLlm
-                            }
+                            onClick={() => {
+                              if (!canStructureWithLlm) {
+                                promptConfigureApiKey("llm", t, navigate);
+                                return;
+                              }
+                              void handleStructureManualText();
+                            }}
+                            disabled={isManualTextStructuring || isManualSaving}
                             type="button"
                           >
                             {isManualTextStructuring ? (
@@ -3857,7 +4090,7 @@ function ImportPage() {
                     onSave={() => void handleSaveManual()}
                     disabled={isManualSaving}
                     saving={isManualSaving}
-                    actionsPosition="after-save"
+                    actionsPosition="before-save"
                     actions={[
                       {
                         label: t("import.manualReset"),
@@ -3872,7 +4105,9 @@ function ImportPage() {
             </div>
 
             {showImportSidePanel && (
-              <div className="min-w-0 lg:col-span-4">
+              <div
+                className={`min-w-0 ${shouldPrioritizeImportSidePanel ? "order-1 lg:order-2" : ""} lg:col-span-4`}
+              >
                 {mode === "video" ? (
                   <div className="space-y-4 lg:sticky lg:top-24">
                     {showGuidedCover && previewRecipe ? (
@@ -3980,9 +4215,7 @@ function ImportPage() {
 
                             <AppTooltip
                               content={t("import.aiGenerateCover")}
-                              disabled={
-                                isGeneratingCover || stage === "saving" || !canGenerateAiCover
-                              }
+                              disabled={isGeneratingCover || stage === "saving"}
                             >
                               <button
                                 className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
@@ -3992,9 +4225,7 @@ function ImportPage() {
                                   if (stage !== "saving") void handleRegenerateCover();
                                 }}
                                 onKeyDown={(event) => event.stopPropagation()}
-                                disabled={
-                                  isGeneratingCover || stage === "saving" || !canGenerateAiCover
-                                }
+                                disabled={isGeneratingCover || stage === "saving"}
                                 type="button"
                                 aria-label={t("import.aiGenerateCover")}
                                 data-voice-label={t("import.aiGenerateCover")}
@@ -4020,33 +4251,6 @@ function ImportPage() {
                           </div>
 
                           <VoiceHint>{t("import.coverVoiceHint")}</VoiceHint>
-
-                          <button
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
-                            onClick={() => void handleSaveVideo()}
-                            disabled={stage === "saving" || stage === "done"}
-                            data-voice-label={t("import.saveToRecipes")}
-                            data-voice-aliases="save to recipes save recipe"
-                          >
-                            {stage === "saving" ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" /> {t("import.saving")}
-                              </>
-                            ) : stage === "done" ? (
-                              <>
-                                <CheckCircle2 className="h-4 w-4" /> {t("import.saved")}
-                              </>
-                            ) : (
-                              <>
-                                <VoiceBadge
-                                  className="!border-background/40 !bg-transparent !text-background !opacity-100"
-                                  n={2}
-                                />
-
-                                {t("import.saveToRecipes")}
-                              </>
-                            )}
-                          </button>
                         </div>
                       </div>
                     ) : null}
@@ -4159,9 +4363,7 @@ function ImportPage() {
 
                           <AppTooltip
                             content={t("import.aiGenerateCover")}
-                            disabled={
-                              isManualGeneratingCover || isManualSaving || !canGenerateAiCover
-                            }
+                            disabled={isManualGeneratingCover || isManualSaving}
                           >
                             <button
                               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
@@ -4171,9 +4373,7 @@ function ImportPage() {
                                 if (!isManualSaving) void handleRegenerateManualCover();
                               }}
                               onKeyDown={(event) => event.stopPropagation()}
-                              disabled={
-                                isManualGeneratingCover || isManualSaving || !canGenerateAiCover
-                              }
+                              disabled={isManualGeneratingCover || isManualSaving}
                               type="button"
                               aria-label={t("import.aiGenerateCover")}
                               data-voice-label={t("import.aiGenerateCover")}
@@ -4272,9 +4472,12 @@ function ImportPage() {
                       data-voice-aliases="start processing process video extract recipe"
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (!hasElevenLabsKey) {
+                          promptConfigureApiKey("elevenlabs", t, navigate);
+                          return;
+                        }
                         void startPipeline(pendingMediaFile);
                       }}
-                      disabled={!hasElevenLabsKey}
                       type="button"
                     >
                       <Wand2 className="h-4 w-4" strokeWidth={1.75} />

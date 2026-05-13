@@ -69,7 +69,7 @@ export function RecipeEditShortcuts({
 
   return (
     <>
-      <div aria-hidden="true" className="mt-6 h-44 md:h-24" />
+      <div aria-hidden="true" className="mt-6 h-56 sm:h-44 md:h-24" />
       <div
         className={`group/shortcuts fixed inset-x-0 bottom-0 z-40 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-10 sm:px-6 md:pointer-events-auto ${className}`}
       >

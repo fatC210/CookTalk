@@ -25,6 +25,7 @@ import {
   getConfiguredLLMService,
   type RecipePayload,
 } from "@/lib/llm";
+import { navigateToSettings } from "@/lib/api-key-prompts";
 import { synthesizeWithElevenLabs } from "@/lib/voice-pipeline";
 import { cn } from "@/lib/utils";
 import {
@@ -661,7 +662,7 @@ function HomePage() {
     toast.error(assistantCopy.elevenLabsKeyRequired, {
       action: {
         label: assistantCopy.settingsAction,
-        onClick: () => void navigate({ to: "/settings" }),
+        onClick: () => navigateToSettings(navigate),
       },
     });
   }, [assistantCopy, navigate]);
@@ -670,7 +671,7 @@ function HomePage() {
     toast.error(assistantCopy.llmKeyRequired, {
       action: {
         label: assistantCopy.settingsAction,
-        onClick: () => void navigate({ to: "/settings" }),
+        onClick: () => navigateToSettings(navigate),
       },
     });
   }, [assistantCopy, navigate]);

@@ -620,7 +620,12 @@
       "imageValidationFailed": "Image generation API settings validation failed. Check the key, endpoint, and model.",
       "imageEndpointRequired": "Image generation endpoint is required when image settings are filled",
       "imageKeyRequired": "Image generation API key is required when image settings are filled",
-      "imageModelRequired": "Image generation model is required when image settings are filled"
+      "imageModelRequired": "Image generation model is required when image settings are filled",
+      "configureRequired": {
+        "elevenlabs": "Configure an ElevenLabs API key in Settings before using this feature.",
+        "llm": "Configure an LLM API key in Settings before using this feature.",
+        "imagegen": "Configure image generation API settings before generating covers."
+      }
     },
     "apiKeysDesc": "Encrypted with AES-GCM and stored locally. Never sent anywhere except the providers below.",
     "elevenLabsKey": "ElevenLabs API key",

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { SiteHeader } from "@/components/site-header";
 import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
@@ -24,6 +24,7 @@ import { db, addVoice, deleteVoice, getVoicePreviewAudio, saveVoicePreviewAudio 
 import type { Voice } from "@/lib/db";
 import { ElevenLabsService } from "@/lib/elevenlabs";
 import { getApiKey } from "@/lib/crypto";
+import { promptConfigureApiKey } from "@/lib/api-key-prompts";
 import i18n from "@/lib/i18n";
 import {
   formatElevenLabsVoiceDisplayLabel,
@@ -136,6 +137,7 @@ function isVoiceCommandMatch(text: string, pattern: RegExp) {
 
 function VoicesPage() {
   const { i18n: activeI18n, t } = useTranslation();
+  const navigate = useNavigate();
   const clonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []) ?? [];
   const conversationVoiceId = useAppStore((s) => s.conversationVoiceId);
   const cookingVoiceId = useAppStore((s) => s.cookingVoiceId);
@@ -211,6 +213,11 @@ function VoicesPage() {
   const stopCardPreview = (event: MouseEvent) => event.stopPropagation();
 
   const openCloneDialog = () => {
+    if (!hasElevenLabsKey) {
+      promptConfigureApiKey("elevenlabs", t, navigate);
+      return;
+    }
+
     setShowDialog(true);
     setCloneStep("record");
     setIsRecording(false);
@@ -314,7 +321,10 @@ function VoicesPage() {
     setCloneStep("cloning");
     try {
       const apiKey = await getApiKey("elevenlabs");
-      if (!apiKey) throw new Error(t("voices.elevenLabsKeyMissingFull"));
+      if (!apiKey) {
+        promptConfigureApiKey("elevenlabs", t, navigate);
+        throw new Error(t("voices.elevenLabsKeyMissingFull"));
+      }
 
       const service = new ElevenLabsService(apiKey);
       const result = await service.cloneVoice(voiceName.trim(), [audioBlob]);
@@ -433,7 +443,10 @@ function VoicesPage() {
         getClonedPreviewOwnerKey(voice),
         async () => {
           const apiKey = await getApiKey("elevenlabs");
-          if (!apiKey) throw new Error(t("voices.elevenLabsKeyMissingShort"));
+          if (!apiKey) {
+            promptConfigureApiKey("elevenlabs", t, navigate);
+            throw new Error(t("voices.elevenLabsKeyMissingShort"));
+          }
 
           return new ElevenLabsService(apiKey).textToSpeech(
             t("voices.previewText"),
@@ -509,7 +522,10 @@ function VoicesPage() {
         }
 
         const apiKey = await getApiKey("elevenlabs");
-        if (!apiKey) throw new Error(t("voices.elevenLabsKeyMissingFull"));
+        if (!apiKey) {
+          promptConfigureApiKey("elevenlabs", t, navigate);
+          throw new Error(t("voices.elevenLabsKeyMissingFull"));
+        }
 
         return new ElevenLabsService(apiKey).textToSpeech(t("voices.previewPresetText"), voiceId);
       });
@@ -809,12 +825,12 @@ function VoicesPage() {
       <SiteHeader />
 
       <section className="page-hero">
-        <div className="page-hero-container flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div className="page-hero-container flex flex-row items-center justify-between gap-3">
+          <div className="min-w-0">
             <h1 className="page-title">{t("voices.title")}</h1>
           </div>
           <button
-            className="inline-flex items-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:px-5"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-foreground px-3 py-2 text-sm text-background hover:bg-clay sm:gap-2 sm:px-5 sm:py-2.5"
             onClick={openCloneDialog}
             type="button"
             data-voice-label={t("voices.cloneNew")}
@@ -859,9 +875,9 @@ function VoicesPage() {
                   data-voice-aliases={`play ${v.name} preview ${v.name} pause ${v.name}`}
                   onClick={() => void handlePreviewVoice(v)}
                   onKeyDown={(event) => handleCardKeyDown(event, () => void handlePreviewVoice(v))}
-                  className="group/voice-card relative flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-4 py-4 pb-14 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pr-36"
+                  className="group/voice-card relative flex cursor-pointer items-center gap-3 rounded-2xl border border-border bg-card px-4 py-4 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:justify-between sm:px-5 sm:pr-36"
                 >
-                  <VoiceRoleActionStack className="bottom-3 top-auto flex-row sm:top-1/2 sm:-translate-y-1/2">
+                  <VoiceRoleActionStack className="static order-3 shrink-0 flex-row items-center sm:absolute sm:top-1/2 sm:order-none sm:-translate-y-1/2">
                     <VoiceRoleButton
                       isSelected={conversationVoiceId === v.elevenLabsVoiceId}
                       disabled={!v.elevenLabsVoiceId}
@@ -913,7 +929,7 @@ function VoicesPage() {
                     </AppTooltip>
                   </VoiceRoleActionStack>
 
-                  <div className="flex w-full min-w-0 items-start gap-3 sm:w-auto sm:items-center">
+                  <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
                     <VoiceBadge n={i + 1} className="shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="break-words font-display text-sm leading-snug sm:truncate sm:text-base">
@@ -927,7 +943,7 @@ function VoicesPage() {
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                  <div className="order-2 flex shrink-0 items-center gap-1 sm:order-none">
                     {isLoadingPreview ? (
                       <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
                     ) : isPlayingPreview ? (
@@ -1025,9 +1041,9 @@ function VoicesPage() {
                         () => void handlePreviewElevenLabsVoice(voice.voice_id, previewUrl),
                       )
                     }
-                    className="group/voice-card relative flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-4 py-4 pb-14 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pr-24"
+                    className="group/voice-card relative flex cursor-pointer items-center gap-3 rounded-2xl border border-border bg-card px-4 py-4 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:justify-between sm:px-5 sm:pr-24"
                   >
-                    <VoiceRoleActionStack className="bottom-3 top-auto flex-row sm:top-1/2 sm:-translate-y-1/2">
+                    <VoiceRoleActionStack className="static order-3 shrink-0 flex-row items-center sm:absolute sm:top-1/2 sm:order-none sm:-translate-y-1/2">
                       <VoiceRoleButton
                         isSelected={conversationVoiceId === voice.voice_id}
                         Icon={MessageCircle}
@@ -1057,7 +1073,7 @@ function VoicesPage() {
                         }}
                       />
                     </VoiceRoleActionStack>
-                    <div className="flex w-full min-w-0 items-start gap-3 sm:w-auto sm:items-center">
+                    <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
                       <VoiceBadge n={i + 1} className="shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="break-words font-display text-sm leading-snug sm:truncate sm:text-base">
@@ -1070,7 +1086,7 @@ function VoicesPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                    <div className="order-2 flex shrink-0 items-center gap-1 sm:order-none">
                       {isLoadingPreview ? (
                         <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
                       ) : isPlayingPreview ? (

@@ -488,8 +488,8 @@
     "pasteImportCompactDescription": "把一整段菜谱交给 AI 整理，完成后会回填表单。",
     "mediaImportCompact": "媒体导入",
     "textTaskFallbackName": "粘贴整理菜谱",
-    "videoTaskNotReady": "\u83dc\u8c31\u6574\u7406\u5b8c\u6210\u5e76\u56de\u586b\u5230\u8868\u5355\u540e\uff0c\u624d\u80fd\u5207\u6362\u5230\u8fd9\u4e2a\u4efb\u52a1\u3002",
-    "videoTaskNotReadyInline": "\u6574\u7406\u5b8c\u6210\u540e\u53ef\u6253\u5f00"
+    "videoTaskNotReady": "菜谱整理完成并回填到表单后，才能切换到这个任务。",
+    "videoTaskNotReadyInline": "整理完成后可打开"
   },
   "voices": {
     "title": "声音库",
@@ -620,7 +620,12 @@
       "imageValidationFailed": "图像生成 API 设置验证失败，请检查密钥、端点和模型",
       "imageEndpointRequired": "填写图像生成设置时，端点为必填项",
       "imageKeyRequired": "填写图像生成设置时，API 密钥为必填项",
-      "imageModelRequired": "填写图像生成设置时，模型为必填项"
+      "imageModelRequired": "填写图像生成设置时，模型为必填项",
+      "configureRequired": {
+        "elevenlabs": "请先在设置里配置 ElevenLabs API Key，才能使用这个功能。",
+        "llm": "请先在设置里配置 LLM API Key，才能使用这个功能。",
+        "imagegen": "请先在设置里配置图像生成 API 设置，才能生成封面。"
+      }
     },
     "apiKeysDesc": "使用 AES-GCM 加密并本地存储，只会发送给下列服务商。",
     "elevenLabsKey": "ElevenLabs API 密钥",

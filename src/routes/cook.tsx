@@ -163,6 +163,7 @@ function CookPage() {
   const { activeTimers, cancelTimer, extendTimer, startTimer, setOnCompleted } = useTimers();
 
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const stepDescriptionRef = useRef<HTMLHeadingElement | null>(null);
   const qaScrollRef = useRef<HTMLDivElement | null>(null);
   const qaMessageIdRef = useRef(0);
   const activeQaRequestsRef = useRef(0);
@@ -624,6 +625,46 @@ function CookPage() {
   }, [isQaSubmitting, qaMessages]);
 
   useEffect(() => {
+    const scrollElement = stepDescriptionRef.current;
+    if (!scrollElement) return;
+
+    scrollElement.scrollTo({ top: 0 });
+
+    const maxScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
+    const shouldAutoScroll = maxScrollTop > 2;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (!shouldAutoScroll || prefersReducedMotion) return;
+
+    let frameId: number | null = null;
+    let startedAt: number | null = null;
+    const scrollDelayMs = 900;
+    const scrollSpeedPxPerSecond = 18;
+    const durationMs = Math.max(3500, (maxScrollTop / scrollSpeedPxPerSecond) * 1000);
+
+    const timeoutId = window.setTimeout(() => {
+      const animateScroll = (timestamp: number) => {
+        startedAt ??= timestamp;
+        const progress = Math.min((timestamp - startedAt) / durationMs, 1);
+        scrollElement.scrollTop = maxScrollTop * progress;
+
+        if (progress < 1) {
+          frameId = window.requestAnimationFrame(animateScroll);
+        }
+      };
+
+      frameId = window.requestAnimationFrame(animateScroll);
+    }, scrollDelayMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [safeStep, step?.description]);
+
+  useEffect(() => {
     isClosingRef.current = false;
 
     return () => {
@@ -773,10 +814,13 @@ function CookPage() {
             <div className="text-sm text-muted-foreground sm:text-base">
               CookTalk · {voiceModeLabel}
             </div>
-            <h1 className="mt-4 max-h-[14rem] overflow-y-auto break-words font-display text-[clamp(1.8rem,8vw,2.45rem)] font-medium leading-[1.22] sm:mt-5 sm:max-h-[18rem] sm:text-[clamp(2.35rem,5vw,4.05rem)] sm:leading-[1.14]">
+            <h1
+              ref={stepDescriptionRef}
+              className="mt-4 max-h-[14rem] overflow-y-auto break-words font-display text-[clamp(1.8rem,8vw,2.45rem)] font-medium leading-[1.22] sm:mt-5 sm:max-h-[18rem] sm:text-[clamp(2.35rem,5vw,4.05rem)] sm:leading-[1.14]"
+            >
               <span>“</span>
               {descMain}
-              {descHighlight && <span className="text-clay"> {descHighlight}</span>}
+              {descHighlight && <span> {descHighlight}</span>}
               <span>”</span>
             </h1>
             {step?.tips && (

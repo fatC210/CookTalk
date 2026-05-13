@@ -139,23 +139,17 @@
 @layer components {
   .scrollbar-hover {
     scrollbar-gutter: stable;
-    scrollbar-width: none;
+    scrollbar-color: transparent transparent;
+    scrollbar-width: thin;
   }
 
   .scrollbar-hover:hover,
   .scrollbar-hover:focus-within {
     scrollbar-color: color-mix(in oklch, var(--color-clay) 65%, transparent) transparent;
-    scrollbar-width: thin;
   }
 
   .scrollbar-hover::-webkit-scrollbar {
     display: block;
-    width: 0;
-    height: 0;
-  }
-
-  .scrollbar-hover:hover::-webkit-scrollbar,
-  .scrollbar-hover:focus-within::-webkit-scrollbar {
     width: 0.625rem;
     height: 0.625rem;
   }

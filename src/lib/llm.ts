@@ -1151,6 +1151,12 @@ const HEURISTIC_FILLER_PATTERN =
   /(?:大家好|hello|hi everyone|点赞|点个赞|关注|收藏|转发|评论|留言|订阅|感谢观看|下期见|记得关注|我是|欢迎来到|祝大家|天天开心|背景音乐|sponsor|sponsored|subscribe|like and subscribe)/i;
 const HEAT_OR_TIP_PATTERN =
   /(?:小火|中火|大火|微火|全程|注意|不要|别|记得|避免|low heat|medium heat|high heat|be careful|make sure)/i;
+const EN_STEP_START_PATTERN =
+  /(?:start by|finely\s+chop|heat|saute|add|pour|stir|season|lower|cover|let|cook|drain|toss|finish|serve|meanwhile|preheat|bake|roast|boil|simmer|fry|grill|steam|marinate|mix|blend|whisk|knead|slice|dice|chop|peel|crush)/i;
+const EN_STEP_BOUNDARY_PATTERN = new RegExp(
+  String.raw`\b(?:meanwhile|then|next|after(?:wards)?|finally|lastly),?\s+|(?<=\.)\s+(?=(?:start by|heat|saute|add|pour|stir|season|lower|cover|let|cook|drain|toss|finish|serve|preheat|bake|roast|boil|simmer|fry|grill|steam|marinate|mix|blend|whisk|knead|slice|dice|chop|peel|crush)\b)`,
+  "gi",
+);
 
 const NON_RECIPE_CHATTER_PATTERN =
   /(?:大家好|朋友们|家人们|孩子在家|阿建|分享|帮助|点赞|点个赞|关注|收藏|转发|评论|留言|订阅|感谢观看|下期见|祝大家|天天开心|美美地享用|不知道怎么做|非常地下饭|比红烧肉|背景音乐|sponsor|sponsored|subscribe|like and subscribe|thanks for watching)/i;
@@ -1175,7 +1181,11 @@ const EN_NARRATIVE_NON_INGREDIENT_PATTERN =
   /(?:immersion blender|blender|sieve|bowl|bowls|pot|pan|knife|spoon|heat|evening|texture|side|top|everything)/i;
 
 function hasCookingAction(value: string): boolean {
-  return COOKING_ACTION_PATTERN.test(value) || countCookingContentCues(value) > 0;
+  return (
+    COOKING_ACTION_PATTERN.test(value) ||
+    EN_STEP_START_PATTERN.test(value) ||
+    countCookingContentCues(value) > 0
+  );
 }
 
 function isLikelyNonRecipeChatter(value: string): boolean {
@@ -1205,6 +1215,7 @@ function isLikelyCookingStepText(value: string): boolean {
   if (isLikelyNonRecipeChatter(text)) return false;
   return (
     hasCookingAction(text) ||
+    EN_STEP_START_PATTERN.test(text) ||
     HEAT_OR_TIP_PATTERN.test(text) ||
     Boolean(parseDurationToSeconds(text))
   );
@@ -2030,29 +2041,57 @@ function normalizeHeuristicSentence(value: string): string {
 function splitHeuristicSegments(text: string): string[] {
   const normalized = text
     .replace(/\r/g, "\n")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(
       /(?:Source title|Source URL|Title|Yield|Cuisine|Category|Total time|Cook time|Prep time)\s*:\s*/gi,
       "\n",
     )
     .replace(/(?:Instructions|步骤|做法)\s*:\s*/gi, "\n")
     .replace(/[。！？!?；;]/g, "\n")
-    .replace(/\. +(?=(?:Roughly|Add|Bring|Tear|Pass|Serve|Blend|Reheat)\b)/g, "\n")
+    .replace(
+      /\. +(?=(?:Roughly|Start|Heat|Saute|Add|Pour|Stir|Season|Lower|Cover|Let|Meanwhile|Cook|Drain|Toss|Finish|Bring|Tear|Pass|Serve|Blend|Reheat)\b)/g,
+      "\n",
+    )
     .replace(/([，,])\s*(然后|再|接着|随后|最后|最后再|下一步)/g, "\n$2")
     .replace(
-      /([，,])\s*(?=(?:then\s+)?(?:soften|add|bring|reduce|let|tear|season|blend|pass|reheat|serve)\b)/gi,
+      /([，,;])\s*(?=(?:then\s+)?(?:start by|heat|saute|soften|add|pour|stir|season|lower|cover|bring|reduce|let|tear|blend|pass|reheat|cook|drain|toss|finish|serve)\b)/gi,
       "\n",
     )
     .replace(
-      /\bthen\s+(?=(?:soften|add|bring|reduce|let|tear|season|blend|pass|reheat|serve)\b)/gi,
+      /\bthen\s+(?=(?:soften|add|bring|reduce|let|tear|season|blend|pass|reheat|cook|drain|toss|finish|serve)\b)/gi,
       "",
     )
+    .replace(EN_STEP_BOUNDARY_PATTERN, "\n")
     .replace(/(?:\n|^)\s*(?:\d+[.)、]|[一二三四五六七八九十]+[、.])\s*/g, "\n");
 
   return normalized
     .split(/\n+/)
     .flatMap((segment) => segment.split(/(?<=\S)\s{2,}/))
+    .flatMap(splitLongEnglishInstructionSegment)
     .map((segment) => normalizeHeuristicSentence(segment))
     .filter(Boolean);
+}
+
+function splitLongEnglishInstructionSegment(segment: string): string[] {
+  const source = segment.trim();
+  if (source.length < 180 || !/[A-Za-z]/.test(source) || /[\u3400-\u9fff]/.test(source)) {
+    return [source];
+  }
+
+  const sentences = source
+    .split(/(?<=[.!?])\s+(?=[A-Z])/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (sentences.length > 1) return sentences;
+
+  const clauses = source
+    .split(
+      /(?<=\S)\s+(?=(?:Heat|Saute|Add|Pour|Stir|Season|Lower|Cover|Let|Meanwhile|Cook|Drain|Toss|Finish|Serve)\b)/,
+    )
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return clauses.length > 1 ? clauses : [source];
 }
 
 function isLikelyRecipeStep(text: string): boolean {
@@ -2062,6 +2101,7 @@ function isLikelyRecipeStep(text: string): boolean {
   return (
     hasCookingAction(text) ||
     HEURISTIC_STEP_PATTERN.test(text) ||
+    EN_STEP_START_PATTERN.test(text) ||
     HEAT_OR_TIP_PATTERN.test(text) ||
     Boolean(parseDurationToSeconds(text))
   );

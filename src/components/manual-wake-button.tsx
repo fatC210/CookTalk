@@ -1,12 +1,15 @@
 import { useEffect } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { promptConfigureApiKey } from "@/lib/api-key-prompts";
 import { useAppStore } from "@/stores/app-store";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 export function ManualWakeButton({ className }: { className?: string }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const manualWakeActive = useAppStore((s) => s.manualWakeActive);
   const manualWakeExpiresAt = useAppStore((s) => s.manualWakeExpiresAt);
   const triggerManualWake = useAppStore((s) => s.triggerManualWake);
@@ -24,19 +27,21 @@ export function ManualWakeButton({ className }: { className?: string }) {
   const label = manualWakeActive ? t("app.awake") : t("app.manualWake");
 
   const handleClick = () => {
-    if (!hasElevenLabsKey) return;
+    if (!hasElevenLabsKey) {
+      promptConfigureApiKey("elevenlabs", t, navigate);
+      return;
+    }
     triggerManualWake();
     window.dispatchEvent(new CustomEvent("cooktalk:manual-wake"));
   };
 
   return (
-    <AppTooltip content={label} disabled={!hasElevenLabsKey}>
+    <AppTooltip content={label}>
       <button
         type="button"
         onClick={handleClick}
         aria-pressed={manualWakeActive}
         aria-label={label}
-        disabled={!hasElevenLabsKey}
         className={cn(
           "inline-flex h-9 items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
           manualWakeActive

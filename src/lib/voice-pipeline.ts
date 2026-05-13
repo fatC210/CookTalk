@@ -113,6 +113,34 @@ const cnDigitMap: Record<string, number> = {
   十: 10,
 };
 
+const enDigitMap: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+};
+
+const enSpokenNumberPattern =
+  "a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty";
+
 export function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   if (typeof window === "undefined") return null;
   return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
@@ -176,7 +204,7 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
     return { type: "extend_timer", seconds: parseDurationSeconds(text) ?? 60 };
   }
 
-  if (/(计时|定时|timer|remind)/i.test(text)) {
+  if (/(计时|定时|timer|remind)/i.test(text) || isEnglishSetTimerIntent(text)) {
     return {
       type: "set_timer",
       seconds: parseDurationSeconds(text) ?? 60,
@@ -369,14 +397,40 @@ function parseDurationSeconds(text: string): number | null {
     /([0-9]+|[一二两三四五六七八九十]+)\s*(?:分钟|分|minute|minutes)/i,
   );
   const secondMatch = text.match(/([0-9]+|[一二两三四五六七八九十]+)\s*(?:秒|second|seconds)/i);
-  const minutes = minuteMatch?.[1] ? parseSpokenNumber(minuteMatch[1]) : 0;
-  const seconds = secondMatch?.[1] ? parseSpokenNumber(secondMatch[1]) : 0;
+  const englishMinuteMatch = text.match(
+    new RegExp(`\b(${enSpokenNumberPattern})\s*(?:minute|minutes|min|mins|m)\b`, "i"),
+  );
+  const englishSecondMatch = text.match(
+    new RegExp(`\b(${enSpokenNumberPattern})\s*(?:second|seconds|sec|secs|s)\b`, "i"),
+  );
+  const minutes = minuteMatch?.[1]
+    ? parseSpokenNumber(minuteMatch[1])
+    : englishMinuteMatch?.[1]
+      ? parseSpokenNumber(englishMinuteMatch[1])
+      : 0;
+  const seconds = secondMatch?.[1]
+    ? parseSpokenNumber(secondMatch[1])
+    : englishSecondMatch?.[1]
+      ? parseSpokenNumber(englishSecondMatch[1])
+      : 0;
   const total = minutes * 60 + seconds;
   return total > 0 ? total : null;
 }
 
+function isEnglishSetTimerIntent(text: string): boolean {
+  if (!parseDurationSeconds(text)) return false;
+  const duration = `(?:${enSpokenNumberPattern}|[0-9]+)\\s*(?:minute|minutes|min|mins|m|second|seconds|sec|secs|s)`;
+  return (
+    /\b(?:set|start|create|make|run)\s+(?:a\s*)?(?:timer|countdown)\b/i.test(text) ||
+    new RegExp(`\\btime\\s+(?:me\\s+|for\\s+me\\s+)?${duration}\\b`, "i").test(text) ||
+    new RegExp(`\\b(?:count\\s+down|countdown)\\s+${duration}\\b`, "i").test(text)
+  );
+}
+
 function parseSpokenNumber(raw: string): number {
-  if (/^\d+$/.test(raw)) return Number(raw);
+  const normalized = raw.toLowerCase();
+  if (/^\d+$/.test(normalized)) return Number(normalized);
+  if (normalized in enDigitMap) return enDigitMap[normalized];
   if (raw === "十") return 10;
   if (raw.includes("十")) {
     const [tensRaw, onesRaw] = raw.split("十");
@@ -402,6 +456,8 @@ function parseTimerLabel(text: string): string {
     .replace(/^(?:后|之后|以后|的时候)\s*/i, "")
     .replace(/(?:后|之后|以后|的时候)$/i, "")
     .replace(/^[\s"'“”‘’`，。！？、,.!?;；:：-]+|[\s"'“”‘’`，。！？、,.!?;；:：-]+$/g, "")
+    .replace(new RegExp(`\\b(?:${enSpokenNumberPattern}|[0-9]+)\\s*(?:minute|minutes|min|mins|m|second|seconds|sec|secs|s)\\b`, "gi"), "")
+    .replace(/\b(?:please|time|set|start|create|make|run|a|an|timer|timers|countdown|remind|reminder|for|me)\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 
