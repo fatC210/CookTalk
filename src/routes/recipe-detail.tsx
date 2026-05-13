@@ -113,20 +113,6 @@ function recipeNeedsContentUpdate(current: Recipe, cleaned: Recipe): boolean {
   );
 }
 
-function formatTimeAgo(
-  ts: number | undefined,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-): string {
-  if (!ts) return t("common.never");
-  const diffMs = Date.now() - ts;
-  const diffDays = Math.floor(diffMs / 86400000);
-  if (diffDays === 0) return t("common.today");
-  if (diffDays === 1) return t("common.yesterday");
-  if (diffDays < 7) return t("common.daysAgo", { count: diffDays });
-  const diffWeeks = Math.floor(diffDays / 7);
-  return t("common.weeksAgo", { count: diffWeeks });
-}
-
 function formatSaved(
   ts: number | undefined,
   locale: string,
@@ -767,20 +753,11 @@ function DetailPage() {
     tags = {},
     voiceId,
     createdAt,
-    lastCookedAt,
-    coverSource,
   } = recipe;
   const totalMin =
     tags.totalTimeMin ??
     steps.reduce((s, st) => s + (st.durationSec ? Math.ceil(st.durationSec / 60) : 0), 0);
   const difficultyLabel = tags.difficulty ? t(`recipes.difficulty.${tags.difficulty}`) : "—";
-  const coverLabel = t(
-    coverSource === "ai"
-      ? "recipeDetail.coverAi"
-      : coverSource === "user"
-        ? "recipeDetail.coverUser"
-        : "recipeDetail.coverDefault",
-  );
   const firstIngredientName = ingredients[0]?.name ?? t("recipeDetail.ingredient");
   const selectedVoice = voiceOptions.find((option) => option.value === voiceId);
   const defaultCookingVoice =
@@ -799,6 +776,8 @@ function DetailPage() {
     ? t("settings.voice.loadingElevenLabsVoices")
     : elevenLabsVoicesError;
   const canGenerateCover = hasLlmKey && hasImageGenKey;
+  const recipeSourceLabel =
+    recipe.sourceUrl || recipe.rawTranscript ? t("recipeDetail.imported") : t("recipeDetail.manual");
   const showDetailIngredients = shouldShowIngredients(detailDisplayMode);
   const showDetailSteps = shouldShowSteps(detailDisplayMode);
   const showEditIngredients = shouldShowIngredients(editDisplayMode);
@@ -819,42 +798,55 @@ function DetailPage() {
           </button>
         }
       />
-      <div className="space-y-2">
+      <div className="space-y-3">
         {editIngredients.map((ingredient, index) => (
           <div
             key={index}
-            className="group grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
+            className="group rounded-2xl border border-border bg-background p-4 shadow-sm transition-all duration-150 hover:border-clay/70 hover:shadow-md"
             onBlur={(event) => handleEditIngredientBlur(event, index)}
           >
-            <Input
-              ref={(node) => {
-                editIngredientNameRefs.current[index] = node;
-              }}
-              value={ingredient.name}
-              placeholder={t("import.manualIngredientName")}
-              onChange={(event) => updateEditIngredient(index, { name: event.target.value })}
-            />
-            <Input
-              value={ingredient.amount}
-              placeholder={t("import.manualIngredientAmount")}
-              onChange={(event) => updateEditIngredient(index, { amount: event.target.value })}
-            />
-            {editIngredients.length > 1 && (
-              <button
-                type="button"
-                aria-label={t("common.delete")}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                onClick={() =>
-                  setEditIngredients((current) =>
-                    current.length > 1
-                      ? current.filter((_, itemIndex) => itemIndex !== index)
-                      : [createEmptyIngredient()],
-                  )
-                }
-              >
-                <X className="h-4 w-4" strokeWidth={1.75} />
-              </button>
-            )}
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  aria-hidden
+                  className="-ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent bg-muted/50 text-muted-foreground transition-colors group-hover:bg-muted group-hover:text-foreground"
+                >
+                  <ChefHat className="h-4 w-4" strokeWidth={1.75} />
+                </span>
+                <span className="font-display text-lg">{index + 1}</span>
+              </div>
+              {editIngredients.length > 1 && (
+                <button
+                  type="button"
+                  aria-label={t("common.delete")}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground hover:border-destructive hover:text-destructive sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                  onClick={() =>
+                    setEditIngredients((current) =>
+                      current.length > 1
+                        ? current.filter((_, itemIndex) => itemIndex !== index)
+                        : [createEmptyIngredient()],
+                    )
+                  }
+                >
+                  <X className="h-4 w-4" strokeWidth={1.75} />
+                </button>
+              )}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input
+                ref={(node) => {
+                  editIngredientNameRefs.current[index] = node;
+                }}
+                value={ingredient.name}
+                placeholder={t("import.manualIngredientName")}
+                onChange={(event) => updateEditIngredient(index, { name: event.target.value })}
+              />
+              <Input
+                value={ingredient.amount}
+                placeholder={t("import.manualIngredientAmount")}
+                onChange={(event) => updateEditIngredient(index, { amount: event.target.value })}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -862,7 +854,7 @@ function DetailPage() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="flex min-h-screen flex-col overflow-x-hidden">
       <SiteHeader />
 
       {/* Hero */}
@@ -872,8 +864,8 @@ function DetailPage() {
           aria-hidden
         />
         <div className="relative mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-14">
-          <div className="grid gap-10 lg:grid-cols-12">
-            <div className="lg:col-span-7">
+          <div className="grid min-w-0 gap-6 lg:grid-cols-12 lg:grid-rows-[auto_1fr] lg:gap-10">
+            <div className="min-w-0 lg:col-span-7 lg:row-start-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <Link
                   to="/recipes"
@@ -894,114 +886,10 @@ function DetailPage() {
               <h1 className="mt-4 font-display text-[clamp(2.4rem,12vw,4.5rem)] font-semibold leading-[1.05] tracking-tight sm:text-6xl">
                 {title}
               </h1>
-              <p className="mt-4 max-w-lg text-muted-foreground">
-                {t("recipeDetail.summary", { count: steps.length })}
-              </p>
-
-              <div className="mt-6 flex flex-wrap items-start gap-2 text-xs">
-                {totalMin > 0 && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
-                    <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />{" "}
-                    {t("recipeDetail.totalTime", { count: totalMin })}
-                  </span>
-                )}
-                {tags.difficulty && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
-                    <Flame className="h-3.5 w-3.5" strokeWidth={1.75} /> {difficultyLabel}
-                  </span>
-                )}
-                {tags.cuisine && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
-                    <ChefHat className="h-3.5 w-3.5" strokeWidth={1.75} /> {tags.cuisine}
-                  </span>
-                )}
-                <div className="flex w-full flex-col gap-1 sm:w-[22rem] lg:w-[24rem]">
-                  <Select
-                    value={displayedVoiceId}
-                    onValueChange={(nextValue) => void handleRecipeVoiceChange(nextValue)}
-                    disabled={voiceSelectDisabled}
-                  >
-                    <SelectTrigger
-                      aria-label={t("recipeDetail.voiceSelectLabel")}
-                      className="h-auto rounded-full border-clay bg-clay/10 px-3 py-1.5 text-xs text-clay shadow-none [&>span]:line-clamp-1"
-                    >
-                      <Volume2 className="mr-1.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
-                      <SelectValue placeholder={defaultVoiceLabel} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {voiceOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.displayLabel}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="min-h-[1rem] text-[11px] leading-4 text-muted-foreground">
-                    {voiceStatusText ?? ""}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 min-h-[1rem] text-xs text-muted-foreground">
-                {voiceHelperText}
-              </div>
-
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                <button
-                  onClick={() => handleStartCooking()}
-                  className="group inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-7 py-4 text-base text-background hover:bg-clay sm:w-auto"
-                >
-                  <VoiceBadge
-                    n={1}
-                    className="!border-background/40 !text-background !bg-transparent !opacity-100"
-                  />
-                  <Play className="h-5 w-5" strokeWidth={1.75} />
-                  {t("recipeDetail.startCooking")}
-                </button>
-                <button
-                  onClick={openEditDialog}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-foreground/80 px-5 py-4 text-sm hover:bg-foreground hover:text-background sm:w-auto"
-                >
-                  <Pencil className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.edit")}
-                </button>
-                <button
-                  onClick={handleExport}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground sm:w-auto"
-                >
-                  <Share2 className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.export")}
-                </button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-destructive/40 px-5 py-4 text-sm text-destructive hover:bg-destructive hover:text-destructive-foreground sm:w-auto">
-                      <Trash2 className="h-4 w-4" strokeWidth={1.75} />{" "}
-                      {t("recipeDetail.deleteConfirm")}
-                    </button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>
-                        {t("recipeDetail.deleteTitle", { title })}
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {t("recipeDetail.deleteBody")}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={handleDelete}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      >
-                        {t("recipeDetail.deleteConfirm")}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-              <VoiceHint className="mt-4">{t("recipeDetail.voiceHint")}</VoiceHint>
             </div>
 
             {/* Cover */}
-            <div className="lg:col-span-5">
+            <div className="min-w-0 lg:col-span-5 lg:col-start-8 lg:row-span-2 lg:row-start-1">
               <div className="group/cover relative aspect-square overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-[#c4654a]/40 via-[#a0522d]/30 to-[#8b7355]/40 shadow-[var(--shadow-warm)]">
                 <input
                   ref={coverInputRef}
@@ -1039,7 +927,7 @@ function DetailPage() {
                         event.stopPropagation();
                         coverInputRef.current?.click();
                       }}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/70 bg-background/95 text-foreground shadow-[0_10px_24px_-10px_oklch(0.18_0.02_60_/_0.55)] ring-1 ring-black/15 backdrop-blur transition-colors hover:bg-foreground hover:text-background"
                     >
                       <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                     </button>
@@ -1056,7 +944,7 @@ function DetailPage() {
                         void handleGenerateCover();
                       }}
                       disabled={isGeneratingCover || !canGenerateCover}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-background/90 text-foreground shadow-sm backdrop-blur hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/70 bg-background/95 text-foreground shadow-[0_10px_24px_-10px_oklch(0.18_0.02_60_/_0.55)] ring-1 ring-black/15 backdrop-blur transition-colors hover:bg-foreground hover:text-background disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isGeneratingCover ? (
                         <RefreshCw className="h-4 w-4 animate-spin" strokeWidth={1.75} />
@@ -1066,13 +954,118 @@ function DetailPage() {
                     </button>
                   </AppTooltip>
                 </div>
-                <div className="pointer-events-none absolute bottom-4 left-4 right-4 z-10 flex items-center justify-between rounded-2xl bg-background/80 px-4 py-3 backdrop-blur">
-                  <div className="text-xs">
-                    <div className="text-muted-foreground">{coverLabel}</div>
+              </div>
+            </div>
+
+            <div className="min-w-0 lg:col-span-7 lg:row-start-2">
+              <div className="mt-6 flex min-w-0 max-w-full flex-wrap items-start gap-2 text-xs">
+                {totalMin > 0 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
+                    <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />{" "}
+                    {t("recipeDetail.totalTime", { count: totalMin })}
+                  </span>
+                )}
+                {tags.difficulty && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
+                    <Flame className="h-3.5 w-3.5" strokeWidth={1.75} /> {difficultyLabel}
+                  </span>
+                )}
+                {tags.cuisine && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
+                    <ChefHat className="h-3.5 w-3.5" strokeWidth={1.75} /> {tags.cuisine}
+                  </span>
+                )}
+                <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
+                  {t("recipeDetail.source")} · {recipeSourceLabel}
+                </span>
+                <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5">
+                  {t("recipeDetail.saved")} · {formatSaved(createdAt, i18n.language, t)}
+                </span>
+                <div className="flex w-full min-w-0 max-w-full flex-col gap-1 sm:w-[22rem] lg:w-[24rem]">
+                  <Select
+                    value={displayedVoiceId}
+                    onValueChange={(nextValue) => void handleRecipeVoiceChange(nextValue)}
+                    disabled={voiceSelectDisabled}
+                  >
+                    <SelectTrigger
+                      aria-label={t("recipeDetail.voiceSelectLabel")}
+                      className="h-auto min-w-0 max-w-full rounded-full border-clay bg-clay/10 px-3 py-1.5 text-xs text-clay shadow-none [&>span]:line-clamp-1"
+                    >
+                      <Volume2 className="mr-1.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                      <SelectValue placeholder={defaultVoiceLabel} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {voiceOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.displayLabel}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="min-h-[1rem] text-[11px] leading-4 text-muted-foreground">
+                    {voiceStatusText ?? ""}
                   </div>
                 </div>
               </div>
+              <div className="mt-2 min-h-[1rem] text-xs text-muted-foreground">
+                {voiceHelperText}
+              </div>
+
+              <div className="mt-8 flex min-w-0 max-w-full flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <button
+                  onClick={() => handleStartCooking()}
+                  className="group inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full bg-foreground px-7 py-4 text-base text-background hover:bg-clay sm:w-auto"
+                >
+                  <VoiceBadge
+                    n={1}
+                    className="!border-background/40 !text-background !bg-transparent !opacity-100"
+                  />
+                  <Play className="h-5 w-5" strokeWidth={1.75} />
+                  <span className="min-w-0 truncate">{t("recipeDetail.startCooking")}</span>
+                </button>
+                <button
+                  onClick={openEditDialog}
+                  className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-foreground/80 px-5 py-4 text-sm hover:bg-foreground hover:text-background sm:w-auto"
+                >
+                  <Pencil className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.edit")}
+                </button>
+                <button
+                  onClick={handleExport}
+                  className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground sm:w-auto"
+                >
+                  <Share2 className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.export")}
+                </button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-destructive bg-destructive/10 px-5 py-4 text-sm font-medium text-destructive shadow-sm transition-colors hover:bg-destructive hover:text-destructive-foreground sm:w-auto">
+                      <Trash2 className="h-4 w-4" strokeWidth={1.75} />{" "}
+                      {t("recipeDetail.deleteConfirm")}
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        {t("recipeDetail.deleteTitle", { title })}
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {t("recipeDetail.deleteBody")}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleDelete}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        {t("recipeDetail.deleteConfirm")}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+              <VoiceHint className="mt-4">{t("recipeDetail.voiceHint")}</VoiceHint>
             </div>
+
           </div>
         </div>
       </section>
@@ -1088,6 +1081,7 @@ function DetailPage() {
               ingredientsLabel={t("recipeContentDisplay.ingredientsOnly")}
               stepsLabel={t("recipeContentDisplay.stepsOnly")}
               ariaLabel={t("recipeContentDisplay.ariaLabel")}
+              className="w-full max-w-xs sm:w-auto sm:max-w-full"
             />
           </div>
 
@@ -1130,22 +1124,6 @@ function DetailPage() {
                     ))}
                   </ul>
 
-                  <div className="mt-6 rounded-2xl border border-dashed border-border bg-card p-4">
-                    <div className="text-xs text-muted-foreground">
-                      {t("recipeDetail.lastCooked")}
-                    </div>
-                    <div className="mt-1 font-display text-lg">
-                      {formatTimeAgo(lastCookedAt, t)}
-                    </div>
-                    <div className="mt-3 text-xs text-muted-foreground">
-                      {t("recipeDetail.source")} ·{" "}
-                      {recipe.sourceUrl || recipe.rawTranscript
-                        ? t("recipeDetail.imported")
-                        : t("recipeDetail.manual")}
-                      <br />
-                      {t("recipeDetail.saved")} · {formatSaved(createdAt, i18n.language, t)}
-                    </div>
-                  </div>
                 </div>
               </aside>
             )}
@@ -1157,21 +1135,21 @@ function DetailPage() {
                   <h2 className="font-display text-2xl">{t("recipeDetail.steps")}</h2>
                   <VoiceHint>{t("recipeDetail.stepsHint")}</VoiceHint>
                 </div>
-                <ol className="mt-4 space-y-3">
+                <ol className="mt-4 space-y-3 sm:space-y-4">
                   {steps.map((s, i) => (
                     <li
                       key={i}
-                      className="group relative flex min-h-28 flex-col gap-4 rounded-2xl border border-border bg-card p-4 hover:border-clay/60 sm:flex-row sm:items-center sm:gap-5 sm:p-5"
+                      className="group relative flex items-start gap-3 rounded-[1.35rem] border border-border/80 bg-card/90 p-3.5 shadow-sm transition-colors hover:border-clay/60 sm:min-h-28 sm:items-center sm:gap-5 sm:rounded-2xl sm:p-5"
                     >
                       <VoiceBadge
                         n={i + 1}
                         className="absolute left-4 top-4 !bg-card sm:-left-3 sm:top-1/2 sm:-translate-y-1/2"
                       />
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary font-display text-lg sm:h-12 sm:w-12 sm:text-xl">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-secondary/80 font-display text-base sm:h-12 sm:w-12 sm:rounded-xl sm:text-xl">
                         {i + 1}
                       </div>
-                      <div className="flex min-h-16 flex-1 flex-col justify-center">
-                        <p className="text-base leading-relaxed">{s.description}</p>
+                      <div className="flex min-w-0 flex-1 flex-col pt-1 sm:self-stretch sm:justify-center sm:pt-0">
+                        <p className="text-[15px] leading-7 sm:text-base sm:leading-relaxed">{s.description}</p>
                         {(s.durationSec || s.tips) && (
                           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                             {s.durationSec && (
@@ -1192,7 +1170,7 @@ function DetailPage() {
                         type="button"
                         aria-label={t("recipeDetail.startFromStep", { count: i + 1 })}
                         onClick={() => handleStartCooking(i)}
-                        className="inline-flex h-10 w-10 self-center items-center justify-center rounded-full border border-border bg-transparent text-foreground opacity-100 transition-opacity hover:border-clay hover:bg-transparent hover:text-clay focus-visible:border-border sm:opacity-0 sm:group-hover:opacity-100"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-full border border-border bg-background/60 text-foreground shadow-sm transition-colors hover:border-clay hover:bg-transparent hover:text-clay focus-visible:border-border sm:h-10 sm:w-10 sm:bg-transparent sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100"
                       >
                         <Play className="h-4 w-4" strokeWidth={1.75} />
                       </button>
@@ -1206,7 +1184,7 @@ function DetailPage() {
       </section>
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="grid h-[calc(100dvh-1rem)] max-w-7xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-[1.75rem] border-border bg-background p-0 sm:h-[92dvh] sm:w-[calc(100vw-2rem)] sm:p-0">
+        <DialogContent className="grid h-[100dvh] w-screen max-w-none grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-none border-0 bg-background p-0 sm:h-[92dvh] sm:w-[calc(100vw-2rem)] sm:max-w-7xl sm:rounded-[1.75rem] sm:border sm:border-border sm:p-0">
           <DialogHeader className="space-y-0 border-b border-border/70 py-4 pl-5 pr-16 text-left sm:pl-6 sm:pr-20">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="space-y-1.5">

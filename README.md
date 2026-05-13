@@ -1,60 +1,68 @@
-﻿## Project Overview
-
-CookTalk is a privacy-first, bilingual (Chinese & English) intelligent cooking assistant. Designed around a truly hands-free cooking experience, you can search recipes with your voice, import cooking videos and convert them into structured recipes, manage your recipe library, follow step-by-step cooking mode, ask about substitute ingredients at any time, and run multiple kitchen timers simultaneously.
-
-The project is built with TanStack Start, React 19, TypeScript, Tailwind CSS 4, Dexie/IndexedDB, Zustand, i18next, ElevenLabs, and OpenAI-compatible model APIs.
+<h1 align="center">CookTalk</h1>
 
 <p align="center">
-  <a href="README.zh-CN.md">中文</a> · <a href="#features">Features</a> · <a href="#quick-start">Quick Start</a> · <a href="#configuration">Configuration</a>
+  A privacy-first, bilingual, voice-driven smart kitchen assistant.
 </p>
 
-## Core Features
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a>
+  ·
+  <a href="#features">Features</a>
+  ·
+  <a href="#quick-start">Quick Start</a>
+  ·
+  <a href="#configuration">Configuration</a>
+  ·
+  <a href="#deployment">Deployment</a>
+</p>
+
+---
+
+## Project Overview
+
+CookTalk integrates recipes, cooking videos, voice, timers, and AI chat into a quiet and handy kitchen workstation. It is designed for real cooking scenarios: you can search for recipes by voice, import cooking videos as structured recipes, follow step-by-step guidance in cooking mode, ask for ingredient substitutions mid-cooking, and run multiple timers simultaneously.
+
+The app follows a local-first approach. Recipes, settings, drafts, and API credentials are stored locally in the browser by default, and sensitive info is protected by IndexedDB with an AES-GCM-based credential protection mechanism.
+
+## Key Highlights
+
+| Voice-First Kitchen                                          | Privacy-First Local Storage                                     | AI Recipe Workflow                                          |
+| ------------------------------------------------------------ | --------------------------------------------------------------- | ----------------------------------------------------------- |
+| Supports wake word, manual activation, contextual commands, page navigation, scrolling, and form entry. | Recipes, settings, credentials, timers, drafts, and sound caches are stored locally in the browser by default. | Supports idea chats, video-to-recipe structuring, AI cover generation, and saving recommended recipes. |
+
+## Feature Overview
 
 <table>
   <tr>
-    <td><strong>🎙 Global Voice-First</strong></td>
-    <td>Supports wake words, manual activation, voice badge, page navigation, scrolling, form input, and contextual commands.</td>
+    <td width="50%"><strong>🎙 Global Voice Control</strong><br />Navigate pages, scroll, fill forms, and issue contextual cooking commands via wake word or manual activation.</td>
+    <td width="50%"><strong>🍳 Guided Cooking Mode</strong><br />Step-by-step recipe instructions read aloud; supports pause, resume, repeat, previous/next step, screen keep-awake, and assigning exclusive voice per recipe.</td>
   </tr>
   <tr>
-    <td><strong>🍳 Guided Cooking Mode</strong></td>
-    <td>Reads out recipe steps one by one, with pause, resume, repeat, previous, next, always-on display, and recipe-specific voice.</td>
+    <td><strong>⏱ Multiple Parallel Timers</strong><br />Create, extend, cancel, and check multiple timers during cooking—ideal for dishes with parallel steps.</td>
+    <td><strong>🎬 Video to Recipe</strong><br />Import cooking videos, extract audio with ffmpeg.wasm, transcribe and organize into ingredients, steps, tags, and cover images.</td>
   </tr>
   <tr>
-    <td><strong>⏱ Multiple Parallel Timers</strong></td>
-    <td>Create, extend, cancel, and check multiple timers during cooking.</td>
+    <td><strong>🧠 AI Recipe Dialogs</strong><br />Search local recipes first, request new ideas, open recipe cards, save recommendations, and directly enter guided cooking mode.</td>
+    <td><strong>🗣 Voice Library Management</strong><br />Browse ElevenLabs voices, preview samples, manage cloned voices, and assign unique voices to different recipes.</td>
   </tr>
   <tr>
-    <td><strong>🎬 Video to Recipe</strong></td>
-    <td>Import cooking videos, extract audio using ffmpeg.wasm, transcribe, and organize into ingredients, steps, tags, and covers.</td>
-  </tr>
-  <tr>
-    <td><strong>🧠 AI Recipe Dialog</strong></td>
-    <td>Prioritize searching local recipes, request new inspirations, open recipe cards, save recommendations and enter guided cooking directly.</td>
-  </tr>
-  <tr>
-    <td><strong>🗣 Voice Library</strong></td>
-    <td>Browse ElevenLabs voices, preview samples, manage cloned voices, and assign voices to specific recipes.</td>
-  </tr>
-  <tr>
-    <td><strong>🖼 Recipe Cover</strong></td>
-    <td>Support for user-uploaded covers and AI-generated covers based on recipe prompts.</td>
-  </tr>
-  <tr>
-    <td><strong>🌏 Bilingual Interface</strong></td>
-    <td>Built-in English/Chinese localization and more natural interaction prompts based on selected language.</td>
+    <td><strong>🖼 Recipe Covers</strong><br />Upload your own cover image or generate AI covers from recipe prompts.</td>
+    <td><strong>🌏 Bilingual UI (EN & ZH)</strong><br />Built-in English and Chinese, with more natural interface prompts based on current language.</td>
   </tr>
 </table>
 
 ## Tech Stack
 
-- **App Framework:** TanStack Start, TanStack Router, Vite 7
-- **UI Layer:** React 19, Tailwind CSS 4, Radix UI, shadcn-style components, Lucide icons
-- **State Management:** Zustand, TanStack Query, Dexie React Hooks
-- **Local Storage:** IndexedDB / Dexie, local key encryption/obfuscation based on Web Crypto AES-GCM
-- **AI & Voice:** ElevenLabs API, OpenAI-compatible text and image APIs
-- **Media Processing:** ffmpeg.wasm for video/audio processing in browser
-- **Internationalization:** i18next, react-i18next
-- **Code Quality:** TypeScript, ESLint, Prettier
+| Layer         | Technologies                                                             |
+| ------------- | ------------------------------------------------------------------------ |
+| Application   | TanStack Start, TanStack Router, Vite 7                                  |
+| UI            | React 19, Tailwind CSS 4, Radix UI, shadcn style components, Lucide Icons|
+| State & Data  | Zustand, TanStack Query, Dexie, Dexie React Hooks                        |
+| Local Storage | IndexedDB / Dexie, local key protection using Web Crypto AES-GCM         |
+| AI & Voice    | ElevenLabs API, OpenAI-compatible text & image interfaces                |
+| Media         | ffmpeg.wasm for in-browser video/audio processing                        |
+| i18n          | i18next, react-i18next                                                   |
+| Quality       | TypeScript, ESLint, Prettier                                             |
 
 ## Project Structure
 
@@ -68,10 +76,10 @@ CookTalk/
 ├─ server/
 │  └─ railway.mjs
 ├─ src/
-│  ├─ components/       # General UI and application shell components
-│  ├─ hooks/            # Voice, timer, mobile, and ElevenLabs hooks
-│  ├─ lib/              # Database, crypto, LLM, voice, i18n, and utilities
-│  ├─ locales/          # Chinese & English localization messages
+│  ├─ components/       # Common UI and shell components
+│  ├─ hooks/            # Voice, timers, mobile, and ElevenLabs hooks
+│  ├─ lib/              # DB, crypto, LLM, voice, i18n, and utilities
+│  ├─ locales/          # English & Chinese translation files
 │  ├─ routes/           # TanStack Router pages
 │  ├─ stores/           # Zustand stores
 │  ├─ router.tsx
@@ -86,70 +94,77 @@ CookTalk/
 
 ### Requirements
 
-- Node.js **22.12.0 or above**
-- npm, Bun, or any compatible package manager
-- Modern browser with support for Web Crypto, IndexedDB, microphone permissions, and Wake Lock is recommended
+- Node.js **22.12.0 or higher**
+- npm, Bun, or another compatible package manager
+- A modern browser supporting Web Crypto, IndexedDB, microphone access, and Wake Lock is recommended
 
-### Install dependencies
+### Install Dependencies
 
 ```bash
 npm install
 ```
 
-Or, using Bun:
+Or use Bun:
 
 ```bash
 bun install
 ```
 
-### Start development server
+### Run Locally
 
 ```bash
 npm run dev
 ```
 
-Then open the local address output by Vite, usually `http://localhost:5173`.
+Open the local URL output by Vite, typically `http://localhost:5173`.
 
-### Build for production
+### Production Build
 
 ```bash
 npm run build
-```
-
-### Preview production build locally
-
-```bash
 npm run preview
 ```
 
+## Common Scripts
+
+| Script               | Description                         |
+| -------------------- | ----------------------------------- |
+| `npm run dev`        | Start the Vite development server   |
+| `npm run build`      | Build the production bundle         |
+| `npm run build:dev`  | Build in development mode           |
+| `npm run preview`    | Preview production build locally    |
+| `npm run start`      | Start the Railway Node server       |
+| `npm run lint`       | Run ESLint                         |
+| `npm run format`     | Format files with Prettier          |
+
 ## Configuration
 
-Most runtime credentials are configured within the app under **Settings → API Keys**, rather than in environment variables. CookTalk encrypts/obfuscates these values in your browser's local storage using AES-GCM.
+Most runtime credentials are configured in-app via **Settings → API Keys** rather than environment variables. CookTalk encrypts/obfuscates these values using AES-GCM and stores them locally in your browser.
 
-| Group                | Purpose                                               | Default / Notes                             |
-| -------------------- | ----------------------------------------------------- | ------------------------------------------- |
-| ElevenLabs API Key   | Speech synthesis, voice preview, voice cloning, TTS   | Complete functionality requires configuration |
-| LLM Endpoint         | OpenAI-compatible text model endpoint                 | `https://api.openai.com/v1`                 |
-| LLM Model            | Recipe chat, structuring, optimization, Q&A           | `gpt-4o-mini`                               |
-| Image Endpoint / Key / Model | AI-generated recipe covers                   | Default image model: `gpt-image-1.5`        |
+| Config                       | Purpose                                | Default/Notes                   |
+| ---------------------------- | -------------------------------------- | ------------------------------- |
+| ElevenLabs API Key           | Voice synthesis, preview, clone, TTS   | Full voice experience requires this |
+| LLM Endpoint                 | OpenAI-compatible text model endpoint  | `https://api.openai.com/v1`     |
+| LLM Model                    | Recipe chat, structuring, Q&A, enhance| `gpt-4o-mini`                   |
+| Image Endpoint / Key / Model | AI recipe cover generation             | Default image model: `gpt-image-1.5` |
 
-When deploying the server, only the following process variables are typically needed:
+For server deployment, typically only the following process variables are needed:
 
-| Variable | Description                                    | Default  |
-| -------- | ---------------------------------------------- | -------- |
-| `PORT`   | HTTP port for `server/railway.mjs`             | `3000`   |
-| `HOST`   | HTTP server listen address                      | `0.0.0.0`|
+| Variable | Description                                  | Default    |
+| -------- | -------------------------------------------- | ---------- |
+| `PORT`   | HTTP port used by `server/railway.mjs`       | `3000`     |
+| `HOST`   | HTTP listening address                       | `0.0.0.0`  |
 
 ## Browser Permissions
 
-CookTalk may request:
+CookTalk may request the following permissions:
 
-- **Microphone permission:** For voice commands and voice features
-- **Wake Lock permission:** To keep screen always-on during cooking mode
-- **Local storage/IndexedDB:** To save recipes, settings, drafts, and voice cache
+- **Microphone**: For voice commands and related flows
+- **Wake Lock**: To keep the screen on during guided cooking
+- **Local Storage / IndexedDB**: To store recipes, settings, drafts, timers, and sound caches
 
 ## Roadmap
 
 - Cloud sync and multi-device recipe sharing
-- More voice command packages
+- More voice command packs and cooking scenarios
 - Nutrition analysis and shopping list integration

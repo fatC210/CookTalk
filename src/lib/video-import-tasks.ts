@@ -162,12 +162,36 @@ export function createVideoImportTask(
 
   return {
     id: uuid(),
+    kind: "media",
     fileName: file.name,
     fileSize: file.size,
     fileType: file.type,
     createdAt: now,
     updatedAt: now,
     recipeTitle: deriveTaskDisplayTitle(taskSnapshot, file.name),
+    snapshot: taskSnapshot,
+    ...progressMeta,
+  };
+}
+
+export function createTextImportTask(
+  rawText: string,
+  snapshot: VideoImportDraftSnapshot,
+  fallbackName: string,
+): VideoImportTask {
+  const now = Date.now();
+  const taskSnapshot = cloneVideoImportDraftSnapshot(snapshot);
+  const progressMeta = getTaskProgressMeta(taskSnapshot);
+
+  return {
+    id: uuid(),
+    kind: "text",
+    fileName: fallbackName,
+    fileSize: new Blob([rawText]).size,
+    fileType: "text/plain",
+    createdAt: now,
+    updatedAt: now,
+    recipeTitle: deriveTaskDisplayTitle(taskSnapshot, fallbackName),
     snapshot: taskSnapshot,
     ...progressMeta,
   };

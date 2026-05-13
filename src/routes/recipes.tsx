@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader } from "@/components/site-header";
-import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
+import { VoiceBadge } from "@/components/voice-badge";
 import {
   Search,
   Filter,
@@ -241,12 +241,7 @@ function RecipesPage() {
         <div className="page-hero-container">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <span className="page-kicker">
-                {t("recipes.personalKb")} ·{" "}
-                {t("recipes.recipesCount", { count: allRecipes.length })}
-              </span>
               <h1 className="page-title">{t("recipes.title")}</h1>
-              <VoiceHint className="mt-2">{t("recipes.voiceHint")}</VoiceHint>
             </div>
             <div className="hidden md:block">{importButton}</div>
           </div>

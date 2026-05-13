@@ -1,10 +1,8 @@
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 
-export function VoiceBadge({ n, className }: { n: number; className?: string }) {
-  const visible = useAppStore((s) => s.voiceBadgesVisible);
-  if (!visible) return null;
-  return <span className={cn("voice-badge", className)}>{n}</span>;
+export function VoiceBadge(_props: { n: number; className?: string }) {
+  return null;
 }
 
 export function VoiceHint({

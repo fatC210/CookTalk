@@ -204,7 +204,7 @@ function createInitialFollowUpDraft(): Pick<
 
 function createInitialImportDraft(): ImportDraftValues {
   return {
-    mode: "video",
+    mode: "manual",
     isDragging: false,
     selectedMediaFile: null,
     stage: "idle",
@@ -272,6 +272,7 @@ export function hasVideoDraftContent(snapshot: VideoImportDraftSnapshot): boolea
     snapshot.followUpStarted,
     snapshot.followUpCompleted,
     snapshot.stage !== "idle",
+    snapshot.stage === "idle" && snapshot.transcript.trim(),
   ].some(Boolean);
 }
 

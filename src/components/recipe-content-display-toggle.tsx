@@ -40,7 +40,7 @@ export function RecipeContentDisplayToggle({
 
   return (
     <div
-      className={`inline-flex max-w-full rounded-full border border-border bg-card/80 p-1 text-xs shadow-sm ${className}`}
+      className={`grid max-w-full grid-cols-3 rounded-full border border-border bg-card/80 p-1 text-xs shadow-sm ${className}`}
       role="group"
       aria-label={ariaLabel}
     >
@@ -51,7 +51,7 @@ export function RecipeContentDisplayToggle({
           <button
             key={mode.value}
             type="button"
-            className={`min-h-9 rounded-full px-3 py-1.5 transition-colors sm:px-4 ${
+            className={`min-h-9 whitespace-nowrap rounded-full px-3 py-1.5 text-center transition-colors sm:px-4 ${
               active
                 ? "bg-foreground text-background shadow-sm"
                 : "text-muted-foreground hover:bg-background hover:text-foreground"

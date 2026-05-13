@@ -4,13 +4,12 @@ import { VoiceBadge, VoiceHint } from "@/components/voice-badge";
 import {
   AlertCircle,
   ChevronDown,
-  Mic,
   Pause,
   Plus,
   Trash2,
   Sparkles,
-  Volume2,
   Loader2,
+  Mic,
   StopCircle,
   Upload,
   CheckCircle2,
@@ -812,9 +811,7 @@ function VoicesPage() {
       <section className="page-hero">
         <div className="page-hero-container flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <span className="page-kicker">{t("voices.subtitle")}</span>
             <h1 className="page-title">{t("voices.title")}</h1>
-            <p className="page-description">{t("voices.description")}</p>
           </div>
           <button
             className="inline-flex items-center gap-2 self-center rounded-full bg-foreground px-4 py-2.5 text-sm text-background hover:bg-clay sm:px-5"
@@ -839,7 +836,7 @@ function VoicesPage() {
             <VoiceHint>{t("voices.voiceHint")}</VoiceHint>
           </div>
 
-          <div className="mt-6 grid justify-start gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,260px))]">
+          <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {clonedVoices.map((v, i) => {
               const previewKey = getClonedPreviewKey(v);
               const isLoadingPreview = loadingPreviewKey === previewKey;
@@ -859,23 +856,22 @@ function VoicesPage() {
                         : t("voices.preview")
                   }
                   data-voice-label={`${t("voices.preview")} ${v.name}`}
-                  data-voice-aliases={`播放${v.name} 试听${v.name} 预览${v.name} 暂停${v.name} pause ${v.name} play ${v.name} preview ${v.name}`}
+                  data-voice-aliases={`play ${v.name} preview ${v.name} pause ${v.name}`}
                   onClick={() => void handlePreviewVoice(v)}
                   onKeyDown={(event) => handleCardKeyDown(event, () => void handlePreviewVoice(v))}
-                  className="group/voice-card relative cursor-pointer rounded-3xl border border-border bg-card p-5 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="group/voice-card relative flex cursor-pointer flex-col items-start gap-3 rounded-2xl border border-border bg-card px-4 py-4 pb-14 transition-colors hover:border-clay focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pr-36"
                 >
-                  <VoiceBadge n={i + 1} className="absolute top-4 left-4" />
-                  <VoiceRoleActionStack>
+                  <VoiceRoleActionStack className="bottom-3 top-auto flex-row sm:top-1/2 sm:-translate-y-1/2">
                     <VoiceRoleButton
                       isSelected={conversationVoiceId === v.elevenLabsVoiceId}
                       disabled={!v.elevenLabsVoiceId}
                       Icon={MessageCircle}
                       label={
-                          conversationVoiceId === v.elevenLabsVoiceId
-                            ? t("voices.currentConversationVoice")
-                            : t("voices.setConversationVoice")
+                        conversationVoiceId === v.elevenLabsVoiceId
+                          ? t("voices.currentConversationVoice")
+                          : t("voices.setConversationVoice")
                       }
-                      voiceAliases={`设为对话音色 设置${v.name}为对话音色 用${v.name}对话 clear conversation voice set ${v.name} as conversation voice`}
+                      voiceAliases={`set ${v.name} as conversation voice`}
                       onClick={(event) => {
                         stopCardPreview(event);
                         if (v.elevenLabsVoiceId) {
@@ -888,11 +884,11 @@ function VoicesPage() {
                       disabled={!v.elevenLabsVoiceId}
                       Icon={ChefHat}
                       label={
-                          cookingVoiceId === v.elevenLabsVoiceId
-                            ? t("voices.currentCookingVoice")
-                            : t("voices.setCookingVoice")
+                        cookingVoiceId === v.elevenLabsVoiceId
+                          ? t("voices.currentCookingVoice")
+                          : t("voices.setCookingVoice")
                       }
-                      voiceAliases={`设为烹饪音色 设置${v.name}为烹饪音色 用${v.name}做菜 用${v.name}朗读 set ${v.name} as cooking voice`}
+                      voiceAliases={`set ${v.name} as cooking voice`}
                       onClick={(event) => {
                         stopCardPreview(event);
                         if (v.elevenLabsVoiceId) {
@@ -900,45 +896,13 @@ function VoicesPage() {
                         }
                       }}
                     />
-                  </VoiceRoleActionStack>
-
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-clay/40 bg-secondary">
-                      {isLoadingPreview ? (
-                        <Loader2 className="h-5 w-5 animate-spin text-clay" strokeWidth={1.5} />
-                      ) : isPlayingPreview ? (
-                        <Pause className="h-5 w-5 text-clay" strokeWidth={1.5} />
-                      ) : (
-                        <Volume2 className="h-6 w-6 text-clay" strokeWidth={1.5} />
-                      )}
-                    </div>
-                  </div>
-
-                  <h3 className="mt-4 font-display text-2xl">{v.name}</h3>
-                  {/* Waveform */}
-                  <div className="mt-4 flex h-10 items-center gap-1">
-                    {Array.from({ length: 40 }).map((_, k) => (
-                      <span
-                        key={k}
-                        className={`flex-1 rounded-full bg-clay/40 ${
-                          isPlayingPreview ? "voice-preview-wave-bar" : ""
-                        }`}
-                        style={{
-                          height: `${20 + Math.abs(Math.sin(k * 0.6 + i)) * 80}%`,
-                          animationDelay: `${k * 34}ms`,
-                          animationDuration: `${760 + (k % 7) * 54}ms`,
-                        }}
-                      />
-                    ))}
-                  </div>
-
-                  <div className="mt-4 flex justify-end">
-                    <AppTooltip content={t("common.delete")} side="top" align="end">
+                    <AppTooltip content={t("common.delete")} side="top" align="center">
                       <button
-                        className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent p-2 text-muted-foreground opacity-100 transition-[border-color,color,opacity] hover:border-border hover:bg-transparent hover:text-destructive focus-visible:border-border sm:opacity-0 sm:group-hover/voice-card:opacity-100 sm:group-focus-within/voice-card:opacity-100"
+                        type="button"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/80 bg-secondary/90 text-foreground/80 shadow-sm backdrop-blur transition-[border-color,background-color,color,opacity,box-shadow] hover:border-destructive hover:bg-secondary hover:text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:pointer-events-none sm:opacity-0 sm:group-hover/voice-card:pointer-events-auto sm:group-hover/voice-card:opacity-100 sm:group-focus-within/voice-card:pointer-events-auto sm:group-focus-within/voice-card:opacity-100"
                         aria-label={t("common.delete")}
                         data-voice-label={`${t("common.delete")} ${v.name}`}
-                        data-voice-aliases={`删除${v.name} delete ${v.name}`}
+                        data-voice-aliases={`delete ${v.name}`}
                         onClick={(event) => {
                           stopCardPreview(event);
                           void handleDelete(v.id, v.name);
@@ -947,27 +911,32 @@ function VoicesPage() {
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                       </button>
                     </AppTooltip>
+                  </VoiceRoleActionStack>
+
+                  <div className="flex w-full min-w-0 items-start gap-3 sm:w-auto sm:items-center">
+                    <VoiceBadge n={i + 1} className="shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="break-words font-display text-sm leading-snug sm:truncate sm:text-base">
+                        {v.name}
+                      </div>
+                      <div className="mt-1">
+                        <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] tracking-[0.08em] text-muted-foreground">
+                          {formatClonedVoiceDescription(v)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                    {isLoadingPreview ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-clay" strokeWidth={1.5} />
+                    ) : isPlayingPreview ? (
+                      <Pause className="h-4 w-4 text-clay" strokeWidth={1.5} />
+                    ) : null}
                   </div>
                 </article>
               );
             })}
-
-            {/* New voice slot */}
-            <button
-              className="group flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-border bg-card transition-colors hover:border-clay"
-              onClick={openCloneDialog}
-              type="button"
-              data-voice-label={t("voices.addNewVoice")}
-              data-voice-aliases="添加新声音 新增声音 克隆声音 克隆新声音 add new voice clone new voice"
-            >
-              <div className="flex h-14 w-14 items-center justify-center rounded-full border border-foreground/30 group-hover:border-clay">
-                <Mic className="h-6 w-6" strokeWidth={1.5} />
-              </div>
-              <div className="text-center">
-                <div className="font-display text-sm leading-snug">{t("voices.record30s")}</div>
-                <VoiceHint className="justify-center mt-1">{t("voices.addNewVoice")}</VoiceHint>
-              </div>
-            </button>
           </div>
         </div>
       </section>

@@ -237,13 +237,11 @@ function KeyField({
 }
 
 function ApiSettingsCard({
-  n,
   title,
   required = false,
   onBlur,
   children,
 }: {
-  n: number;
   title: string;
   required?: boolean;
   onBlur?: () => void;
@@ -265,7 +263,6 @@ function ApiSettingsCard({
       onBlur={handleBlur}
     >
       <div className="flex items-start gap-3">
-        <VoiceBadge n={n} />
         <div>
           <div className="inline-flex items-center gap-2 text-sm font-medium">
             {title}
@@ -886,9 +883,7 @@ function SettingsPage() {
 
       <section className="page-hero">
         <div className="page-hero-container">
-          <span className="page-kicker">{t("settings.subtitle")}</span>
           <h1 className="page-title">{t("settings.title")}</h1>
-          <VoiceHint className="mt-2">{t("settings.hint")}</VoiceHint>
         </div>
       </section>
 
@@ -929,7 +924,6 @@ function SettingsPage() {
                     </p>
                     <div className="mt-5 grid gap-4 lg:grid-cols-3">
                       <ApiSettingsCard
-                        n={1}
                         title={t("settings.apiKeys.elevenlabsGroup")}
                         required
                         onBlur={() => void handleValidateApiGroup("elevenlabs")}
@@ -946,7 +940,6 @@ function SettingsPage() {
                       </ApiSettingsCard>
 
                       <ApiSettingsCard
-                        n={2}
                         title={t("settings.apiKeys.llmGroup")}
                         required
                         onBlur={() => void handleValidateApiGroup("llm")}
@@ -983,7 +976,6 @@ function SettingsPage() {
                       </ApiSettingsCard>
 
                       <ApiSettingsCard
-                        n={3}
                         title={t("settings.apiKeys.imageGroup")}
                         onBlur={() => void handleValidateApiGroup("image")}
                       >

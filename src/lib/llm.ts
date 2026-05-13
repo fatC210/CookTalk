@@ -35,6 +35,15 @@ function resolveRecipeLanguage(language?: AppLanguage): AppLanguage {
   return i18n.language.startsWith("zh") ? "zh" : "en";
 }
 
+function resolveRecipeTextLanguage(text: string, fallback: AppLanguage): AppLanguage {
+  const chineseChars = text.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  const latinWords = text.match(/[A-Za-z][A-Za-z'-]*/g)?.length ?? 0;
+
+  if (chineseChars >= 12 && chineseChars >= latinWords) return "zh";
+  if (latinWords >= 12 && chineseChars < latinWords * 0.35) return "en";
+  return fallback;
+}
+
 interface LLMConfig {
   apiKey: string;
   baseUrl?: string;
@@ -2850,64 +2859,66 @@ ${trimRecipeSourceText(transcript)}`;
       throw new Error("Cannot structure recipe from empty recipe text");
     }
 
+    const outputLanguage = resolveRecipeTextLanguage(recipeText, language);
+
     const prompt = [
-      language === "zh"
+      outputLanguage === "zh"
         ? "你需要把原始菜谱文字整理成 CookTalk 可用的结构化 JSON。"
         : "You are converting rough recipe text into structured CookTalk recipe JSON.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "输入可能是网页摘录、聊天记录、做菜笔记，或者没有排版的整段菜谱文字。"
         : "The input may be a web page excerpt, pasted recipe, plain notes, or unformatted cooking text.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "只返回合法 JSON，不要输出 Markdown，结构请严格遵循下面的 schema："
         : "Return valid JSON only, no markdown, using this schema:",
       "{",
-      language === "zh" ? '  "title": "菜名",' : '  "title": "Recipe name",',
-      language === "zh"
+      outputLanguage === "zh" ? '  "title": "菜名",' : '  "title": "Recipe name",',
+      outputLanguage === "zh"
         ? '  "ingredients": [{"name": "食材名", "amount": "用量"}],'
         : '  "ingredients": [{"name": "ingredient", "amount": "amount"}],',
-      language === "zh"
+      outputLanguage === "zh"
         ? '  "steps": [{"order": 1, "description": "步骤描述", "durationSec": 300, "tips": "可选提示"}],'
         : '  "steps": [{"order": 1, "description": "step text", "durationSec": 300, "tips": "optional tip"}],',
       '  "tags": {',
-      language === "zh" ? '    "flavor": ["口味"],' : '    "flavor": ["savory"],',
+      outputLanguage === "zh" ? '    "flavor": ["口味"],' : '    "flavor": ["savory"],',
       '    "difficulty": "easy|medium|hard",',
-      language === "zh" ? '    "cuisine": "菜系",' : '    "cuisine": "cuisine name",',
+      outputLanguage === "zh" ? '    "cuisine": "菜系",' : '    "cuisine": "cuisine name",',
       '    "totalTimeMin": 20,',
       '    "servings": 2,',
-      language === "zh" ? '    "spiceLevel": "辣度",' : '    "spiceLevel": "mild",',
-      language === "zh" ? '    "notes": "可选备注"' : '    "notes": "optional notes"',
+      outputLanguage === "zh" ? '    "spiceLevel": "辣度",' : '    "spiceLevel": "mild",',
+      outputLanguage === "zh" ? '    "notes": "可选备注"' : '    "notes": "optional notes"',
       "  }",
       "}",
-      language === "zh" ? "要求：" : "Rules:",
-      language === "zh"
+      outputLanguage === "zh" ? "要求：" : "Rules:",
+      outputLanguage === "zh"
         ? "- 尽量保留用户原本想表达的菜名和做法。"
         : "- Preserve the user's intended dish and wording where practical.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "- 把内容拆成清晰的食材列表和有顺序的步骤。"
         : "- Break the recipe into clear ingredients and ordered steps.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "- 如果输入来自网页 JSON 或 JSON-LD，只提取实际菜谱值；不要把 @type、@context、recipeIngredient、recipeInstructions、schema 字段名写进标题、食材或步骤。"
         : "- If the input is web JSON or JSON-LD, extract only actual recipe values; never put @type, @context, recipeIngredient, recipeInstructions, or schema field names into title, ingredients, or steps.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "- 食材的 name 只放食材名称，amount 只放数量和单位；不要把整段步骤或 JSON 片段塞进食材字段。"
         : "- Put only the ingredient name in name and only quantity/unit in amount; do not place full steps or JSON fragments in ingredient fields.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "- 步骤文字要简洁，适合做菜时朗读。"
         : "- Keep step text concise and readable for cooking playback.",
-      language === "zh"
-        ? "- 标题、食材、步骤、菜系、口味、辣度、备注都用中文输出；difficulty 只能用 easy、medium、hard。"
-        : "- Match the current interface language for title, ingredients, steps, cuisine, flavor, spice level, and notes; difficulty must be easy, medium, or hard.",
-      language === "zh"
+      outputLanguage === "zh"
+        ? "- 标题、食材、步骤、菜系、口味、辣度、备注要跟随输入菜谱的主要语言；如果粘贴的菜谱是英文，回填结果也必须是英文；不要因为界面语言而翻译；difficulty 只能用 easy、medium、hard。"
+        : "- Match the main language of the pasted recipe for title, ingredients, steps, cuisine, flavor, spice level, and notes. If the pasted recipe is English, the structured recipe must stay English; do not translate it because of the interface language. difficulty must be easy, medium, or hard.",
+      outputLanguage === "zh"
         ? "- 只有在文本里有依据时，才补充可推断的可选信息。"
         : "- Infer optional metadata only when reasonably supported by the text.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "- 不确定的可选字段宁可省略，也不要编造。"
         : "- Omit unknown optional fields instead of inventing details.",
-      language === "zh"
+      outputLanguage === "zh"
         ? "- 不要输出 Markdown、schema 解释、字段映射说明、思考过程或自言自语。"
         : "- Do not include markdown, schema explanations, field mapping notes, chain-of-thought, or self-talk.",
       "",
-      `${language === "zh" ? "菜谱文字" : "Recipe text"}:
+      `${outputLanguage === "zh" ? "菜谱文字" : "Recipe text"}:
 ${trimRecipeSourceText(recipeText)}`,
     ].join("\n");
 
@@ -2916,7 +2927,7 @@ ${trimRecipeSourceText(recipeText)}`,
         {
           role: "system",
           content:
-            language === "zh"
+            outputLanguage === "zh"
               ? "你是一名专业厨艺助手。始终只返回合法 JSON，不要输出 Markdown、解释或思考过程。"
               : "You are a professional chef assistant. Always respond with valid JSON only, no markdown, no explanations, and no chain-of-thought.",
         },
@@ -2930,7 +2941,7 @@ ${trimRecipeSourceText(recipeText)}`,
       "Failed to parse structured recipe JSON from text input",
       recipeText,
     );
-    const cleaned = cleanStructuredRecipePayload(recipe, language, recipeText);
+    const cleaned = cleanStructuredRecipePayload(recipe, outputLanguage, recipeText);
     if (!hasUsableRecipePayload(cleaned)) {
       throw new Error("Failed to parse structured recipe JSON from text input");
     }

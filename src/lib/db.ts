@@ -63,6 +63,7 @@ export type VideoImportTaskProgress =
 
 export interface VideoImportTask {
   id: string;
+  kind?: "media" | "text";
   fileName: string;
   fileSize: number;
   fileType: string;
