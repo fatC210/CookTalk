@@ -3,6 +3,11 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useVoiceSession } from "@/hooks/use-voice-session";
+import { db } from "@/lib/db";
+import {
+  findRecipeToOpenFromTranscript,
+  findRecipeToStartCookingFromTranscript,
+} from "@/lib/recipe-open-intent";
 import { executeVoiceAction } from "@/lib/voice-actions";
 import { normalizeSpeechText } from "@/lib/voice-pipeline";
 import { getActiveWakeWords, useAppStore } from "@/stores/app-store";
@@ -50,6 +55,10 @@ export function GlobalVoiceController() {
       if (pendingHomeAwake) return;
 
       const text = normalizeSpeechText(transcript);
+      if (pathname === "/voices" && dispatchPageVoiceCommand(transcript)) {
+        return;
+      }
+
       const settingsIntent = parseGlobalSettingsIntent(transcript);
       if (settingsIntent?.type === "theme") {
         setTheme(settingsIntent.value);
@@ -114,6 +123,22 @@ export function GlobalVoiceController() {
       if (/wake.*word|唤醒词|待唤醒/i.test(text)) {
         setListenMode("wake-word");
         toast.success(t("voice.wakeWordMode"));
+        return;
+      }
+
+      if (pathname === "/recipes" && dispatchPageVoiceCommand(transcript)) {
+        return;
+      }
+
+      const recipeToCook = await findExistingRecipeToStartCooking(transcript);
+      if (recipeToCook) {
+        await navigate({ to: "/cook", search: { id: recipeToCook.id, step: 0 } });
+        return;
+      }
+
+      const recipeToOpen = await findExistingRecipeToOpen(transcript);
+      if (recipeToOpen) {
+        await navigate({ to: "/recipe-detail", search: { id: recipeToOpen.id } });
         return;
       }
 
@@ -403,6 +428,12 @@ function isDirectGlobalVoiceCommand(transcript: string): boolean {
   const text = normalizeSpeechText(transcript);
   if (!text) return false;
   if (parseGlobalSettingsIntent(text) || parseGlobalNavigationIntent(text)) return true;
+  if (/(开始.*(做|烹饪|烹调|煮)|做这|做那个|做这道|做那道|start.*cook|start.*recipe|cook\s+.+)/i.test(text)) {
+    return true;
+  }
+  if (/(打开|查看|看一下|看下|看看|进入|open|show|view|go to|pull up)\s+.+/i.test(text)) {
+    return true;
+  }
   if (/show.*badge|显示.*(语音|徽标|编号)/i.test(text)) return true;
   if (/hide.*badge|隐藏.*(语音|徽标|编号)/i.test(text)) return true;
   if (/always.*listen|一直.*(听|监听)|持续.*监听/i.test(text)) return true;
@@ -414,10 +445,10 @@ function isDirectGlobalVoiceCommand(transcript: string): boolean {
   ) {
     return true;
   }
-  if (/(点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|删除)\s*.+/i.test(text)) {
+  if (/(点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|删除|返回|下一步|上一步)\s*.+/i.test(text)) {
     return true;
   }
-  if (/(click|tap|press|select|choose|open|show|play|preview|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|delete)\s+.+/i.test(text)) {
+  if (/(click|tap|press|select|choose|open|show|play|preview|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|delete|next|previous|back)\s+.+/i.test(text)) {
     return true;
   }
   return false;
@@ -430,4 +461,14 @@ function dispatchPageVoiceCommand(transcript: string): boolean {
   });
   window.dispatchEvent(event);
   return event.defaultPrevented;
+}
+
+async function findExistingRecipeToOpen(transcript: string) {
+  const recipes = await db.recipes.orderBy("createdAt").reverse().toArray();
+  return findRecipeToOpenFromTranscript(transcript, recipes);
+}
+
+async function findExistingRecipeToStartCooking(transcript: string) {
+  const recipes = await db.recipes.orderBy("createdAt").reverse().toArray();
+  return findRecipeToStartCookingFromTranscript(transcript, recipes);
 }

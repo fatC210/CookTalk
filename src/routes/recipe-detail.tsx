@@ -74,6 +74,7 @@ import {
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { normalizeSpeechText } from "@/lib/voice-pipeline";
 
 export const Route = createFileRoute("/recipe-detail")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -471,6 +472,90 @@ function DetailPage() {
     },
     [id, navigate],
   );
+
+  useEffect(() => {
+    const handleVoiceCommand = (event: Event) => {
+      if (!recipe) return;
+
+      const transcript = (event as CustomEvent<{ transcript?: string }>).detail?.transcript ?? "";
+      const text = normalizeSpeechText(transcript);
+      if (!text) return;
+
+      if (/(开始|开始做|做菜|烹饪|start cooking|start recipe|cook this|cook recipe)/i.test(text)) {
+        event.preventDefault();
+        handleStartCooking();
+        return;
+      }
+
+      const stepNumber = parseStepNumber(text);
+      if (
+        stepNumber &&
+        /(从|读|打开|查看|开始|跳到|第|step|start|read|open|show|jump)/i.test(text)
+      ) {
+        event.preventDefault();
+        handleStartCooking(Math.max(0, Math.min(stepNumber - 1, recipe.steps.length - 1)));
+        return;
+      }
+
+      if (/(编辑|修改|edit)/i.test(text)) {
+        event.preventDefault();
+        openEditDialog();
+        return;
+      }
+
+      if (/(导出|分享|download|export|share)/i.test(text)) {
+        event.preventDefault();
+        handleExport();
+        return;
+      }
+
+      if (/(删除|delete|remove)/i.test(text)) {
+        event.preventDefault();
+        const deleteButton = document.querySelector<HTMLElement>(
+          "[data-voice-action='delete-recipe']",
+        );
+        deleteButton?.click();
+        return;
+      }
+
+      if (/(只看|显示).*(食材|材料|ingredients)|ingredients only|show ingredients/i.test(text)) {
+        event.preventDefault();
+        setDetailDisplayMode("ingredients");
+        return;
+      }
+
+      if (/(只看|显示).*(步骤|做法|steps)|steps only|show steps/i.test(text)) {
+        event.preventDefault();
+        setDetailDisplayMode("steps");
+        return;
+      }
+
+      if (/(全部|全部显示|显示全部|all|show all)/i.test(text)) {
+        event.preventDefault();
+        setDetailDisplayMode("all");
+        return;
+      }
+
+      const ingredientIndex = parseIngredientTarget(text, recipe.ingredients.map((item) => item.name));
+      if (
+        ingredientIndex !== null &&
+        /(勾选|选中|划掉|取消勾选|check|uncheck|tick|mark)/i.test(text)
+      ) {
+        event.preventDefault();
+        toggleChecked(ingredientIndex);
+      }
+    };
+
+    window.addEventListener("cooktalk:voice-command", handleVoiceCommand);
+    return () => window.removeEventListener("cooktalk:voice-command", handleVoiceCommand);
+  }, [
+    handleExport,
+    handleStartCooking,
+    openEditDialog,
+    recipe,
+    setDetailDisplayMode,
+    toggleChecked,
+  ]);
 
   const handleCoverInputChange = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1014,6 +1099,8 @@ function DetailPage() {
               <div className="mt-8 flex min-w-0 max-w-full flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <button
                   onClick={() => handleStartCooking()}
+                  data-voice-label={t("recipeDetail.startCooking")}
+                  data-voice-aliases="开始做菜 开始烹饪 做这个菜 start cooking start recipe cook this recipe"
                   className="group inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full bg-foreground px-7 py-4 text-base text-background hover:bg-clay sm:w-auto"
                 >
                   <VoiceBadge
@@ -1025,19 +1112,28 @@ function DetailPage() {
                 </button>
                 <button
                   onClick={openEditDialog}
+                  data-voice-label={t("recipeDetail.edit")}
+                  data-voice-aliases="编辑菜谱 修改菜谱 edit recipe"
                   className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-foreground/80 px-5 py-4 text-sm hover:bg-foreground hover:text-background sm:w-auto"
                 >
                   <Pencil className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.edit")}
                 </button>
                 <button
                   onClick={handleExport}
+                  data-voice-label={t("recipeDetail.export")}
+                  data-voice-aliases="导出菜谱 分享菜谱 export recipe share recipe download recipe"
                   className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-border px-5 py-4 text-sm hover:border-foreground sm:w-auto"
                 >
                   <Share2 className="h-4 w-4" strokeWidth={1.75} /> {t("recipeDetail.export")}
                 </button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-destructive bg-destructive/10 px-5 py-4 text-sm font-medium text-destructive shadow-sm transition-colors hover:bg-destructive hover:text-destructive-foreground sm:w-auto">
+                    <button
+                      data-voice-action="delete-recipe"
+                      data-voice-label={t("recipeDetail.deleteConfirm")}
+                      data-voice-aliases="删除这个菜谱 删除菜谱 delete recipe remove recipe"
+                      className="inline-flex w-full min-w-0 items-center justify-center gap-2 rounded-full border border-destructive bg-destructive/10 px-5 py-4 text-sm font-medium text-destructive shadow-sm transition-colors hover:bg-destructive hover:text-destructive-foreground sm:w-auto"
+                    >
                       <Trash2 className="h-4 w-4" strokeWidth={1.75} />{" "}
                       {t("recipeDetail.deleteConfirm")}
                     </button>
@@ -1100,8 +1196,18 @@ function DetailPage() {
                     {ingredients.map((ing, i) => (
                       <li
                         key={i}
+                        role="button"
+                        tabIndex={0}
+                        data-voice-label={ing.name}
+                        data-voice-aliases={`勾选${ing.name} 选中${ing.name} 划掉${ing.name} check ${ing.name} mark ${ing.name}`}
                         className="inline-flex max-w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
                         onClick={() => toggleChecked(i)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            toggleChecked(i);
+                          }
+                        }}
                       >
                         <span
                           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
@@ -1169,6 +1275,8 @@ function DetailPage() {
                       <button
                         type="button"
                         aria-label={t("recipeDetail.startFromStep", { count: i + 1 })}
+                        data-voice-label={t("recipeDetail.startFromStep", { count: i + 1 })}
+                        data-voice-aliases={`从第${i + 1}步开始 读第${i + 1}步 打开第${i + 1}步 start from step ${i + 1} read step ${i + 1} open step ${i + 1}`}
                         onClick={() => handleStartCooking(i)}
                         className="inline-flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-full border border-border bg-background/60 text-foreground shadow-sm transition-colors hover:border-clay hover:bg-transparent hover:text-clay focus-visible:border-border sm:h-10 sm:w-10 sm:bg-transparent sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100"
                       >
@@ -1457,4 +1565,62 @@ function DetailPage() {
       </Dialog>
     </div>
   );
+}
+
+const spokenNumberMap: Record<string, number> = {
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10,
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+};
+
+function parseStepNumber(text: string): number | null {
+  const match =
+    text.match(/(?:第|step\s*)([0-9一二两三四五六七八九十]+)\s*(?:步|step)?/i) ??
+    text.match(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/i);
+  const raw = match?.[1];
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  if (raw === "十") return 10;
+  if (raw.includes("十")) {
+    const [tensRaw, onesRaw] = raw.split("十");
+    const tens = tensRaw ? (spokenNumberMap[tensRaw] ?? 1) : 1;
+    const ones = onesRaw ? (spokenNumberMap[onesRaw] ?? 0) : 0;
+    return tens * 10 + ones;
+  }
+  return spokenNumberMap[raw.toLowerCase()] ?? spokenNumberMap[raw] ?? null;
+}
+
+function parseIngredientTarget(text: string, ingredientNames: string[]): number | null {
+  const ordinal =
+    text.match(/(?:第\s*)?([0-9]+)\s*(?:个|项|条|ingredient)?/i)?.[1] ??
+    text.match(/第?\s*([一二两三四五六七八九十]+)\s*(?:个|项|条)?/)?.[1];
+  if (ordinal) {
+    const index = /^\d+$/.test(ordinal) ? Number(ordinal) - 1 : (spokenNumberMap[ordinal] ?? 0) - 1;
+    return index >= 0 && index < ingredientNames.length ? index : null;
+  }
+
+  const compactText = text.replace(/\s+/g, "").toLowerCase();
+  const index = ingredientNames.findIndex((name) => {
+    const compactName = normalizeSpeechText(name).replace(/\s+/g, "").toLowerCase();
+    return compactName.length > 0 && compactText.includes(compactName);
+  });
+  return index >= 0 ? index : null;
 }

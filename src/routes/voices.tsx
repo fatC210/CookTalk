@@ -135,6 +135,26 @@ function isVoiceCommandMatch(text: string, pattern: RegExp) {
   return pattern.test(normalizeSpeechText(text));
 }
 
+function getSpokenVoiceName(transcript: string): string {
+  const cleaned = transcript
+    .trim()
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "")
+    .trim();
+  const namedMatch = cleaned.match(
+    /^(?:命名为|名字叫|叫做|名称为|name(?: it)?|call(?: it)?)\s*["'“”‘’]?(.+?)["'“”‘’]?$/i,
+  );
+  return (namedMatch?.[1] ?? cleaned)
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "")
+    .trim();
+}
+
+function isCloneNameControlCommand(text: string): boolean {
+  return isVoiceCommandMatch(
+    text,
+    /^(?:返回|上一步|back|previous|继续|下一步|确认|continue|next|confirm)$/i,
+  );
+}
+
 function VoicesPage() {
   const { i18n: activeI18n, t } = useTranslation();
   const navigate = useNavigate();
@@ -657,11 +677,12 @@ function VoicesPage() {
       const pageAction = customEvent.detail?.action;
 
       if (
-        pageAction === "clone-voice" ||
-        isVoiceCommandMatch(
-          text,
-          /(添加|新增|克隆).*(声音|音色|voice)|clone.*voice|add.*voice|new.*voice/i,
-        )
+        !showDialog &&
+        (pageAction === "clone-voice" ||
+          isVoiceCommandMatch(
+            text,
+            /(添加|新增|克隆).*(声音|音色|voice)|clone.*voice|add.*voice|new.*voice/i,
+          ))
       ) {
         customEvent.preventDefault();
         openCloneDialog();
@@ -722,15 +743,6 @@ function VoicesPage() {
         }
 
         if (cloneStep === "name") {
-          const nameMatch = text.match(
-            /(?:命名为|名字叫|叫做|名称为|name(?: it)?|call(?: it)?)\s*["'“”‘’]?(.+?)["'“”‘’]?$/i,
-          );
-          if (nameMatch?.[1]) {
-            customEvent.preventDefault();
-            setVoiceName(nameMatch[1].trim());
-            return;
-          }
-
           if (isVoiceCommandMatch(text, /(返回|上一步|back)/i)) {
             customEvent.preventDefault();
             setCloneStep("record");
@@ -745,6 +757,15 @@ function VoicesPage() {
             setCloneStep("confirm");
             return;
           }
+
+          if (!isCloneNameControlCommand(text)) {
+            const spokenName = getSpokenVoiceName(transcript);
+            if (spokenName) {
+              customEvent.preventDefault();
+              setVoiceName(spokenName);
+              return;
+            }
+          }
         }
 
         if (cloneStep === "confirm") {
@@ -754,7 +775,12 @@ function VoicesPage() {
             return;
           }
 
-          if (isVoiceCommandMatch(text, /(同意|确认|授权|开始克隆|克隆|agree|confirm|clone)/i)) {
+          if (
+            isVoiceCommandMatch(
+              text,
+              /(同意|确认|授权|开始克隆|克隆|agree|i agree|agree and clone|i agree and clone|clone|confirm)/i,
+            )
+          ) {
             customEvent.preventDefault();
             void handleCloneVoice();
             return;

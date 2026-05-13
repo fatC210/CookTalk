@@ -30,6 +30,7 @@ export type VoiceIntentType =
   | "pause"
   | "resume"
   | "repeat_step"
+  | "switch_voice"
   | "read_tip"
   | "set_timer"
   | "cancel_timer"
@@ -46,6 +47,7 @@ export interface VoiceIntent {
   type: VoiceIntentType;
   seconds?: number;
   stepNumber?: number;
+  voiceName?: string;
   label?: string;
   answer?: string;
   durationExplicitlyRequested?: boolean;
@@ -181,7 +183,7 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
   const text = normalizeSpeechText(transcript);
 
   if (/(下一步|下一个|继续下一|next)/i.test(text)) return { type: "next_step" };
-  if (/(上一步|前一步|previous|back)/i.test(text)) return { type: "previous_step" };
+  if (/(上一步|上一个|前一步|前一个|previous|back)/i.test(text)) return { type: "previous_step" };
   if (/(暂停|停一下|pause)/i.test(text)) return { type: "pause" };
   if (/(继续|恢复|resume)/i.test(text)) return { type: "resume" };
   if (/(重复|再说一遍|重播|repeat)/i.test(text)) return { type: "repeat_step" };
@@ -191,6 +193,9 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
   if (/(显示.*语音|show.*badge)/i.test(text)) return { type: "show_badges" };
   if (/(停止监听|stop listening)/i.test(text)) return { type: "stop_listening" };
   if (/(开始监听|start listening)/i.test(text)) return { type: "start_listening" };
+
+  const voiceName = parseSwitchVoiceName(transcript);
+  if (voiceName !== null) return { type: "switch_voice", voiceName };
 
   const jumpStep = text.match(/(?:第|step\s*)([0-9一二两三四五六七八九十]+)\s*(?:步|step)?/i);
   if (jumpStep?.[1] && /(跳到|去到|切到|第|step)/i.test(text)) {
@@ -220,6 +225,46 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
   }
 
   return { type: "qa" };
+}
+
+function parseSwitchVoiceName(transcript: string): string | null {
+  const raw = transcript.trim();
+  const text = normalizeSpeechText(raw);
+  const hasSwitchCue =
+    /(切换|换成|换到|改成|使用|选择|设为|设置为|用|switch|change|set|use|select)/i.test(text);
+  const hasVoiceCue = /(音色|声音|声线|朗读|读|念|播报|voice|narrator|speaker|read|narrate)/i.test(
+    text,
+  );
+  if (!hasSwitchCue || !hasVoiceCue) return null;
+
+  const patterns: RegExp[] = [
+    /(?:用|使用)\s*["'“”‘’]?(.+?)["'“”‘’]?\s*(?:的)?(?:音色|声音|声线)?\s*(?:重新|再)?(?:朗读|读|念|播报)/i,
+    /(?:把|将)\s*["'“”‘’]?(.+?)["'“”‘’]?\s*(?:设为|设置为|切换为|改为|用作)\s*(?:烹饪|做菜|当前|朗读)?\s*(?:音色|声音|声线)/i,
+    /(?:切换|换成|换到|改成|使用|选择|设为|设置为)\s*(?:烹饪|做菜|当前|朗读)?\s*(?:音色|声音|声线)?\s*(?:为|成|到)?\s*["'“”‘’]?(.+?)["'“”‘’]?\s*(?:的)?(?:音色|声音|声线)?\s*(?:重新|再)?(?:朗读|读|念|播报)/i,
+    /(?:切换|换成|换到|改成|使用|选择|设为|设置为)\s*(?:烹饪|做菜|当前|朗读)?\s*(?:音色|声音|声线)?\s*(?:为|成|到)?\s*["'“”‘’]?(.+?)["'“”‘’]?\s*(?:的)?(?:音色|声音|声线)?$/i,
+    /(?:switch|change|set|use|select)\s+(?:the\s+)?(?:cooking\s+|current\s+)?(?:voice|narrator|speaker)\s*(?:to|as)?\s*["']?(.+?)["']?$/i,
+    /(?:switch|change|set|use|select)\s+(?:to\s+|as\s+)?["']?(.+?)["']?\s+(?:voice|narrator|speaker)(?:\s+for\s+cooking)?$/i,
+    /(?:use)\s+["']?(.+?)["']?\s+(?:to\s+)?(?:read|narrate|speak)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const cleaned = cleanupVoiceName(match?.[1] ?? "");
+    if (cleaned) return cleaned;
+  }
+
+  return "";
+}
+
+function cleanupVoiceName(value: string): string {
+  return value
+    .replace(/[，。！？、,.!?;；:：]+$/g, "")
+    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
+    .replace(/^(?:音色|声音|声线|voice|narrator|speaker)\s*(?:为|成|到|to|as)?\s*/i, "")
+    .replace(/\s*(?:的)?(?:音色|声音|声线|voice|narrator|speaker)$/i, "")
+    .replace(/\s*(?:重新|再)?(?:朗读|读|念|播报|read|narrate|speak)(?:当前)?(?:步骤|step)?$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 type AppLanguage = "en" | "zh";
@@ -463,8 +508,17 @@ function parseTimerLabel(text: string): string {
     .replace(/^(?:后|之后|以后|的时候)\s*/i, "")
     .replace(/(?:后|之后|以后|的时候)$/i, "")
     .replace(/^[\s"'“”‘’`，。！？、,.!?;；:：-]+|[\s"'“”‘’`，。！？、,.!?;；:：-]+$/g, "")
-    .replace(new RegExp(`\\b(?:${enSpokenNumberPattern}|[0-9]+)\\s*(?:minute|minutes|min|mins|m|second|seconds|sec|secs|s)\\b`, "gi"), "")
-    .replace(/\b(?:please|time|set|start|create|make|run|a|an|timer|timers|countdown|remind|reminder|for|me)\b/gi, "")
+    .replace(
+      new RegExp(
+        `\\b(?:${enSpokenNumberPattern}|[0-9]+)\\s*(?:minute|minutes|min|mins|m|second|seconds|sec|secs|s)\\b`,
+        "gi",
+      ),
+      "",
+    )
+    .replace(
+      /\b(?:please|time|set|start|create|make|run|a|an|timer|timers|countdown|remind|reminder|for|me)\b/gi,
+      "",
+    )
     .replace(/\s+/g, " ")
     .trim();
 
@@ -526,7 +580,9 @@ function playAudioBlob(blob: Blob, language: AppLanguage): Promise<void> {
       cleanup: () => URL.revokeObjectURL(url),
       onStop: () =>
         settle(() =>
-          reject(new VoicePlaybackInterruptedError(voiceText(language, "voice.playbackInterrupted"))),
+          reject(
+            new VoicePlaybackInterruptedError(voiceText(language, "voice.playbackInterrupted")),
+          ),
         ),
     });
 
@@ -538,13 +594,9 @@ function playAudioBlob(blob: Blob, language: AppLanguage): Promise<void> {
       playback?.release();
       settle(() => reject(new Error(voiceText(language, "voice.playbackFailed"))));
     };
-    audio.play().catch((error: unknown) => {
+    audio.play().catch(() => {
       playback?.release();
-      settle(() =>
-        reject(
-          error instanceof Error ? error : new Error(voiceText(language, "voice.playbackFailed")),
-        ),
-      );
+      settle(() => reject(new Error(voiceText(language, "voice.playbackFailed"))));
     });
   });
 }

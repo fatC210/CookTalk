@@ -26,6 +26,11 @@ import {
   type RecipePayload,
 } from "@/lib/llm";
 import { navigateToSettings } from "@/lib/api-key-prompts";
+import {
+  extractRecipeOrdinalTarget,
+  findRecipeToOpenFromTranscript,
+  findRecipeToStartCookingFromTranscript,
+} from "@/lib/recipe-open-intent";
 import { synthesizeWithElevenLabs } from "@/lib/voice-pipeline";
 import { cn } from "@/lib/utils";
 import {
@@ -877,8 +882,8 @@ function HomePage() {
         audio
           .play()
           .then(startTextReveal)
-          .catch((error: unknown) => {
-            toast.error(error instanceof Error ? error.message : assistantCopy.voicePlayFailed);
+          .catch(() => {
+            toast.error(assistantCopy.voicePlayFailed);
             playback.release();
             settle();
           });
@@ -1478,6 +1483,9 @@ function HomePage() {
   }, [assistantCopy.awakeReady, isAssistantLoading, pushAssistant]);
 
   const findRecipeNumber = useCallback((text: string) => {
+    const ordinal = extractRecipeOrdinalTarget(text, { allowBareOrdinal: true });
+    if (ordinal) return ordinal - 1;
+
     const normalized = text.toLowerCase();
     const numberMap = [
       /(第)?(1|一|①)(个|道)?/,
@@ -1604,6 +1612,21 @@ function HomePage() {
       const turnId = commandTurnRef.current + 1;
       commandTurnRef.current = turnId;
       shouldAutoScrollRef.current = true;
+
+      const recipeToCook = findRecipeToStartCookingFromTranscript(text, recipes);
+      if (recipeToCook) {
+        stopAssistantPlayback(true);
+        void navigate({ to: "/cook", search: { id: recipeToCook.id, step: 0 } });
+        return;
+      }
+
+      const recipeToOpen = findRecipeToOpenFromTranscript(text, recipes);
+      if (recipeToOpen) {
+        stopAssistantPlayback(true);
+        void navigate({ to: "/recipe-detail", search: { id: recipeToOpen.id } });
+        return;
+      }
+
       const userMessage = addMessage({ role: "user", kind: "text", text });
       const conversationMessages = [...messages, userMessage];
       setAssistantLoading(true);
@@ -1615,12 +1638,12 @@ function HomePage() {
         const selectedIndex = findRecipeNumber(text);
         const selectedRecipe = selectedIndex == null ? null : latestRecipes[selectedIndex];
 
-        if (selectedRecipe && /(看|查看|详情|打开|介绍)/i.test(text)) {
+        if (selectedRecipe && /(看|查看|详情|打开|介绍|open|show|view|details?)/i.test(text)) {
           handleOpenRecipe(selectedRecipe);
           return;
         }
 
-        if (selectedRecipe && /(开始|做|烹饪|煮)/i.test(text)) {
+        if (selectedRecipe && /(开始|做|烹饪|煮|start|cook)/i.test(text)) {
           handleStartCooking(selectedRecipe);
           return;
         }
@@ -1762,6 +1785,7 @@ function HomePage() {
       navigate,
       promptConfigureLlmKey,
       pushAssistant,
+      recipes,
       setSpeechRate,
       stopAssistantPlayback,
       streamAssistantTextReply,
@@ -1837,8 +1861,12 @@ function HomePage() {
               <StatusPanel
                 label={t("home.wakeTip", { wakeWord: t("app.wakeWord") })}
                 onManualWake={() => {
-                  if (hasElevenLabsKey) triggerManualWake();
-                  else promptConfigureElevenLabsKey();
+                  if (hasElevenLabsKey) {
+                    triggerManualWake();
+                    window.dispatchEvent(new CustomEvent("cooktalk:manual-wake"));
+                  } else {
+                    promptConfigureElevenLabsKey();
+                  }
                 }}
               />
             </div>
@@ -1906,8 +1934,12 @@ function HomePage() {
                   size="icon"
                   onClick={() => {
                     if (!input.trim()) {
-                      if (hasElevenLabsKey) triggerManualWake();
-                      else promptConfigureElevenLabsKey();
+                      if (hasElevenLabsKey) {
+                        triggerManualWake();
+                        window.dispatchEvent(new CustomEvent("cooktalk:manual-wake"));
+                      } else {
+                        promptConfigureElevenLabsKey();
+                      }
                     }
                   }}
                   className={cn(

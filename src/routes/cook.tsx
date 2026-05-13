@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useLiveQuery } from "dexie-react-hooks";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -26,6 +27,11 @@ import {
   type VoiceStatus,
 } from "@/lib/voice-pipeline";
 import { db, type Recipe } from "@/lib/db";
+import {
+  toCombinedVoiceOptions,
+  useElevenLabsVoices,
+  type ElevenLabsVoiceOption,
+} from "@/hooks/use-elevenlabs-voices";
 import i18n from "@/lib/i18n";
 import { cleanStructuredRecipePayload } from "@/lib/llm";
 import { stopActiveVoicePlayback } from "@/lib/voice-playback";
@@ -69,7 +75,7 @@ const hiddenQaTranscriptIntentTypes = new Set<VoiceIntentType>([
   "previous_step",
   "pause",
   "resume",
-  "set_timer",
+  "switch_voice",
   "cancel_timer",
   "extend_timer",
   "jump_step",
@@ -102,6 +108,38 @@ function cleanRecipeForCooking(recipe: Recipe, language: AppLanguage): Recipe {
     steps: cleaned.steps.length > 0 ? cleaned.steps : recipe.steps,
     tags: cleaned.tags,
   };
+}
+
+function normalizeVoiceMatchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[“”‘’"'`]/g, "")
+    .replace(/[\s\-_:：|/\\()[\]{}]+/g, "")
+    .trim();
+}
+
+function findVoiceOptionByName(
+  voiceOptions: ElevenLabsVoiceOption[],
+  requestedName: string | undefined,
+): ElevenLabsVoiceOption | null {
+  const query = normalizeVoiceMatchText(requestedName ?? "");
+  if (!query) return null;
+
+  const candidates = voiceOptions.map((option) => ({
+    option,
+    label: normalizeVoiceMatchText(option.label),
+    displayLabel: normalizeVoiceMatchText(option.displayLabel),
+  }));
+
+  return (
+    candidates.find(({ label }) => label === query)?.option ??
+    candidates.find(({ displayLabel }) => displayLabel === query)?.option ??
+    candidates.find(
+      ({ label, displayLabel }) => label.includes(query) || displayLabel.includes(query),
+    )?.option ??
+    candidates.find(({ label }) => query.includes(label) && label.length >= 2)?.option ??
+    null
+  );
 }
 
 function recipeNeedsContentUpdate(current: Recipe, cleaned: Recipe): boolean {
@@ -147,10 +185,11 @@ function CookPage() {
   const toggleVoiceBadges = useAppStore((s) => s.toggleVoiceBadges);
   const cookingVoiceId = useAppStore((s) => s.cookingVoiceId);
   const wakeWords = useAppStore((s) => s.wakeWords);
-  const listenMode = useAppStore((s) => s.listenMode);
   const manualWakeActive = useAppStore((s) => s.manualWakeActive);
   const clearManualWake = useAppStore((s) => s.clearManualWake);
   const hasElevenLabsKey = useAppStore((s) => s.hasElevenLabsKey);
+  const liveClonedVoices = useLiveQuery(() => db.voices.orderBy("createdAt").toArray(), []);
+  const { options: elevenLabsVoiceOptions } = useElevenLabsVoices();
 
   const [recipe, setRecipe] = useState<Recipe | null | undefined>(undefined);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -204,6 +243,15 @@ function CookPage() {
   const recipeId = recipe?.id;
   const resolvedVoiceId = recipe?.voiceId ?? cookingVoiceId ?? undefined;
   const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
+  const voiceOptions = useMemo(
+    () =>
+      toCombinedVoiceOptions(liveClonedVoices ?? [], elevenLabsVoiceOptions, (voice) =>
+        voice.description === "Cloned voice"
+          ? t("voices.clonedVoice")
+          : voice.description || t("voices.clonedVoice"),
+      ),
+    [elevenLabsVoiceOptions, liveClonedVoices, t],
+  );
 
   const appendQaMessage = useCallback((speaker: QaMessage["speaker"], text: string) => {
     const trimmed = text.trim();
@@ -279,7 +327,7 @@ function CookPage() {
   }, [cancelPendingSpeech, nextStep, safeStep, stepCount, updateLatestState]);
 
   const speak = useCallback(
-    async (text: string, options?: { skipCard?: boolean }) => {
+    async (text: string, options?: { skipCard?: boolean; voiceId?: string | null }) => {
       const trimmed = text.trim();
       if (!trimmed) return false;
 
@@ -295,7 +343,7 @@ function CookPage() {
       setIsSpeaking(true);
       setVoiceError(null);
       try {
-        await speakWithElevenLabs(trimmed, resolvedVoiceId, language, {
+        await speakWithElevenLabs(trimmed, options?.voiceId ?? resolvedVoiceId, language, {
           signal: abortController.signal,
         });
         return true;
@@ -316,7 +364,11 @@ function CookPage() {
   );
 
   const announceCurrentStep = useCallback(
-    async (targetRecipe: Recipe, targetStep: number, options?: { force?: boolean }) => {
+    async (
+      targetRecipe: Recipe,
+      targetStep: number,
+      options?: { force?: boolean; voiceId?: string | null },
+    ) => {
       const stepKey = `${targetRecipe.id}:${targetStep}:${language}`;
       if (
         (!options?.force && autoAnnouncedStepKeysRef.current.has(stepKey)) ||
@@ -331,7 +383,7 @@ function CookPage() {
       announcingStepKeyRef.current = stepKey;
       const stepSpeech = buildStepSpeech(targetRecipe, targetStep, language);
       try {
-        const didSpeak = await speak(stepSpeech, { skipCard: true });
+        const didSpeak = await speak(stepSpeech, { skipCard: true, voiceId: options?.voiceId });
         if (didSpeak) {
           announcedStepKeysRef.current.add(stepKey);
           setSpokenStepKeys(new Set(announcedStepKeysRef.current));
@@ -343,6 +395,73 @@ function CookPage() {
       }
     },
     [language, speak],
+  );
+
+  const handleSwitchVoice = useCallback(
+    async (requestedName: string | undefined, currentRecipe: Recipe, stepIndex: number) => {
+      if (!requestedName?.trim()) {
+        await speak(
+          language === "zh"
+            ? "请说出要切换的音色名称。"
+            : "Please say which voice you want to switch to.",
+        );
+        return;
+      }
+
+      const selectedVoice = findVoiceOptionByName(voiceOptions, requestedName);
+      if (!selectedVoice) {
+        await speak(
+          language === "zh"
+            ? `没有找到“${requestedName}”这个音色。`
+            : `I could not find a voice named ${requestedName}.`,
+        );
+        return;
+      }
+
+      const previousRecipe = currentRecipe;
+      const nextRecipe: Recipe = {
+        ...currentRecipe,
+        voiceId: selectedVoice.value,
+      };
+
+      cancelPendingSpeech();
+      setRecipe(nextRecipe);
+      updateLatestState({ recipe: nextRecipe });
+
+      try {
+        await db.recipes.update(currentRecipe.id, { voiceId: selectedVoice.value });
+        toast.success(
+          language === "zh"
+            ? `已切换到“${selectedVoice.label}”，正在重新朗读当前步骤。`
+            : `Switched to ${selectedVoice.label}. Re-reading the current step.`,
+        );
+        await announceCurrentStep(nextRecipe, stepIndex, {
+          force: true,
+          voiceId: selectedVoice.value,
+        });
+      } catch (error) {
+        setRecipe(previousRecipe);
+        updateLatestState({ recipe: previousRecipe });
+        const message =
+          error instanceof Error
+            ? error.message
+            : language === "zh"
+              ? "切换音色失败。"
+              : "Could not switch voices.";
+        setVoiceError(message);
+        toast.error(message);
+        await speak(message, { voiceId: previousRecipe.voiceId ?? cookingVoiceId });
+      }
+    },
+    [
+      announceCurrentStep,
+      cancelPendingSpeech,
+      cookingVoiceId,
+      language,
+      speak,
+      updateLatestState,
+      voiceOptions,
+    ],
   );
 
   const askCookingQuestion = useCallback(
@@ -434,6 +553,9 @@ function CookPage() {
           return;
         case "repeat_step":
           await announceCurrentStep(currentRecipe, stepIndex, { force: true });
+          return;
+        case "switch_voice":
+          await handleSwitchVoice(intent.voiceName, currentRecipe, stepIndex);
           return;
         case "read_tip": {
           const tip = currentRecipe.steps[stepIndex]?.tips?.trim();
@@ -533,6 +655,7 @@ function CookPage() {
       cancelTimer,
       extendTimer,
       handleClose,
+      handleSwitchVoice,
       jumpToStep,
       language,
       nextStep,
@@ -567,7 +690,7 @@ function CookPage() {
     enabled: recipe !== null && recipe !== undefined,
     wakeWords: activeWakeWords,
     language,
-    listenMode,
+    listenMode: "always",
     manualWakeActive,
     awakeResetKey: recipe?.id,
     onWake: () => clearManualWake(),

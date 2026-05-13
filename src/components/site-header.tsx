@@ -62,6 +62,8 @@ export function SiteHeader() {
               key={l.to}
               to={l.to}
               activeOptions={{ exact: l.to === "/" }}
+              data-voice-label={l.label}
+              data-voice-aliases={`${l.label} 打开${l.label} 进入${l.label} open ${l.label} go to ${l.label}`}
               className="relative inline-flex h-9 shrink-0 items-center justify-center rounded-full px-4 text-sm leading-none text-muted-foreground transition-colors before:absolute before:inset-0 before:rounded-full before:bg-secondary before:opacity-0 before:transition-opacity hover:text-foreground data-[status=active]:text-foreground data-[status=active]:before:opacity-100"
             >
               <span className="relative z-10">{l.label}</span>
@@ -94,6 +96,8 @@ export function SiteHeader() {
                 key={l.to}
                 to={l.to}
                 activeOptions={{ exact: l.to === "/" }}
+                data-voice-label={l.label}
+                data-voice-aliases={`${l.label} 打开${l.label} 进入${l.label} open ${l.label} go to ${l.label}`}
                 className="relative inline-flex h-11 items-center rounded-xl px-4 text-sm leading-none text-muted-foreground transition-colors before:absolute before:inset-0 before:rounded-xl before:bg-secondary before:opacity-0 before:transition-opacity hover:text-foreground hover:before:opacity-100 data-[status=active]:text-foreground data-[status=active]:before:opacity-100"
                 onClick={() => setMobileOpen(false)}
               >

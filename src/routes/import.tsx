@@ -1300,7 +1300,23 @@ function ImportPage() {
     });
   };
 
+  const addManualIngredient = () => {
+    setManualDisplayMode((current) => (current === "steps" ? "all" : current));
+
+    setManualIngredients((current) => {
+      const next = [createEmptyIngredient(), ...current];
+
+      window.requestAnimationFrame(() => {
+        manualIngredientNameRefs.current[0]?.focus();
+      });
+
+      return next;
+    });
+  };
+
   const addManualStep = () => {
+    setManualDisplayMode((current) => (current === "ingredients" ? "all" : current));
+
     setManualSteps((current) => {
       const next = [...current, createEmptyManualStep()];
 
@@ -2683,6 +2699,121 @@ function ImportPage() {
   }, [openMediaImportDialog]);
 
   useEffect(() => {
+    const handleImportVoiceCommand = (event: Event) => {
+      const transcript = (event as CustomEvent<{ transcript?: string }>).detail?.transcript ?? "";
+      const text = normalizeSpeechText(transcript);
+      if (!text) return;
+
+      if (/(手动|文本|粘贴|输入).*(菜谱|食谱|做法)|manual.*recipe|paste.*recipe|text.*recipe/i.test(text)) {
+        event.preventDefault();
+        setMode("manual");
+        setIsManualTextDialogOpen(true);
+        return;
+      }
+
+      if (/(视频|音频|媒体).*(导入|上传|选择)|导入.*(视频|音频|媒体)|import.*(video|audio|media)|upload.*(video|audio|media)|choose.*(video|audio|media)/i.test(text)) {
+        event.preventDefault();
+        setMode("video");
+        openMediaImportDialog();
+        return;
+      }
+
+      if (/(选择|更换|重新选择).*(文件|视频|音频|媒体)|choose.*file|select.*file|choose another file/i.test(text)) {
+        event.preventDefault();
+        openMediaImportDialog();
+        return;
+      }
+
+      if (/(开始|处理|提取|整理).*(视频|音频|媒体|文件)|start processing|process video|extract recipe/i.test(text)) {
+        if (pendingMediaFile) {
+          event.preventDefault();
+          void startPipeline(pendingMediaFile);
+          return;
+        }
+        if (selectedMediaFile) {
+          event.preventDefault();
+          void startPipeline();
+          return;
+        }
+      }
+
+      if (/(重新整理|重新生成结构|重新识别|restructure|organize again|extract again)/i.test(text)) {
+        event.preventDefault();
+        void restructureVideoDraft();
+        return;
+      }
+
+      if (/(返回上传|重新上传|重新选择文件|back to upload|choose another file)/i.test(text)) {
+        event.preventDefault();
+        void returnToUploadStep();
+        return;
+      }
+
+      if (/(生成|重新生成).*(封面|cover)|generate.*cover|regenerate.*cover/i.test(text)) {
+        event.preventDefault();
+        if (mode === "manual") {
+          void handleRegenerateManualCover();
+        } else {
+          void handleRegenerateCover();
+        }
+        return;
+      }
+
+      if (/(上传|选择|更换).*(封面|图片|cover|image)|upload.*cover|choose.*cover|replace.*cover/i.test(text)) {
+        event.preventDefault();
+        if (mode === "manual") manualCoverInputRef.current?.click();
+        else coverInputRef.current?.click();
+        return;
+      }
+
+      if (/(添加|新增).*(食材|材料|ingredient)|add.*ingredient/i.test(text)) {
+        event.preventDefault();
+        if (mode === "manual") addManualIngredient();
+        else addEditIngredient();
+        return;
+      }
+
+      if (/(添加|新增).*(步骤|做法|step)|add.*step/i.test(text)) {
+        event.preventDefault();
+        if (mode === "manual") addManualStep();
+        else addEditStep();
+        return;
+      }
+
+      if (/(保存|完成|创建).*(菜谱|食谱|recipe)|save.*recipe|create.*recipe/i.test(text)) {
+        event.preventDefault();
+        if (mode === "manual") {
+          void handleSaveManual();
+        } else if (stage === "preview" || stage === "error") {
+          void handleSaveVideo();
+        }
+      }
+    };
+
+    window.addEventListener("cooktalk:voice-command", handleImportVoiceCommand);
+    return () => window.removeEventListener("cooktalk:voice-command", handleImportVoiceCommand);
+  }, [
+    addEditIngredient,
+    addEditStep,
+    addManualIngredient,
+    addManualStep,
+    handleRegenerateCover,
+    handleRegenerateManualCover,
+    handleSaveManual,
+    handleSaveVideo,
+    mode,
+    openMediaImportDialog,
+    pendingMediaFile,
+    returnToUploadStep,
+    selectedMediaFile,
+    setIsManualTextDialogOpen,
+    setMode,
+    stage,
+    startPipeline,
+    restructureVideoDraft,
+  ]);
+
+  useEffect(() => {
     if (!ENABLE_GUIDED_FOLLOW_UPS) return;
 
     const handleVoiceCommand = (event: Event) => {
@@ -3089,7 +3220,7 @@ function ImportPage() {
                     aria-disabled={!canCreateAnotherVideoTask}
                     aria-label={t("import.chooseMedia")}
                     data-voice-label={t("import.chooseMedia")}
-                    data-voice-aliases="闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵′粙鏌涢幒鎴含妤犵偞甯掗濂稿炊閳?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″潡鏌熼崣澶嬪唉鐎规洖宕埥澶嬫綇閵婏富鍟?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鑼妽闁哥姴妫濋弻娑㈠焺閸愌呯箒闂?闂備浇顕уù鐑藉极閹间礁鍌ㄧ憸鏂跨暦閿濆骞㈡繛鍡樺姇閺嬪倿姊虹化鏇炲⒉濞撴碍顨婂?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢锝嗙妞ゃ儱锕弻鐔煎礈娴ｇ儤鎲橀梺?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵倹淇婇銏″殗妤犵偛娴风划鐢碘偓锝庡亝椤?select media choose media upload video import video choose video"
+                    data-voice-aliases="选择媒体 选择视频 选择音频 上传视频 上传音频 导入视频 导入音频 select media choose media upload video import video choose video"
                   >
                     <VoiceBadge n={1} className="absolute left-5 top-5" />
 
@@ -3110,7 +3241,7 @@ function ImportPage() {
                         <button
                           className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay sm:w-auto"
                           data-voice-label={t("import.startProcessing")}
-                          data-voice-aliases="闂佽瀛╅鏍窗閹烘纾婚柟鐐灱閺€鑺ャ亜閺冨倵鎷￠柛搴＄箲閵囧嫰鏁傜憴鍕彋闂?闂佽瀛╅鏍窗閹烘纾婚柟鐐灱閺€鑺ャ亜閺冨倵鎷￠柛搴㈡尰缁绘盯寮堕幋鐑嗘＆闂佸湱顒茬徊浠嬧€﹂妸鈺佸耿婵☆垰鍚嬮?婵犵數濮伴崹鐓庘枖濞戞埃鍋撳鐓庢珝妤犵偛鍟换婵嬪礋椤掆偓閺嬪倿姊虹化鏇炲⒉濞撴碍顨婂?闂傚倷绀佸﹢杈╁垝椤栫偛绀夐柡鍤堕姹楅梺鎼炲労閸撴岸宕甸弴鐔虹瘈濠电姴鍊归ˉ鐐烘煟?start processing process video extract recipe"
+                          data-voice-aliases="开始处理 开始整理 提取菜谱 整理视频 start processing process video extract recipe"
                           onClick={(e) => {
                             e.stopPropagation();
 
@@ -3146,7 +3277,7 @@ function ImportPage() {
                           }}
                           disabled={!canCreateAnotherVideoTask}
                           data-voice-label={t("import.chooseMedia")}
-                          data-voice-aliases="闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵′粙鏌涢幒鎴含妤犵偞甯掗濂稿炊閳?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″潡鏌熼崣澶嬪唉鐎规洖宕埥澶嬫綇閵婏富鍟?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鑼妽闁哥姴妫濋弻娑㈠焺閸愌呯箒闂?闂備浇顕уù鐑藉极閹间礁鍌ㄧ憸鏂跨暦閿濆骞㈡繛鍡樺姇閺嬪倿姊虹化鏇炲⒉濞撴碍顨婂?婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢锝嗙妞ゃ儱锕弻鐔煎礈娴ｇ儤鎲橀梺?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵倹淇婇銏″殗妤犵偛娴风划鐢碘偓锝庡亝椤?select media choose media upload video import video choose video"
+                          data-voice-aliases="选择媒体 选择视频 选择音频 上传视频 上传音频 导入视频 导入音频 select media choose media upload video import video choose video"
                         >
                           <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3198,7 +3329,7 @@ function ImportPage() {
                     className="mt-8 inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-5 py-3 text-sm hover:border-foreground sm:w-auto"
                     onClick={() => void returnToUploadStep()}
                     data-voice-label={t("import.backToUploadStep")}
-                    data-voice-aliases="闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€闁靛ě鈧弸鏍ㄧ節閻㈤潧小闁煎啿鐖奸幃?闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€妞ゆ挾鍠撻崝鍨節閵忥絾纭炬い鎴濇嚇椤㈡棃濡烽埡鍌滃幐闂佺ǹ鏈喊宥夋儗濡ゅ懏鐓?闂傚倷鐒﹂幃鍫曞磿閹惰棄纾绘繛鎴欏灩閺勩儵鎮橀悙鎻掆挃闁崇粯鏌ㄩ埞鎴︽偐鏉堫偄鍘￠梺缁樺姇閿曨亪寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?闂傚倸鍊烽悞锕併亹閸愵亞鐭撻柣銏㈩焾閽冪喎鈹戦悩鍙夊闁绘帟顕ч…璺ㄦ崉娓氼垰鍓板銈呯箞閸庣敻寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?back to upload choose another file"
+                    data-voice-aliases="返回上传 重新上传 重新选择文件 back to upload choose another file"
                   >
                     <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3242,7 +3373,7 @@ function ImportPage() {
                       className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border px-6 py-3 text-sm hover:border-foreground sm:w-auto"
                       onClick={() => void returnToUploadStep()}
                       data-voice-label={t("import.backToUploadStep")}
-                      data-voice-aliases="闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€闁靛ě鈧弸鏍ㄧ節閻㈤潧小闁煎啿鐖奸幃?闂備礁鎼ˇ顐﹀疾濠婂牆钃熼柕濞垮剭濞差亜鍐€妞ゆ挾鍠撻崝鍨節閵忥絾纭炬い鎴濇嚇椤㈡棃濡烽埡鍌滃幐闂佺ǹ鏈喊宥夋儗濡ゅ懏鐓?闂傚倷鐒﹂幃鍫曞磿閹惰棄纾绘繛鎴欏灩閺勩儵鎮橀悙鎻掆挃闁崇粯鏌ㄩ埞鎴︽偐鏉堫偄鍘￠梺缁樺姇閿曨亪寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?闂傚倸鍊烽悞锕併亹閸愵亞鐭撻柣銏㈩焾閽冪喎鈹戦悩鍙夊闁绘帟顕ч…璺ㄦ崉娓氼垰鍓板銈呯箞閸庣敻寮婚敓鐘茬＜婵﹩鍘鹃悡鎴︽⒑?back to upload choose another file"
+                      data-voice-aliases="返回上传 重新上传 重新选择文件 back to upload choose another file"
                     >
                       <RotateCcw className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3269,7 +3400,7 @@ function ImportPage() {
                       onClick={() => void restructureVideoDraft()}
                       disabled={stage === "saving" || stage === "done" || !transcript.trim()}
                       data-voice-label={t("import.restructure")}
-                      data-voice-aliases="restructure recipe organize recipe again"
+                      data-voice-aliases="重新整理 重新整理菜谱 重新生成结构 restructure recipe organize recipe again"
                     >
                       <Wand2 className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3371,7 +3502,7 @@ function ImportPage() {
                         type="button"
                         disabled={stage === "saving" || stage === "done"}
                         data-voice-label={t("import.manualAddIngredient")}
-                        data-voice-aliases="add ingredient"
+                        data-voice-aliases="添加食材 新增食材 添加材料 add ingredient"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3444,7 +3575,7 @@ function ImportPage() {
                         type="button"
                         disabled={stage === "saving" || stage === "done"}
                         data-voice-label={t("import.manualAddStep")}
-                        data-voice-aliases="add step"
+                        data-voice-aliases="添加步骤 新增步骤 add step"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3650,7 +3781,7 @@ function ImportPage() {
                             type="button"
                             aria-label={t("import.manualTextOpenDialog")}
                             data-voice-label={t("import.manualTextOpenDialog")}
-                            data-voice-aliases="paste recipe import text structure recipe from text"
+                            data-voice-aliases="粘贴菜谱 手动输入菜谱 导入文本 从文本整理菜谱 paste recipe import text structure recipe from text"
                           >
                             <Sparkles className="h-4 w-4" strokeWidth={1.75} />
                           </button>
@@ -3668,7 +3799,7 @@ function ImportPage() {
                             type="button"
                             aria-label={t("import.chooseMedia")}
                             data-voice-label={t("import.chooseMedia")}
-                            data-voice-aliases="import media choose media upload video upload audio"
+                            data-voice-aliases="导入媒体 选择媒体 上传视频 上传音频 import media choose media upload video upload audio"
                           >
                             <FileVideo className="h-4 w-4" strokeWidth={1.75} />
                           </button>
@@ -3878,7 +4009,7 @@ function ImportPage() {
                         }}
                         type="button"
                         data-voice-label={t("import.manualAddIngredient")}
-                        data-voice-aliases="濠电姷鏁搁崕鎴犵礊閳ь剚銇勯弴鍡楀閸欏繘鏌ｉ幇顓熷剹婵℃彃缍婇弻锝夊棘閹稿骸鏆堢紓?闂傚倷绀侀幖顐﹀磹閻熼偊鐔嗘慨妞诲亾鐠侯垶鏌涢幇銊︽珦婵℃彃缍婇弻锝夊棘閹稿骸鏆堢紓?add ingredient"
+                        data-voice-aliases="添加食材 新增食材 添加材料 add ingredient"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
 
@@ -3974,7 +4105,7 @@ function ImportPage() {
                         }}
                         type="button"
                         data-voice-label={t("import.manualAddStep")}
-                        data-voice-aliases="濠电姷鏁搁崕鎴犵礊閳ь剚銇勯弴鍡楀閸欏繘鏌ｉ幇顒佲枙婵為棿鍗抽弻鏇熷緞閸℃ɑ鐝ㄩ梺?闂傚倷绀侀幖顐﹀磹閻熼偊鐔嗘慨妞诲亾鐠侯垶鏌涢幇鐢靛帥婵為棿鍗抽弻鏇熷緞閸℃ɑ鐝ㄩ梺?add step"
+                        data-voice-aliases="添加步骤 新增步骤 add step"
                       >
                         <Plus className="h-4 w-4" strokeWidth={1.75} />
 
@@ -4158,7 +4289,7 @@ function ImportPage() {
                           data-voice-label={
                             coverPreviewUrl ? t("import.coverPreviewOpen") : t("import.uploadCover")
                           }
-                          data-voice-aliases="upload cover choose cover replace cover preview cover"
+                          data-voice-aliases="上传封面 选择封面 更换封面 查看封面 upload cover choose cover replace cover preview cover"
                           onClick={() => {
                             if (stage === "saving") return;
 
@@ -4222,7 +4353,7 @@ function ImportPage() {
                                 type="button"
                                 aria-label={t("import.uploadCover")}
                                 data-voice-label={t("import.uploadCover")}
-                                data-voice-aliases="upload cover choose cover replace cover"
+                                data-voice-aliases="上传封面 选择封面 更换封面 upload cover choose cover replace cover"
                               >
                                 <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                               </button>
@@ -4244,7 +4375,7 @@ function ImportPage() {
                                 type="button"
                                 aria-label={t("import.aiGenerateCover")}
                                 data-voice-label={t("import.aiGenerateCover")}
-                                data-voice-aliases="regenerate cover generate cover ai generate cover"
+                                data-voice-aliases="生成封面 重新生成封面 AI生成封面 regenerate cover generate cover ai generate cover"
                               >
                                 {isGeneratingCover ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -4302,7 +4433,7 @@ function ImportPage() {
                             ? t("import.coverPreviewOpen")
                             : t("import.uploadCover")
                         }
-                        data-voice-aliases="婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″灝霉濠婂啯鍟炵紒妤冨枛閸┾偓妞ゆ帒瀚弲?闂傚倷鑳堕幊鎾剁不瀹ュ鍨傞柛锔诲幗椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倷绀侀幖顐ゆ偖椤愶箑纾块柛鎰嚋閼板潡鏌涘☉鍗炵仧闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倷娴囬妴鈧柛瀣崌閺岀喖顢涢崱鏇燁樂婵炲鍏橀弻锝堢疀閹惧墎顓虹紓浣藉煐瀹€鎼佸极?upload cover choose cover replace cover preview cover"
+                        data-voice-aliases="上传封面 选择封面 更换封面 查看封面 upload cover choose cover replace cover preview cover"
                         onClick={() => {
                           if (isManualSaving) return;
 
@@ -4370,7 +4501,7 @@ function ImportPage() {
                               type="button"
                               aria-label={t("import.uploadCover")}
                               data-voice-label={t("import.uploadCover")}
-                              data-voice-aliases="婵犵數鍋為崹鍫曞箰閹间焦鏅濋柨婵嗘处椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?闂傚倸鍊风欢锟犲磻閸曨垁鍥箥椤旂懓浜炬慨妯稿劚婵″灝霉濠婂啯鍟炵紒妤冨枛閸┾偓妞ゆ帒瀚弲?闂傚倷鑳堕幊鎾剁不瀹ュ鍨傞柛锔诲幗椤洟鏌涢幘鍙夘樂闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?upload cover choose cover replace cover"
+                              data-voice-aliases="上传封面 选择封面 更换封面 upload cover choose cover replace cover"
                             >
                               <UploadCloud className="h-4 w-4" strokeWidth={1.75} />
                             </button>
@@ -4392,7 +4523,7 @@ function ImportPage() {
                               type="button"
                               aria-label={t("import.aiGenerateCover")}
                               data-voice-label={t("import.aiGenerateCover")}
-                              data-voice-aliases="闂傚倸鍊烽悞锕併亹閸愵亞鐭撻柣銏㈩焾閽冪喎鈹戦悩鍙夊闁稿鍔戦弻锝夊籍閸屻倗鍔搁梺璇茬箰濞差參骞冨Ο璺ㄧ杸閹艰揪绲块悰銏ゆ⒑?闂傚倷鐒﹂惇褰掑垂婵犳艾绐楅柟鐗堟緲閸ㄥ倹鎱ㄥΟ鍝勭秮闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?AI闂傚倷鐒﹂惇褰掑垂婵犳艾绐楅柟鐗堟緲閸ㄥ倹鎱ㄥΟ鍝勭秮闁绘帒锕ら妴鎺戭潩閿濆懍澹曢梻?regenerate cover generate cover ai generate cover"
+                              data-voice-aliases="生成封面 重新生成封面 AI生成封面 regenerate cover generate cover ai generate cover"
                             >
                               {isManualGeneratingCover ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -4455,7 +4586,7 @@ function ImportPage() {
               aria-disabled={!canCreateAnotherVideoTask}
               aria-label={t("import.chooseMedia")}
               data-voice-label={t("import.chooseMedia")}
-              data-voice-aliases="import media choose media upload video upload audio"
+              data-voice-aliases="导入媒体 选择媒体 上传视频 上传音频 import media choose media upload video upload audio"
             >
               <div className="flex h-16 w-16 items-center justify-center rounded-full border border-foreground/30 bg-background">
                 <FileVideo className="h-7 w-7" strokeWidth={1.25} />
@@ -4484,7 +4615,7 @@ function ImportPage() {
                     <button
                       className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm text-background hover:bg-clay disabled:opacity-50"
                       data-voice-label={t("import.startProcessing")}
-                      data-voice-aliases="start processing process video extract recipe"
+                      data-voice-aliases="开始处理 开始整理 提取菜谱 整理视频 start processing process video extract recipe"
                       onClick={(event) => {
                         event.stopPropagation();
                         if (!hasElevenLabsKey) {

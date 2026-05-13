@@ -87,6 +87,7 @@ export function useVoiceSession({
   const assistantResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCapturingRef = useRef(false);
   const shouldListenRef = useRef(false);
+  const speechRecognitionBlockedRef = useRef(false);
   const isAwakeRef = useRef(false);
   const isAssistantSpeakingRef = useRef(false);
   const onTranscriptRef = useRef(onTranscript);
@@ -95,8 +96,8 @@ export function useVoiceSession({
   const shouldHandleSleepingTranscriptRef = useRef(shouldHandleSleepingTranscript);
   const isSupported =
     typeof navigator !== "undefined" &&
-    !!getSpeechRecognitionConstructor() &&
-    !!navigator.mediaDevices?.getUserMedia;
+    !!navigator.mediaDevices?.getUserMedia &&
+    (!!getSpeechRecognitionConstructor() || typeof MediaRecorder !== "undefined");
 
   const voiceT = useCallback(
     (key: string, options?: Record<string, unknown>) => i18n.t(key, { lng: language, ...options }),
@@ -146,16 +147,26 @@ export function useVoiceSession({
   const restartRecognition = useCallback(() => {
     if (
       !shouldListenRef.current ||
+      speechRecognitionBlockedRef.current ||
       isCapturingRef.current ||
       isMuted ||
       isAssistantSpeakingRef.current
     ) {
       return;
     }
+    if (!recognitionRef.current) {
+      setStatus("idle");
+      return;
+    }
     try {
-      recognitionRef.current?.start();
+      recognitionRef.current.start();
       setStatus(isAwakeRef.current ? "awake" : "listening");
-    } catch {
+    } catch (error) {
+      if (isSpeechRecognitionPolicyError(error)) {
+        speechRecognitionBlockedRef.current = true;
+        setStatus("idle");
+        return;
+      }
       restartTimerRef.current = setTimeout(restartRecognition, 600);
     }
   }, [isMuted]);
@@ -194,6 +205,11 @@ export function useVoiceSession({
       if (isMuted && !options?.force) return;
       if (isMuted && options?.force) setMuted(false);
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        setStatus("unsupported");
+        setError(voiceT("voice.micUnsupported"));
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
         setStatus("unsupported");
         setError(voiceT("voice.micUnsupported"));
         return;
@@ -247,7 +263,7 @@ export function useVoiceSession({
         setStatus("thinking");
         await onTranscriptRef.current(transcript);
       } catch (err) {
-        const message = err instanceof Error ? err.message : voiceT("voice.recognitionFailed");
+        const message = getMicrophoneErrorMessage(err, language, voiceT);
         setError(message);
         setStatus("error");
         onErrorRef.current?.(message);
@@ -276,20 +292,22 @@ export function useVoiceSession({
   useEffect(() => {
     const wakeManually = () => {
       if (!enabled || isMuted) return;
+      if (isCapturingRef.current) return;
       isAwakeRef.current = true;
       setError(null);
       setStatus("awake");
       onWakeRef.current?.({ phrase: "manual", source: "manual" });
-      restartRecognition();
+      void captureCommand({ force: true });
     };
 
     window.addEventListener("cooktalk:manual-wake", wakeManually);
     if (manualWakeActive) wakeManually();
 
     return () => window.removeEventListener("cooktalk:manual-wake", wakeManually);
-  }, [enabled, isMuted, manualWakeActive, restartRecognition]);
+  }, [captureCommand, enabled, isMuted, manualWakeActive]);
 
   useEffect(() => {
+    speechRecognitionBlockedRef.current = false;
     shouldListenRef.current = enabled && !isMuted;
     if (!enabled || isMuted) {
       isAwakeRef.current = false;
@@ -299,8 +317,13 @@ export function useVoiceSession({
     }
 
     const Recognition = getSpeechRecognitionConstructor();
-    if (typeof navigator === "undefined" || !Recognition || !navigator.mediaDevices?.getUserMedia) {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setStatus("unsupported");
+      return;
+    }
+
+    if (!Recognition) {
+      setStatus("idle");
       return;
     }
 
@@ -362,8 +385,12 @@ export function useVoiceSession({
 
     recognition.onerror = (event) => {
       if (["no-speech", "aborted"].includes(event.error)) return;
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        speechRecognitionBlockedRef.current = true;
+        stopRecognition();
+      }
       const message =
-        event.error === "not-allowed"
+        event.error === "not-allowed" || event.error === "service-not-allowed"
           ? i18n.t("voice.micDenied", { lng: language })
           : i18n.t("voice.listeningError", { error: event.error, lng: language });
       setError(message);
@@ -373,6 +400,7 @@ export function useVoiceSession({
     recognition.onend = () => {
       if (
         shouldListenRef.current &&
+        !speechRecognitionBlockedRef.current &&
         !isCapturingRef.current &&
         !isMuted &&
         !isAssistantSpeakingRef.current
@@ -483,6 +511,50 @@ function startVoiceActivityMonitor(stream: MediaStream): VoiceActivityMonitor {
 
 function hasEnoughVoiceActivity(stats: VoiceActivityStats, blob: Blob): boolean {
   return blob.size > 1_000 && stats.activeMs >= 320 && stats.peak >= 0.035;
+}
+
+function getMicrophoneErrorMessage(
+  error: unknown,
+  language: "en" | "zh",
+  voiceT: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (isMicrophonePermissionError(error)) {
+    return voiceT("voice.micDenied");
+  }
+
+  if (isSpeechRecognitionPolicyError(error)) {
+    return voiceT("voice.micDenied");
+  }
+
+  if (error instanceof DOMException && error.name === "NotFoundError") {
+    return language === "zh"
+      ? "没有找到可用的麦克风。"
+      : "No available microphone was found.";
+  }
+
+  if (error instanceof DOMException && error.name === "NotReadableError") {
+    return language === "zh"
+      ? "麦克风暂时不可用，请确认没有被其他应用占用。"
+      : "The microphone is unavailable. Check whether another app is using it.";
+  }
+
+  return error instanceof Error ? error.message : voiceT("voice.recognitionFailed");
+}
+
+function isMicrophonePermissionError(error: unknown): boolean {
+  if (!(error instanceof DOMException || error instanceof Error)) return false;
+  return ["NotAllowedError", "SecurityError", "PermissionDeniedError"].includes(error.name);
+}
+
+function isSpeechRecognitionPolicyError(error: unknown): boolean {
+  if (!(error instanceof DOMException || error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    ["NotAllowedError", "SecurityError", "InvalidStateError"].includes(error.name) ||
+    message.includes("not allowed by the user agent") ||
+    message.includes("current context") ||
+    message.includes("denied permission")
+  );
 }
 
 function isMeaningfulSpeechPhrase(phrase: string): boolean {

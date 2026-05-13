@@ -13,10 +13,19 @@ type RecipeContentDisplayToggleProps = {
 const displayModes: Array<{
   value: RecipeContentDisplayMode;
   labelKey: "allLabel" | "ingredientsLabel" | "stepsLabel";
+  voiceAliases: string;
 }> = [
-  { value: "all", labelKey: "allLabel" },
-  { value: "ingredients", labelKey: "ingredientsLabel" },
-  { value: "steps", labelKey: "stepsLabel" },
+  { value: "all", labelKey: "allLabel", voiceAliases: "全部 显示全部 show all all content" },
+  {
+    value: "ingredients",
+    labelKey: "ingredientsLabel",
+    voiceAliases: "只看食材 只看材料 显示食材 ingredients only show ingredients",
+  },
+  {
+    value: "steps",
+    labelKey: "stepsLabel",
+    voiceAliases: "只看步骤 只看做法 显示步骤 steps only show steps",
+  },
 ];
 
 export function shouldShowIngredients(mode: RecipeContentDisplayMode) {
@@ -57,6 +66,8 @@ export function RecipeContentDisplayToggle({
                 : "text-muted-foreground hover:bg-background hover:text-foreground"
             }`}
             aria-pressed={active}
+            data-voice-label={labels[mode.labelKey]}
+            data-voice-aliases={mode.voiceAliases}
             onClick={() => onChange(mode.value)}
           >
             {labels[mode.labelKey]}

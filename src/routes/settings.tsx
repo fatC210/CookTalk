@@ -851,6 +851,8 @@ function SettingsPage() {
       if (!action?.startsWith("settings-")) return;
 
       setActiveTab("data");
+      if (action === "settings-data") return;
+
       if (action === "settings-export") {
         void handleExport();
         return;

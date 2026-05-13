@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { SiteHeader } from "@/components/site-header";
 import { VoiceBadge } from "@/components/voice-badge";
 import {
@@ -30,6 +30,11 @@ import {
 import { cn } from "@/lib/utils";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  findRecipeToOpenFromTranscript,
+  findRecipeToStartCookingFromTranscript,
+} from "@/lib/recipe-open-intent";
+import { normalizeSpeechText } from "@/lib/voice-pipeline";
 
 export const Route = createFileRoute("/recipes")({
   head: () => ({
@@ -133,6 +138,7 @@ function filterAndSort(
 
 function RecipesPage() {
   const { t, i18n: activeI18n } = useTranslation();
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [activeFilterIds, setActiveFilterIds] = useState<string[]>([]);
@@ -232,6 +238,34 @@ function RecipesPage() {
   }
 
   const hasFilterOptions = filterOptions.length > 0;
+
+  useEffect(() => {
+    const handleVoiceCommand = (event: Event) => {
+      const transcript = (event as CustomEvent<{ transcript?: string }>).detail?.transcript ?? "";
+      const text = normalizeSpeechText(transcript);
+      const targetToCook = findRecipeToStartCookingFromTranscript(transcript, displayed, {
+        allowBareOrdinal: true,
+      });
+      if (targetToCook) {
+        event.preventDefault();
+        void navigate({ to: "/cook", search: { id: targetToCook.id, step: 0 } });
+        return;
+      }
+
+      if (!/(打开|查看|看一下|看下|看看|进入|open|show|view)/i.test(text)) return;
+
+      const target = findRecipeToOpenFromTranscript(transcript, displayed, {
+        allowBareOrdinal: true,
+      });
+      if (!target) return;
+
+      event.preventDefault();
+      void navigate({ to: "/recipe-detail", search: { id: target.id } });
+    };
+
+    window.addEventListener("cooktalk:voice-command", handleVoiceCommand);
+    return () => window.removeEventListener("cooktalk:voice-command", handleVoiceCommand);
+  }, [displayed, navigate]);
 
   return (
     <div className="app-page-bg min-h-screen flex flex-col">
@@ -537,6 +571,8 @@ function RecipeCard({
     <Link
       to="/recipe-detail"
       search={{ id: recipe.id }}
+      data-voice-label={recipe.title}
+      data-voice-aliases={`打开${recipe.title} 查看${recipe.title} ${recipe.title}菜谱 open ${recipe.title} view ${recipe.title} ${recipe.title} recipe`}
       className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:border-clay/60"
     >
       <VoiceBadge n={index + 1} className="absolute left-3 top-3 z-10 !bg-card !opacity-90" />
@@ -609,6 +645,8 @@ function RecipeCompactItem({
     <Link
       to="/recipe-detail"
       search={{ id: recipe.id }}
+      data-voice-label={recipe.title}
+      data-voice-aliases={`打开${recipe.title} 查看${recipe.title} ${recipe.title}菜谱 open ${recipe.title} view ${recipe.title} ${recipe.title} recipe`}
       className="group grid min-h-24 grid-cols-[4.75rem_minmax(0,1fr)] gap-3 rounded-2xl border border-border bg-card p-2.5 transition-colors hover:border-clay/60 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4 sm:p-3"
     >
       <div
