@@ -229,10 +229,14 @@ function parseClickTarget(text: string): string | null {
     "保存",
     "提交",
     "确认",
+    "同意",
+    "我同意",
     "继续",
     "下一步",
     "上一步",
     "返回",
+    "完成",
+    "结束",
     "取消",
     "关闭",
     "删除",
@@ -256,7 +260,12 @@ function parseClickTarget(text: string): string | null {
     "save",
     "submit",
     "confirm",
+    "agree",
+    "i agree",
     "continue",
+    "done",
+    "finish",
+    "finished",
     "next step",
     "previous step",
     "next",
@@ -289,9 +298,9 @@ function parseClickTarget(text: string): string | null {
   if (direct && normalizeForMatch(trimmed) === normalizeForMatch(direct)) return direct;
 
   const patterns = [
-    /^(?:点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|删除|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|返回|下一步|上一步)\s*(.+)$/i,
+    /^(?:点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|删除|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|返回|下一步|上一步|完成|结束|同意|我同意)\s*(.+)$/i,
     /^(?:切换到|切到|切成|换成|设为|开启|勾选|取消勾选)\s*(.+)$/i,
-    /^(?:click|tap|press|select|choose|open|show|play|preview|delete|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|next|previous|back)\s+(.+)$/i,
+    /^(?:click|tap|press|select|choose|open|show|play|preview|delete|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|next|previous|back|agree|done|finish|finished)\s+(.+)$/i,
     /^(?:switch to|set to|turn on|turn off|check|uncheck)\s+(.+)$/i,
   ];
 

@@ -151,7 +151,7 @@ function getSpokenVoiceName(transcript: string): string {
 function isCloneNameControlCommand(text: string): boolean {
   return isVoiceCommandMatch(
     text,
-    /^(?:返回|上一步|back|previous|继续|下一步|确认|continue|next|confirm)$/i,
+    /^(?:返回|上一步|back|previous|继续|下一步|确认|同意|我同意|完成|结束|continue|next|confirm|agree|i agree|done|finish|finished)$/i,
   );
 }
 
@@ -778,7 +778,7 @@ function VoicesPage() {
           if (
             isVoiceCommandMatch(
               text,
-              /(同意|确认|授权|开始克隆|克隆|agree|i agree|agree and clone|i agree and clone|clone|confirm)/i,
+              /(同意|我同意|确认|授权|开始克隆|克隆|agree|i agree|agree and clone|i agree and clone|clone|confirm)/i,
             )
           ) {
             customEvent.preventDefault();
@@ -787,7 +787,7 @@ function VoicesPage() {
           }
         }
 
-        if (cloneStep === "done" && isVoiceCommandMatch(text, /(完成|关闭|done|close)/i)) {
+        if (cloneStep === "done" && isVoiceCommandMatch(text, /(完成|结束|关闭|done|finish|finished|close)/i)) {
           customEvent.preventDefault();
           closeCloneDialog();
           return;
@@ -1399,7 +1399,7 @@ function VoicesPage() {
                     onClick={handleCloneVoice}
                     type="button"
                     data-voice-label={t("voices.agreeClone")}
-                    data-voice-aliases="我同意 我同意并克隆 确认授权 开始克隆 agree clone confirm authorization"
+                    data-voice-aliases="我同意 我同意并克隆 确认授权 开始克隆 agree i agree agree and clone i agree and clone clone confirm authorization"
                   >
                     {t("voices.agreeClone")}
                   </button>
@@ -1429,7 +1429,7 @@ function VoicesPage() {
                   onClick={closeCloneDialog}
                   type="button"
                   data-voice-label={t("common.done")}
-                  data-voice-aliases="完成 关闭 done close"
+                  data-voice-aliases="完成 结束 关闭 done finish finished close"
                 >
                   {t("common.done")}
                 </button>

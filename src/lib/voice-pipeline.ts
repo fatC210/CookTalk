@@ -188,7 +188,9 @@ export function parseVoiceIntent(transcript: string): VoiceIntent {
   if (/(继续|恢复|resume)/i.test(text)) return { type: "resume" };
   if (/(重复|再说一遍|重播|repeat)/i.test(text)) return { type: "repeat_step" };
   if (/(小贴士|提示|tip)/i.test(text)) return { type: "read_tip" };
-  if (/(结束烹饪|退出烹饪|关闭烹饪|end cooking|exit)/i.test(text)) return { type: "end_cooking" };
+  if (/(结束烹饪|退出烹饪|关闭烹饪|完成烹饪|做完了|end cooking|finish cooking|done cooking|exit)/i.test(text)) {
+    return { type: "end_cooking" };
+  }
   if (/(隐藏.*语音|hide.*badge)/i.test(text)) return { type: "hide_badges" };
   if (/(显示.*语音|show.*badge)/i.test(text)) return { type: "show_badges" };
   if (/(停止监听|stop listening)/i.test(text)) return { type: "stop_listening" };

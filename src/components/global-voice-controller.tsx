@@ -439,16 +439,16 @@ function isDirectGlobalVoiceCommand(transcript: string): boolean {
   if (/always.*listen|一直.*(听|监听)|持续.*监听/i.test(text)) return true;
   if (/wake.*word|唤醒词|待唤醒/i.test(text)) return true;
   if (
-    /^(返回上一页|后退|go back|back|前进|go forward|forward|回到顶部|到顶部|滚到顶部|scroll to top|top|到底部|滚到底部|scroll to bottom|bottom)$/i.test(
+    /^(返回上一页|后退|go back|back|前进|go forward|forward|回到顶部|到顶部|滚到顶部|scroll to top|top|到底部|滚到底部|scroll to bottom|bottom|继续|下一步|确认|同意|我同意|完成|结束|continue|next|confirm|agree|i agree|done|finish|finished)$/i.test(
       text,
     )
   ) {
     return true;
   }
-  if (/(点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|删除|返回|下一步|上一步)\s*.+/i.test(text)) {
+  if (/(点击|点一下|点|按|按下|选择|选中|打开|查看|播放|预览|关闭|取消|导出|下载|导入|上传|生成|重新生成|添加|新增|克隆|开始|暂停|停止|删除|返回|下一步|上一步|继续|确认|同意|我同意|完成|结束)\s*.+/i.test(text)) {
     return true;
   }
-  if (/(click|tap|press|select|choose|open|show|play|preview|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|delete|next|previous|back)\s+.+/i.test(text)) {
+  if (/(click|tap|press|select|choose|open|show|play|preview|close|cancel|export|download|import|upload|generate|regenerate|add|new|clone|start|pause|stop|delete|next|previous|back|continue|confirm|agree|done|finish|finished)\s+.+/i.test(text)) {
     return true;
   }
   return false;
