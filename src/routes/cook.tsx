@@ -177,6 +177,15 @@ function getStepDescriptionParts(description: string): { main: string; highlight
   };
 }
 
+function getStepSpeechKey(
+  recipeId: string,
+  stepIndex: number,
+  language: AppLanguage,
+  voiceId: string | null | undefined,
+): string {
+  return `${recipeId}:${stepIndex}:${language}:${voiceId ?? "default"}`;
+}
+
 function CookPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -230,6 +239,7 @@ function CookPage() {
   const announcingStepKeyRef = useRef<string | null>(null);
   const pendingInitialAnnounceStepRef = useRef<number | null>(null);
   const speechAbortControllerRef = useRef<AbortController | null>(null);
+  const resolvedVoiceIdRef = useRef<string | null | undefined>(undefined);
   const isClosingRef = useRef(false);
 
   const recipeStepCount = recipe?.steps.length ?? 0;
@@ -242,6 +252,11 @@ function CookPage() {
   const isFinalStep = stepCount > 0 && safeStep === stepCount - 1;
   const recipeId = recipe?.id;
   const resolvedVoiceId = recipe?.voiceId ?? cookingVoiceId ?? undefined;
+
+  useEffect(() => {
+    resolvedVoiceIdRef.current = resolvedVoiceId;
+  }, [resolvedVoiceId]);
+
   const activeWakeWords = useMemo(() => getActiveWakeWords(wakeWords), [wakeWords]);
   const voiceOptions = useMemo(
     () =>
@@ -343,7 +358,7 @@ function CookPage() {
       setIsSpeaking(true);
       setVoiceError(null);
       try {
-        await speakWithElevenLabs(trimmed, options?.voiceId ?? resolvedVoiceId, language, {
+        await speakWithElevenLabs(trimmed, options?.voiceId ?? resolvedVoiceIdRef.current, language, {
           signal: abortController.signal,
         });
         return true;
@@ -360,7 +375,7 @@ function CookPage() {
         }
       }
     },
-    [appendQaMessage, hasElevenLabsKey, language, resolvedVoiceId, t],
+    [appendQaMessage, hasElevenLabsKey, language, t],
   );
 
   const announceCurrentStep = useCallback(
@@ -369,7 +384,8 @@ function CookPage() {
       targetStep: number,
       options?: { force?: boolean; voiceId?: string | null },
     ) => {
-      const stepKey = `${targetRecipe.id}:${targetStep}:${language}`;
+      const voiceId = options?.voiceId ?? targetRecipe.voiceId ?? resolvedVoiceIdRef.current;
+      const stepKey = getStepSpeechKey(targetRecipe.id, targetStep, language, voiceId);
       if (
         (!options?.force && autoAnnouncedStepKeysRef.current.has(stepKey)) ||
         announcingStepKeyRef.current === stepKey
@@ -383,7 +399,7 @@ function CookPage() {
       announcingStepKeyRef.current = stepKey;
       const stepSpeech = buildStepSpeech(targetRecipe, targetStep, language);
       try {
-        const didSpeak = await speak(stepSpeech, { skipCard: true, voiceId: options?.voiceId });
+        const didSpeak = await speak(stepSpeech, { skipCard: true, voiceId });
         if (didSpeak) {
           announcedStepKeysRef.current.add(stepKey);
           setSpokenStepKeys(new Set(announcedStepKeysRef.current));
@@ -425,6 +441,7 @@ function CookPage() {
       };
 
       cancelPendingSpeech();
+      resolvedVoiceIdRef.current = selectedVoice.value;
       setRecipe(nextRecipe);
       updateLatestState({ recipe: nextRecipe });
 
@@ -814,7 +831,8 @@ function CookPage() {
     if (isClosingRef.current) return;
 
     const targetStep = pendingInitialAnnounceStepRef.current ?? safeStep;
-    const stepKey = `${recipe.id}:${targetStep}:${language}`;
+    const voiceId = recipe.voiceId ?? resolvedVoiceId;
+    const stepKey = getStepSpeechKey(recipe.id, targetStep, language, voiceId);
     if (announcedStepKeysRef.current.has(stepKey)) return;
     pendingInitialAnnounceStepRef.current = null;
     void announceCurrentStep(recipe, targetStep);
@@ -904,7 +922,9 @@ function CookPage() {
 
   const description = step?.description ?? "";
   const { main: descMain, highlight: descHighlight } = getStepDescriptionParts(description);
-  const currentStepKey = recipe ? `${recipe.id}:${safeStep}:${language}` : null;
+  const currentStepKey = recipe
+    ? getStepSpeechKey(recipe.id, safeStep, language, recipe.voiceId ?? resolvedVoiceId)
+    : null;
   const hasSpokenCurrentStep = currentStepKey ? spokenStepKeys.has(currentStepKey) : false;
   const displayedTimers = activeTimers;
   const hasTimerCards = displayedTimers.length > 0 || Boolean(step?.durationSec);
