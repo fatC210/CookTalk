@@ -28,6 +28,12 @@ CookTalk integrates recipes, cooking videos, voice, timers, and AI chat into a q
 
 The app follows a local-first approach. Recipes, settings, drafts, and API credentials are stored locally in the browser by default, and sensitive info is protected by IndexedDB with an AES-GCM-based credential protection mechanism.
 
+## Preview
+
+<p align="center">
+  <img src="./public/readme-preview.png" alt="CookTalk app preview" width="100%" />
+</p>
+
 ## Key Highlights
 
 | Voice-First Kitchen                                          | Privacy-First Local Storage                                     | AI Recipe Workflow                                          |

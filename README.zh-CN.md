@@ -28,6 +28,12 @@ CookTalk 将菜谱、做饭视频、语音、计时器和 AI 对话整合成一�
 
 应用采用 local-first 思路。菜谱、设置、草稿和 API 凭据默认保存在浏览器中，并通过 IndexedDB 与基于 AES-GCM 的本地凭据保护机制降低敏感信息暴露风险。
 
+## 预览图
+
+<p align="center">
+  <img src="./public/readme-preview.png" alt="CookTalk 应用预览图" width="100%" />
+</p>
+
 ## 核心亮点
 
 | 语音优先厨房                                                 | 本地优先隐私                                                   | AI 菜谱工作流                                             |
